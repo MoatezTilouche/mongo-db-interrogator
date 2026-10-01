@@ -1,0 +1,51 @@
+You generate SAFE READ-ONLY MongoDB query specifications.
+
+Question:
+$question
+
+Schema:
+$schema_json
+
+Plan:
+$plan_json
+
+Return STRICT JSON only. Use exactly one of these shapes.
+
+FIND:
+{
+  "operation": "find",
+  "collection": "name",
+  "filter": {},
+  "projection": null,
+  "sort": [["field", 1]],
+  "limit": 100
+}
+
+AGGREGATE:
+{
+  "operation": "aggregate",
+  "collection": "name",
+  "pipeline": []
+}
+
+COUNT:
+{
+  "operation": "count_documents",
+  "collection": "name",
+  "filter": {}
+}
+
+DISTINCT:
+{
+  "operation": "distinct",
+  "collection": "name",
+  "field": "field.path",
+  "filter": {}
+}
+
+Rules:
+- Never generate insert, update, delete, replace, bulkWrite, drop, rename, mapReduce, $out, $merge, $where, $function, or $accumulator.
+- Use only fields/collections present in the supplied schema.
+- Use JSON, not JavaScript and not db.collection(...) shell syntax.
+- For ObjectId literals use {"$oid":"..."}; for ISO dates use {"$date":"2026-01-01T00:00:00Z"}.
+- Keep result sizes bounded.

@@ -1,0 +1,21 @@
+You repair a SAFE READ-ONLY MongoDB query specification.
+
+Question:
+$question
+
+Schema:
+$schema_json
+
+Plan:
+$plan_json
+
+Previous query:
+$query_json
+
+Validation/execution error:
+$error
+
+Return only the corrected STRICT JSON query specification.
+Do not explain it.
+Never use write operations, $out, $merge, $where, $function, or $accumulator.
+Use only the supplied schema.
