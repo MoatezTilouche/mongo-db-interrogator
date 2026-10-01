@@ -13,7 +13,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from agent.config import ENABLE_PYTHON_ARTIFACTS, PYTHON_ARTIFACT_DIR
-from agent.llm import get_llm
+from agent.llm import llm_router
 from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 
@@ -29,7 +29,7 @@ class PythonArtifactAgent:
             "goal": goal,
             "rows_json": json.dumps(rows[:100], ensure_ascii=False, default=str),
         })
-        response = get_llm().invoke([HumanMessage(content=prompt)])
+        response = llm_router.invoke("python_artifact", [HumanMessage(content=prompt)])
         code = (getattr(response, "content", "") or "").strip()
         code = re.sub(r"^```(?:python)?\s*", "", code, flags=re.IGNORECASE)
         code = re.sub(r"\s*```$", "", code).strip()

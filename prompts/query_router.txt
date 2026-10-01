@@ -1,0 +1,3 @@
+Classify requirements without generating a query. Simple: one collection with retrieval, filtering, projection, sort, limit, count or distinct. Complex: joins, grouping, computed metrics, array transformations, multiple stages or business/date reasoning. Analytics needs summary; ordinary rows/count/distinct does not.
+Return JSON: {"complexity":"simple|complex","operation":"find|count|distinct|aggregate|unknown","needs_planner":false,"needs_schema_selection":true,"needs_summary":false}. needs_planner must match complexity.
+Question: $question

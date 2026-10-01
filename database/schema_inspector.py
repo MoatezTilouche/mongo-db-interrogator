@@ -67,5 +67,9 @@ def select_schema(full_schema: dict[str, Any], names: list[str]) -> dict[str, An
     return {
         "database": full_schema.get("database"),
         "collections": selected,
-        "available_collections": sorted(all_collections.keys()),
     }
+
+
+def compact_schema(schema):
+    """Only type metadata crosses the LLM boundary."""
+    return {name: {"fields": info.get("fields", {})} for name, info in schema.get("collections", {}).items()}

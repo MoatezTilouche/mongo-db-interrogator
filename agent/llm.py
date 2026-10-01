@@ -1,61 +1,133 @@
-"""Provider-neutral LLM factory. No database-specific prompt logic lives here."""
+"""Centralized provider/model routing for all LLM-backed agents."""
 from __future__ import annotations
 
+import logging
+import time
+from typing import Any
+
 from agent.config import (
-    ANTHROPIC_API_KEY,
-    ANTHROPIC_MODEL,
     LLM_MAX_OUTPUT_TOKENS,
-    LLM_PROVIDER,
-    OLLAMA_MODEL,
-    OLLAMA_URL,
-    OPEN_ROUTER_API_KEY,
-    OPEN_ROUTER_BASE_URL,
-    OPEN_ROUTER_MODEL,
+    LLM_MAX_RETRIES,
+    LLM_ROLE_CONFIG,
+    LLM_TIMEOUT_SECONDS,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
 )
+from agent.llm_structured import parse_json_from_text
 from agent.token_usage import get_token_usage_callback
+from agent.telemetry import record_attempt
 
-_LLM = None
+logger = logging.getLogger(__name__)
 
 
-def get_llm():
-    global _LLM
-    if _LLM is not None:
-        return _LLM
+class LLMRouterError(RuntimeError):
+    """Raised when all configured providers fail for an LLM request."""
 
-    callback = get_token_usage_callback()
-    callbacks = [callback] if callback else None
 
-    if LLM_PROVIDER == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        if not ANTHROPIC_API_KEY:
-            raise ValueError("ANTHROPIC_API_KEY is required")
-        _LLM = ChatAnthropic(
-            model=ANTHROPIC_MODEL,
-            api_key=ANTHROPIC_API_KEY,
-            temperature=0,
-            max_tokens=LLM_MAX_OUTPUT_TOKENS,
-            callbacks=callbacks,
-        )
-    elif LLM_PROVIDER == "ollama":
-        from langchain_ollama import ChatOllama
-        _LLM = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_URL,
-            temperature=0,
-            num_ctx=8192,
-            num_predict=LLM_MAX_OUTPUT_TOKENS,
-            callbacks=callbacks,
-        )
-    else:
+class StructuredOutputError(ValueError):
+    """Raised when a provider returns invalid output for the requested schema."""
+
+
+class LLMRouter:
+    def __init__(self) -> None:
+        self._clients: dict[str, Any] = {}
+
+    def _client(self, model: str) -> Any:
+        if model in self._clients:
+            return self._clients[model]
+
+        callback = get_token_usage_callback()
+        callbacks = [callback] if callback else None
+        if not OPENROUTER_API_KEY:
+            raise ValueError("OPENROUTER_API_KEY is required")
         from langchain_openai import ChatOpenAI
-        if not OPEN_ROUTER_API_KEY:
-            raise ValueError("OPEN_ROUTER_API_KEY is required when LLM_PROVIDER=openrouter")
-        _LLM = ChatOpenAI(
-            model=OPEN_ROUTER_MODEL,
-            api_key=OPEN_ROUTER_API_KEY,
-            base_url=OPEN_ROUTER_BASE_URL,
+
+        client = ChatOpenAI(
+            model=model,
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_BASE_URL,
             temperature=0,
             max_tokens=LLM_MAX_OUTPUT_TOKENS,
+            timeout=LLM_TIMEOUT_SECONDS,
+            max_retries=0,
             callbacks=callbacks,
         )
-    return _LLM
+        self._clients[model] = client
+        return client
+
+    @staticmethod
+    def _is_recoverable(exc: Exception) -> bool:
+        if isinstance(exc, StructuredOutputError):
+            return True
+        status = getattr(exc, "status_code", None)
+        response = getattr(exc, "response", None)
+        status = status or getattr(response, "status_code", None)
+        if status == 429 or (isinstance(status, int) and status >= 500):
+            return True
+        reason = str(exc).lower()
+        return any(term in reason for term in (
+            "429", "rate limit", "quota", "resource exhausted", "timeout",
+            "timed out", "connection", "temporarily unavailable", "service unavailable",
+            "model unavailable", "model not found", "not found", "5xx",
+            "malformed", "not valid json", "structured response",
+        ))
+
+    @staticmethod
+    def _validate_structured(content: str, schema: Any) -> None:
+        try:
+            parsed = parse_json_from_text(content)
+            if schema is dict and not isinstance(parsed, dict):
+                raise ValueError("Structured response must be a JSON object")
+            if schema is list and not isinstance(parsed, list):
+                raise ValueError("Structured response must be a JSON array")
+            if hasattr(schema, "model_validate"):
+                schema.model_validate(parsed)
+            elif callable(schema) and schema not in (dict, list):
+                schema(parsed)
+        except Exception as exc:
+            raise StructuredOutputError(str(exc)) from exc
+
+    def invoke(self, role: str, messages: list[Any], structured_output_schema: Any = None) -> Any:
+        try:
+            primary_model, fallback_model = LLM_ROLE_CONFIG[role]
+        except KeyError as exc:
+            raise ValueError(f"Unknown LLM role: {role}") from exc
+
+        for fallback_used, model in (
+            (False, primary_model),
+            (True, fallback_model),
+        ):
+            retry_count = 0
+            for attempt in range(LLM_MAX_RETRIES + 1):
+                retry_count = attempt
+                started = time.perf_counter()
+                response = None
+                try:
+                    response = self._client(model).invoke(messages)
+                    if structured_output_schema is not None:
+                        self._validate_structured(str(getattr(response, "content", "") or ""), structured_output_schema)
+                    logger.info(
+                        "llm role=%s model=%s fallback_used=%s retry_count=%d latency_ms=%.1f",
+                        role, model, fallback_used, retry_count,
+                        (time.perf_counter() - started) * 1000,
+                    )
+                    return response
+                except Exception as exc:
+                    recoverable = self._is_recoverable(exc)
+                    if not recoverable:
+                        raise
+                    if attempt < LLM_MAX_RETRIES and not isinstance(exc, StructuredOutputError):
+                        continue
+                    logger.warning(
+                        "llm failure role=%s model=%s fallback_used=%s retry_count=%d latency_ms=%.1f reason=%s",
+                        role, model, fallback_used, retry_count,
+                        (time.perf_counter() - started) * 1000, type(exc).__name__,
+                    )
+                    break
+                finally:
+                    record = record_attempt(role, model, response, (time.perf_counter() - started) * 1000, fallback_used)
+                    logger.debug("llm telemetry=%s", record)
+        raise LLMRouterError("All configured OpenRouter models failed")
+
+
+llm_router = LLMRouter()

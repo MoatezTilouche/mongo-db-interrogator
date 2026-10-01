@@ -15,16 +15,40 @@ MONGO_QUERY_TIMEOUT_MS = int(os.getenv("MONGO_QUERY_TIMEOUT_MS", "15000"))
 DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT", "100"))
 MAX_LIMIT = int(os.getenv("MAX_LIMIT", "500"))
 
-# LLM
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").lower()
-LLM_MAX_OUTPUT_TOKENS = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1600"))
-OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY", "")
-OPEN_ROUTER_MODEL = os.getenv("OPEN_ROUTER_MODEL", "openai/gpt-4.1-mini")
-OPEN_ROUTER_BASE_URL = os.getenv("OPEN_ROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+# LLM routing
+LLM_MAX_OUTPUT_TOKENS = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2000"))
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
+LLM_ROLE_CONFIG = {
+    "query_router": (os.getenv("QUERY_ROUTER_MODEL", "openrouter/free"), os.getenv("QUERY_ROUTER_FALLBACK_MODEL", "qwen/qwen3.8-27b:free")),
+	"schema_selection": (
+		os.getenv("SCHEMA_SELECTION_MODEL", "qwen/qwen3.8-27b:free"),
+		os.getenv("SCHEMA_SELECTION_FALLBACK_MODEL", "openrouter/free"),
+	),
+	"planner": (
+		os.getenv("PLANNER_MODEL", "qwen/qwen3.8-27b:free"),
+		os.getenv("PLANNER_FALLBACK_MODEL", "openrouter/free"),
+	),
+	"query_generator": (
+		os.getenv("QUERY_GENERATOR_MODEL", "qwen/qwen3.8-27b:free"),
+		os.getenv("QUERY_GENERATOR_FALLBACK_MODEL", "openrouter/free"),
+	),
+	"repair": (
+		os.getenv("REPAIR_MODEL", "openrouter/free"),
+		os.getenv("REPAIR_FALLBACK_MODEL", "qwen/qwen3.8-27b:free"),
+	),
+	"summary": (
+		os.getenv("SUMMARY_MODEL", "openrouter/free"),
+		os.getenv("SUMMARY_FALLBACK_MODEL", "qwen/qwen3.8-27b:free"),
+	),
+	"python_artifact": (
+		os.getenv("PYTHON_ARTIFACT_MODEL", "qwen/qwen3.8-27b:free"),
+		os.getenv("PYTHON_ARTIFACT_FALLBACK_MODEL", "openrouter/free"),
+	),
+}
 
 # Prompt loading
 PROMPT_VARIANT = os.getenv("PROMPT_VARIANT", "default")

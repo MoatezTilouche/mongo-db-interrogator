@@ -1,21 +1,5 @@
-You repair a SAFE READ-ONLY MongoDB query specification.
-
-Question:
-$question
-
-Schema:
-$schema_json
-
-Plan:
-$plan_json
-
-Previous query:
-$query_json
-
-Validation/execution error:
-$error
-
-Return only the corrected STRICT JSON query specification.
-Do not explain it.
-Never use write operations, $out, $merge, $where, $function, or $accumulator.
-Use only the supplied schema.
+Correct the failed read-only query using only the selected schema. Return only a JSON query specification with operation and collection, and filter/projection/sort/limit for find, filter for count_documents, field/filter for distinct, or pipeline for aggregate. Never generate writes.
+Question: $question
+Schema: $schema_json
+Failed query: $query_json
+Error: $error

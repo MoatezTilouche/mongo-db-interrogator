@@ -7,6 +7,9 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
+    route: dict[str, Any] | None = None
+    execution_path: dict[str, Any] | None = None
+    telemetry: dict[str, Any] | None = None
     final_response: str | None = None
     execution_success: bool = False
     execution_result: list[dict[str, Any]] | None = None

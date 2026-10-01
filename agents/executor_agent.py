@@ -68,4 +68,5 @@ class ExecutorAgent:
                 "sample_rows": [],
                 "all_rows": [],
                 "error": str(exc),
+                "repairable": getattr(exc, "code", None) in {2, 9, 14, 15999, 168, 40324},
             }

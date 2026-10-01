@@ -5,7 +5,7 @@ import json
 from typing import Any
 from langchain_core.messages import HumanMessage
 
-from agent.llm import get_llm
+from agent.llm import llm_router
 from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 
@@ -26,7 +26,7 @@ class ResultsSummaryAgent:
             "question": question,
             "result_json": json.dumps(compact, ensure_ascii=False, default=str),
         })
-        response = get_llm().invoke([HumanMessage(content=prompt)])
+        response = llm_router.invoke("summary", [HumanMessage(content=prompt)])
         return {
             "summary_text": (getattr(response, "content", "") or "").strip(),
             "row_count": compact["row_count"],
