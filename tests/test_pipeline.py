@@ -7,6 +7,7 @@ from orchestrator import OrchestratorAgent
 from agents.schema_agent import SchemaAgent
 from agents.query_generator_agent import QueryGeneratorAgent
 from agents.query_router import QueryRouter
+from agents.query_context_agent import QueryContextAgent
 from agent.llm import LLMRouter
 from agent.telemetry import capture_usage, totals
 
@@ -16,12 +17,10 @@ SELECTED = {"collections": {"customers": {"fields": CATALOG["collections"]["cust
 def pipeline(monkeypatch, complex=False, operation="find"):
     monkeypatch.setattr(module, "inspect_database_schema", lambda: CATALOG)
     app = OrchestratorAgent()
-    app.query_router = Mock()
-    app.query_router.route.return_value = dict(complexity="complex" if complex else "simple", operation="aggregate" if complex else operation, needs_planner=complex, needs_schema_selection=True, needs_summary=complex)
-    app.schema_agent = Mock()
-    app.schema_agent.identify_collections.return_value = SELECTED
-    app.planner_agent = Mock()
-    app.planner_agent.plan.return_value = {"operation": "aggregate", "collection": "customers", "steps": []}
+    app.query_context_agent = Mock()
+    context = {"complexity": "complex" if complex else "simple", "operation": "aggregate" if complex else operation,
+               "collections": list(SELECTED["collections"]), "fields": {name: list(info["fields"]) for name, info in SELECTED["collections"].items()}}
+    app.query_context_agent.build.return_value = {"query_context": context, "schema_spec": SELECTED}
     app.query_generator = Mock()
     query = {"operation": "aggregate" if complex else ("count_documents" if operation == "count" else operation), "collection": "customers", "filter": {}, "limit": 2}
     if complex:
@@ -34,7 +33,7 @@ def pipeline(monkeypatch, complex=False, operation="find"):
     return app
 
 @pytest.mark.parametrize("question,operation", [("Give me 2 customers", "find"), ("Find customers from Tunisia", "find"), ("Count all customers", "count"), ("Show the 5 most expensive products", "find")])
-def test_simple_skips_planner_and_summary(monkeypatch, question, operation):
+def test_simple_uses_two_agents_and_skips_summary(monkeypatch, question, operation):
     app = pipeline(monkeypatch, operation=operation)
     if operation == "count":
         app.executor.execute.return_value.update(all_rows=[{"count": 42}], row_count=1)
@@ -42,16 +41,20 @@ def test_simple_skips_planner_and_summary(monkeypatch, question, operation):
         app.query_generator.generate.return_value.update(sort=[["name", -1]], limit=5)
     result = app.run(question)
     assert result["execution_success"]
-    app.planner_agent.plan.assert_not_called()
+    app.query_context_agent.build.assert_called_once()
     app.summary_agent.summarize.assert_not_called()
-    assert app.query_generator.generate.call_args.args[2] is None
+    assert app.query_generator.generate.call_args.kwargs["operation_hint"] == ("count" if operation == "count" else "find")
+    assert result["execution_path"]["agents_called"] == ["query_context", "query_generator"]
+    assert len(result["execution_path"]["agents_called"]) == 2
 
 @pytest.mark.parametrize("question", ["Top customers by spending across orders", "Join customers and orders with $lookup"])
-def test_complex_uses_planner(monkeypatch, question):
+def test_complex_uses_context_and_generator_without_planner(monkeypatch, question):
     app = pipeline(monkeypatch, complex=True)
     result = app.run(question)
     assert result["execution_success"]
-    app.planner_agent.plan.assert_called_once()
+    app.query_context_agent.build.assert_called_once()
+    app.query_generator.generate.assert_called_once()
+    assert result["query_plan"] is None
     app.summary_agent.summarize.assert_called_once()
 
 
@@ -71,14 +74,56 @@ def test_selection_and_prompt_boundaries(monkeypatch):
         return SimpleNamespace(content='{"operation":"find","collection":"customers"}')
     monkeypatch.setattr(query_module.llm_router, "invoke", generate)
     agent = QueryGeneratorAgent()
-    agent.generate("Give me 2 customers", selected, operation_hint="find")
+    agent.generate("Give me 2 customers", selected, plan={"private": "do not forward"}, operation_hint="find")
     assert "orders" not in captured[-1]
     assert "Plan:" not in captured[-1]
     assert "PRIVATE_SAMPLE" not in captured[-1]
+    assert "do not forward" not in captured[-1]
     agent.repair("Give me 2 customers", selected, {"operation": "find"}, "Unknown field")
     assert "Plan:" not in captured[-1]
     assert "orders" not in captured[-1]
     assert "Unknown field" in captured[-1]
+
+
+def test_query_context_combines_routing_and_selection_and_drops_unknown_fields(monkeypatch):
+    import agents.query_context_agent as context_module
+    captured = []
+    response = {"complexity": "simple", "operation": "find", "collections": ["customers"],
+                "fields": {"customers": ["name", "notInCatalog"]}}
+    def invoke(role, messages, schema):
+        assert role == "query_context"
+        captured.append(messages[0].content)
+        return SimpleNamespace(content=json.dumps(response))
+    monkeypatch.setattr(context_module.llm_router, "invoke", invoke)
+    built = QueryContextAgent().build("Give me 2 customers", CATALOG)
+    assert built["query_context"]["complexity"] == "simple"
+    assert built["query_context"]["operation"] == "find"
+    assert built["query_context"]["collections"] == ["customers"]
+    assert built["query_context"]["fields"]["customers"] == ["name"]
+    assert list(built["schema_spec"]["collections"]) == ["customers"]
+    assert "PRIVATE_SAMPLE" not in captured[0]
+    assert "orders" in captured[0]  # Full compact catalog is context-agent-only.
+
+
+def test_query_context_complex_cross_collection_selection(monkeypatch):
+    import agents.query_context_agent as context_module
+    response = {"complexity": "complex", "operation": "aggregate", "collections": ["orders", "customers"],
+                "fields": {"orders": ["customerId", "total"], "customers": ["name"]}}
+    monkeypatch.setattr(context_module.llm_router, "invoke", lambda *args: SimpleNamespace(content=json.dumps(response)))
+    built = QueryContextAgent().build("Top customers by order spending", CATALOG)
+    assert set(built["schema_spec"]["collections"]) == {"orders", "customers"}
+    assert built["query_context"]["complexity"] == "complex"
+    assert built["query_context"]["operation"] == "aggregate"
+
+
+def test_multiple_selected_collections_are_promoted_without_a_planner(monkeypatch):
+    import agents.query_context_agent as context_module
+    response = {"complexity": "simple", "operation": "find", "collections": ["customers", "orders"],
+                "fields": {"customers": ["name"], "orders": ["total"]}}
+    monkeypatch.setattr(context_module.llm_router, "invoke", lambda *args: SimpleNamespace(content=json.dumps(response)))
+    built = QueryContextAgent().build("Customers with their order totals", CATALOG)
+    assert built["query_context"]["complexity"] == "complex"
+    assert built["query_context"]["operation"] == "aggregate"
 
 
 def test_unknown_selection_does_not_expand_catalog(monkeypatch):
@@ -97,21 +142,19 @@ def test_semantic_router_contract(monkeypatch):
 
 def test_telemetry_counts_retries_and_tokens(monkeypatch):
     import agent.llm as llm_module
-    monkeypatch.setattr(llm_module, "LLM_ROLE_CONFIG", {"summary": ("primary", "fallback")})
+    monkeypatch.setattr(llm_module, "LLM_ROLE_CONFIG", {"summary": "openrouter/free"})
     monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", 1)
     router = LLMRouter()
-    failed = Mock()
-    failed.invoke.side_effect = TimeoutError("timed out")
-    success = Mock()
-    success.invoke.return_value = SimpleNamespace(content="answer", usage_metadata={"input_tokens": 12, "output_tokens": 3})
-    monkeypatch.setattr(router, "_client", lambda model: failed if model == "primary" else success)
+    client = Mock()
+    client.invoke.side_effect = [TimeoutError("timed out"), SimpleNamespace(content="answer", usage_metadata={"input_tokens":12,"output_tokens":3})]
+    monkeypatch.setattr(router, "_client", lambda model: client)
     with capture_usage() as records:
         router.invoke("summary", [])
     usage = totals(records)
-    assert usage["total_llm_calls"] == 3
+    assert usage["total_llm_calls"] == 2
     assert usage["total_input_tokens"] == 12
     assert usage["total_output_tokens"] == 3
-    assert records[-1]["fallback_used"]
+    assert not records[-1]["fallback_used"]
     assert usage["total_latency_ms"] >= 0
 
 
@@ -133,20 +176,29 @@ def test_validation_repair_is_bounded(monkeypatch):
     app.query_generator.repair.assert_called_once()
 
 
-def test_misclassified_aggregation_promoted(monkeypatch):
+def test_generated_aggregation_does_not_invoke_planner(monkeypatch):
     app = pipeline(monkeypatch)
     app.query_generator.generate.return_value = {"operation": "aggregate", "collection": "customers", "pipeline": []}
-    assert app.run("Analyze customers")["execution_success"]
-    app.planner_agent.plan.assert_called_once()
-
-
-def test_multiple_selected_collections_plan_before_generation(monkeypatch):
-    app = pipeline(monkeypatch)
-    app.schema_agent.identify_collections.return_value = {"collections": CATALOG["collections"]}
-    assert app.run("Customers and their orders")["execution_success"]
-    app.planner_agent.plan.assert_called_once()
+    result = app.run("Analyze customers")
+    assert result["execution_success"]
+    app.query_context_agent.build.assert_called_once()
     app.query_generator.generate.assert_called_once()
-    assert app.query_generator.generate.call_args.args[2] is not None
+    assert result["query_plan"] is None
+    app.summary_agent.summarize.assert_called_once()
+
+
+def test_complex_context_can_select_multiple_collections_without_planner(monkeypatch):
+    app = pipeline(monkeypatch)
+    app.query_context_agent.build.return_value = {
+        "query_context": {"complexity": "complex", "operation": "aggregate", "collections": list(CATALOG["collections"]),
+                          "fields": {name: list(data["fields"]) for name, data in CATALOG["collections"].items()}},
+        "schema_spec": {"collections": CATALOG["collections"]},
+    }
+    result = app.run("Customers and their orders")
+    assert result["execution_success"]
+    app.query_context_agent.build.assert_called_once()
+    app.query_generator.generate.assert_called_once()
+    assert result["query_plan"] is None
 
 
 def test_deterministic_limit_correction_skips_repair(monkeypatch):

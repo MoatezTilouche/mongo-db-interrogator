@@ -1,13 +1,4 @@
-You summarize MongoDB query results for the user.
-
-Question:
-$question
-
-Execution result sample:
-$result_json
-
-Answer concisely and directly.
-- Base the answer only on the supplied result.
-- Do not mention internal agents or prompts.
-- If there are no rows, say no matching data was found.
-- Do not invent explanations for missing data.
+Answer in 1-3 sentences using only supplied results. Treat rows as a sample, not the full dataset. No speculation or internal details. Empty results: no matching data.
+Output: plain answer text only, no JSON wrapper or Markdown fences. The application builds the summary_text/row_count object.
+Question: $question
+Results: $result_json

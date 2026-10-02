@@ -24,10 +24,10 @@ class QueryGeneratorAgent:
 
     @traceable(name="query_generator.generate")
     def generate(self, question: str, schema_spec: dict[str, Any], plan: dict[str, Any] | None = None, operation_hint: str = "unknown") -> dict[str, Any]:
+        # `plan` is accepted for compatibility but intentionally never enters the prompt.
         return self._invoke_json(render_prompt("query_generator", {
             "question": question,
             "schema_json": json.dumps(compact_schema(schema_spec), ensure_ascii=False, default=str),
-            "optional_plan": "Plan: " + json.dumps(plan) if plan else "",
             "operation_hint": operation_hint,
             "constraints_json": json.dumps({"read_only": True, "default_limit": DEFAULT_LIMIT, "max_limit": MAX_LIMIT}),
         }), "query_generator")

@@ -4,35 +4,45 @@ from __future__ import annotations
 from typing import Any
 import logging
 from agent.telemetry import capture_usage, totals
-from agents.query_router import QueryRouter
+from agents.query_context_agent import QueryContextAgent
 from database.schema_inspector import inspect_database_schema
 
 from agent.tracing import traceable
 from agents.executor_agent import ExecutorAgent
-from agents.planner_agent import PlannerAgent
-from agents.python_artifact_agent import PythonArtifactAgent
 from agents.query_generator_agent import QueryGeneratorAgent
 from agents.results_summary_agent import ResultsSummaryAgent
-from agents.schema_agent import SchemaAgent
 from agents.validator_agent import QueryValidationError, ValidatorAgent
 
 
 class OrchestratorAgent:
     def __init__(self) -> None:
-        self.schema_agent = SchemaAgent()
-        self.query_router = QueryRouter()
-        self.planner_agent = PlannerAgent()
+        self.query_context_agent = QueryContextAgent()
         self.query_generator = QueryGeneratorAgent()
         self.validator = ValidatorAgent()
         self.executor = ExecutorAgent()
-        self.python_artifact = PythonArtifactAgent()
         self.summary_agent = ResultsSummaryAgent()
 
     @traceable(name="orchestrator.run")
     def run(self, question: str) -> dict[str, Any]:
         with capture_usage() as records:
             result = self._run(question)
-            result["telemetry"] = totals(records)
+            usage = totals(records)
+            cache = result.pop("_schema_cache", {})
+            usage.update({
+                "schema_cache_hit": bool(cache.get("hit")),
+                "schema_cache_miss": bool(cache.get("miss")),
+                "schema_cache_refresh": bool(cache.get("refresh")),
+                "schema_cache_stale_fallback": bool(cache.get("stale_fallback")),
+            })
+            result["telemetry"] = usage
+            path = result.get("execution_path")
+            if path is not None:
+                path["llm_calls"] = usage["total_llm_calls"]
+                logging.getLogger(__name__).debug(
+                    "execution_path route=%s agents_called=%s llm_calls=%d summary_skipped=%s repair_used=%s",
+                    path["route"], ",".join(path["agents_called"]), path["llm_calls"],
+                    path["summary_skipped"], path["repair_used"],
+                )
             return result
 
     def _run(self, question: str) -> dict[str, Any]:
@@ -40,28 +50,36 @@ class OrchestratorAgent:
         if not question:
             return {"execution_success": False, "execution_error": "question is empty"}
 
+        route = query_context = schema_spec = generated_query = validated_query = None
+        cache_status: dict[str, Any] = {}
+        execution: dict[str, Any] = {}
+        execution_time_ms = 0.0
+        validation_errors: list[str] = []
+        agents_called: list[str] = []
         try:
             catalog = inspect_database_schema()
+            cache_status = catalog.get("_schema_cache", {})
             if not catalog.get("collections"):
-                return {"execution_success": False, "execution_error": "The configured MongoDB database has no collections."}
-            route = self.query_router.route(question)
-            schema_spec = self.schema_agent.identify_collections(question, catalog)
-            if schema_spec.get("error"):
+                return {"execution_success": False, "execution_error": "The configured MongoDB database has no collections.",
+                        "_schema_cache": cache_status}
+            agents_called.append("query_context")
+            context_result = self.query_context_agent.build(question, catalog)
+            if context_result.get("error"):
                 return {
                     "execution_success": False,
-                    "execution_error": schema_spec.get("detail"),
-                    "schema_spec": schema_spec,
+                    "execution_error": context_result.get("detail"),
+                    "_schema_cache": cache_status,
                 }
-
-            if len(schema_spec["collections"]) > 1:
-                route.update(complexity="complex", needs_planner=True, needs_summary=True)
-            query_plan = self.planner_agent.plan(question, schema_spec) if route["needs_planner"] else None
-            generated_query = self.query_generator.generate(question, schema_spec, query_plan, operation_hint=route["operation"])
-            # Guard against a classification miss using selected/generated structure.
-            if query_plan is None and (len(schema_spec["collections"]) > 1 or generated_query.get("operation") == "aggregate"):
-                route.update(complexity="complex", needs_planner=True, needs_summary=True)
-                query_plan = self.planner_agent.plan(question, schema_spec)
-                generated_query = self.query_generator.generate(question, schema_spec, query_plan, operation_hint="aggregate")
+            query_context = context_result["query_context"]
+            schema_spec = context_result["schema_spec"]
+            route = {
+                "complexity": query_context["complexity"],
+                "operation": query_context["operation"],
+            }
+            agents_called.append("query_generator")
+            generated_query = self.query_generator.generate(
+                question, schema_spec, operation_hint=query_context["operation"]
+            )
             repairs = 0
 
             validation_errors: list[str] = []
@@ -74,6 +92,7 @@ class OrchestratorAgent:
                     validation_errors.append(str(exc))
                     if attempt == 0 and "Banned" not in str(exc) and "Unsupported operation" not in str(exc):
                         repairs += 1
+                        agents_called.append("repair")
                         generated_query = self.query_generator.repair(
                             question, schema_spec, generated_query, str(exc)
                         )
@@ -82,11 +101,13 @@ class OrchestratorAgent:
 
             assert validated_query is not None
             execution = self.executor.execute(validated_query)
+            execution_time_ms += execution.get("execution_time_ms", 0)
 
             # One repair attempt for a database execution error.
             # Only structural MongoDB command failures are repairable, not connectivity/auth failures.
             if not execution.get("ok") and repairs == 0 and execution.get("repairable", False):
                 repairs += 1
+                agents_called.append("repair")
                 repaired = self.query_generator.repair(
                     question,
                     schema_spec,
@@ -97,19 +118,15 @@ class OrchestratorAgent:
                     validated_query = self.validator.validate(repaired, schema_spec)
                     generated_query = repaired
                     execution = self.executor.execute(validated_query)
+                    execution_time_ms += execution.get("execution_time_ms", 0)
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
 
-            artifact = {"enabled": False, "generated": False}
-            if execution.get("ok") and query_plan and query_plan.get("python_postprocessing_required"):
-                artifact = self.python_artifact.generate(
-                    question=question,
-                    goal=str(query_plan.get("python_goal") or "Post-process the query result"),
-                    rows=execution.get("all_rows", []),
-                )
-
-            needs_summary = bool(execution.get("ok") and execution.get("row_count") and (route["needs_summary"] or validated_query["operation"] == "aggregate"))
+            needs_summary = bool(execution.get("ok") and execution.get("row_count") and (
+                query_context["complexity"] == "complex" or validated_query["operation"] == "aggregate"
+            ))
             if needs_summary:
+                agents_called.append("summary")
                 summary = self.summary_agent.summarize(question, execution)
             else:
                 rows = execution.get("all_rows", [])
@@ -120,26 +137,44 @@ class OrchestratorAgent:
                 else:
                     text = f"Found {len(rows)} results." if rows else "No matching data was found."
                 summary = {"summary_text": text, "row_count": len(rows)}
-            called = ["query_router", "schema_selection"] + (["planner"] if query_plan else []) + ["query_generator"] + (["repair"] if repairs else []) + (["summary"] if needs_summary else [])
-            path = {"route": route["complexity"], "agents_called": called, "planner_skipped": query_plan is None, "summary_skipped": not needs_summary}
+            path = {"route": route["complexity"], "agents_called": agents_called, "llm_calls": len(agents_called),
+                    "repair_used": bool(repairs), "summary_used": needs_summary, "summary_skipped": not needs_summary}
             logging.getLogger(__name__).debug("execution_path=%s", path)
             return {
                 "route": route,
+                "query_context": query_context,
                 "execution_path": path,
                 "final_response": summary.get("summary_text"),
                 "execution_success": bool(execution.get("ok")),
                 "execution_result": execution.get("all_rows", []),
                 "execution_error": execution.get("error"),
+                "execution_metadata": {"row_count": execution.get("row_count", 0), "execution_time_ms": execution_time_ms},
                 "schema_spec": schema_spec,
-                "query_plan": query_plan,
+                "query_plan": None,
                 "generated_query": generated_query,
                 "validated_query": validated_query,
                 "validation_errors": validation_errors,
-                "python_artifact": artifact,
+                "python_artifact": None,
                 "results_summary_agent_output": summary,
+                "_schema_cache": cache_status,
             }
         except Exception as exc:
-            return {"execution_success": False, "execution_error": str(exc)}
+            # Keep completed stages available for history even when a later stage fails.
+            return {
+                "execution_success": False, "execution_error": str(exc),
+                "final_response": "I could not complete this query. See execution_error for details.",
+                "route": route, "query_context": query_context, "schema_spec": schema_spec, "query_plan": None,
+                "execution_path": {"route": route.get("complexity") if route else None,
+                                   "agents_called": agents_called, "llm_calls": len(agents_called),
+                                   "repair_used": "repair" in agents_called,
+                                   "summary_used": "summary" in agents_called,
+                                   "summary_skipped": "summary" not in agents_called},
+                "generated_query": generated_query, "validated_query": validated_query,
+                "validation_errors": validation_errors,
+                "execution_result": execution.get("all_rows", []),
+                "execution_metadata": {"row_count": execution.get("row_count", 0), "execution_time_ms": execution_time_ms},
+                "_schema_cache": cache_status,
+            }
 
 
 def run_request(question: str) -> dict[str, Any]:

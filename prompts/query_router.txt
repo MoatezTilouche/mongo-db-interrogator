@@ -1,3 +1,8 @@
-Classify requirements without generating a query. Simple: one collection with retrieval, filtering, projection, sort, limit, count or distinct. Complex: joins, grouping, computed metrics, array transformations, multiple stages or business/date reasoning. Analytics needs summary; ordinary rows/count/distinct does not.
-Return JSON: {"complexity":"simple|complex","operation":"find|count|distinct|aggregate|unknown","needs_planner":false,"needs_schema_selection":true,"needs_summary":false}. needs_planner must match complexity.
+One JSON object only, no prose/fences/extra keys. Simple: single-collection filter/project/sort/limit/count/distinct. Complex: joins/grouping/computed metrics/array transformations/business calculations.
+Keys: complexity (simple/complex), operation (find/count/distinct/aggregate/unknown), needs_planner (complex only), needs_schema_selection (true), needs_summary (analytics only). Grouping/joins/metrics require aggregate; sorting stored fields does not.
+Simple output shape:
+{"complexity":"simple","operation":"find","needs_planner":false,"needs_schema_selection":true,"needs_summary":false}
+Complex output shape:
+{"complexity":"complex","operation":"aggregate","needs_planner":true,"needs_schema_selection":true,"needs_summary":true}
+Choose values for the request, not by copying an example. Booleans must be JSON booleans, not strings.
 Question: $question
