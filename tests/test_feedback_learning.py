@@ -565,7 +565,7 @@ def test_potential_global_is_stored_without_changing_business_data(repositories,
 def test_secrets_are_redacted_from_history_feedback_and_prompts(monkeypatch, repositories, analysis):
     import agents.feedback_analysis_agent as agent_module
     secret = "test-openrouter-credential-not-real"
-    monkeypatch.setenv("OPENROUTER_API_KEY", secret)
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
     monkeypatch.setenv("API_KEY", "test-auth-credential-not-real")
     queries, feedback, _ = repositories
     output = result()
@@ -631,7 +631,7 @@ def test_short_credentials_do_not_corrupt_request_ids(monkeypatch, repositories)
 
 def test_untrusted_request_id_cannot_log_configured_secrets(monkeypatch, repositories, caplog):
     from services.feedback_service import HistoryNotFoundError
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-real-provider-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-provider-secret")
     queries, feedback, _ = repositories
     with caplog.at_level(logging.INFO), pytest.raises(HistoryNotFoundError):
         FeedbackService(queries, feedback).submit("test-not-a-real-provider-secret", True)

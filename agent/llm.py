@@ -10,8 +10,7 @@ from agent.config import (
     LLM_MAX_RETRIES,
     LLM_ROLE_CONFIG,
     LLM_TIMEOUT_SECONDS,
-    OPENROUTER_API_KEY,
-    OPENROUTER_BASE_URL,
+    OPENAI_API_KEY,
 )
 from agent.llm_structured import parse_json_from_text
 from agent.token_usage import get_token_usage_callback
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMRouterError(RuntimeError):
-    """Raised when the single configured OpenRouter model fails."""
+    """Raised when the configured OpenAI model fails."""
 
 
 class StructuredOutputError(ValueError):
@@ -38,15 +37,13 @@ class LLMRouter:
 
         callback = get_token_usage_callback()
         callbacks = [callback] if callback else None
-        if not OPENROUTER_API_KEY:
-            raise ValueError("OPENROUTER_API_KEY is required")
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is required")
         from langchain_openai import ChatOpenAI
 
         client = ChatOpenAI(
             model=model,
-            api_key=OPENROUTER_API_KEY,
-            base_url=OPENROUTER_BASE_URL,
-            temperature=0,
+            api_key=OPENAI_API_KEY,
             timeout=LLM_TIMEOUT_SECONDS,
             max_retries=0,
             callbacks=callbacks,
@@ -141,7 +138,7 @@ class LLMRouter:
                     (time.perf_counter() - started) * 1000, type(exc).__name__,
                     current_request_id(),
                 )
-                message = f"OpenRouter request failed for {role} ({type(exc).__name__})"
+                message = f"OpenAI request failed for {role} ({type(exc).__name__})"
                 if isinstance(exc, StructuredOutputError):
                     finish_reason = self._finish_reason(response)
                     detail = str(exc)
@@ -155,7 +152,7 @@ class LLMRouter:
                 record = record_attempt(role, model, response, (time.perf_counter() - started) * 1000, False)
                 record["finish_reason"] = self._finish_reason(response)
                 logger.debug("llm telemetry=%s", record)
-        raise LLMRouterError(f"OpenRouter request failed for {role}")
+        raise LLMRouterError(f"OpenAI request failed for {role}")
 
 
 llm_router = LLMRouter()

@@ -20,12 +20,11 @@ MAX_LIMIT = int(os.getenv("MAX_LIMIT", "500"))
 # LLM routing
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# One OpenRouter model for every agent; legacy per-role/fallback variables are ignored.
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
-LLM_ROLE_CONFIG = {role: OPENROUTER_MODEL for role in (
+# One OpenAI model for every active agent; no provider or per-role fallback.
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
+LLM_ROLE_CONFIG = {role: OPENAI_MODEL for role in (
     "feedback_analysis", "query_context", "query_generator", "repair", "summary",
 )}
 

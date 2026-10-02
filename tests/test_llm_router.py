@@ -7,7 +7,7 @@ from agent.llm import LLMRouter, LLMRouterError, StructuredOutputError
 from agent.telemetry import capture_usage, totals
 
 @pytest.mark.parametrize("role", list(module.LLM_ROLE_CONFIG))
-def test_all_roles_use_single_openrouter_model(monkeypatch, role):
+def test_all_roles_use_single_openai_model(monkeypatch, role):
     router = LLMRouter()
     client = Mock()
     client.invoke.return_value = SimpleNamespace(content='{"ok":true}')
@@ -26,9 +26,9 @@ def test_transient_error_retries_same_model_without_fallback(monkeypatch, error)
     factory = Mock(return_value=client)
     monkeypatch.setattr(router, "_client", factory)
     with capture_usage() as records, pytest.raises(LLMRouterError):
-        router.invoke("planner", [])
+        router.invoke("query_context", [])
     assert client.invoke.call_count == 2
-    assert {call.args[0] for call in factory.call_args_list} == {module.LLM_ROLE_CONFIG["planner"]}
+    assert {call.args[0] for call in factory.call_args_list} == {module.LLM_ROLE_CONFIG["query_context"]}
     assert all(not record["fallback_used"] for record in records)
 
 
@@ -76,19 +76,20 @@ def test_unknown_role_is_rejected():
         LLMRouter().invoke("missing", [])
 
 
-def test_other_provider_signature_is_not_supported():
+def test_client_factory_accepts_only_a_model_argument():
     with pytest.raises(TypeError):
         LLMRouter()._client("another-provider", "model")
 
 
-def test_openrouter_client_does_not_set_an_output_token_cap(monkeypatch):
+def test_openai_client_does_not_set_an_output_token_cap(monkeypatch):
     import langchain_openai
     constructor = Mock(return_value=Mock())
     monkeypatch.setattr(langchain_openai, "ChatOpenAI", constructor)
-    monkeypatch.setattr(module, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(module, "OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(module, "get_token_usage_callback", lambda: None)
-    LLMRouter()._client("openrouter/free")
+    LLMRouter()._client("gpt-6.1-sol")
     options = constructor.call_args.kwargs
+    assert "temperature" not in options
     assert "max_tokens" not in options
     assert "max_completion_tokens" not in options
-    assert options["model"] == "openrouter/free"
+    assert options["model"] == "gpt-6.1-sol"

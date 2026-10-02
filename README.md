@@ -112,7 +112,8 @@ Set at minimum:
 ```env
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DATABASE=my_database
-OPENROUTER_API_KEY=...
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-6.1-sol
 ```
 
 Then run:
@@ -146,16 +147,16 @@ The cache uses a thread lock for concurrent requests within one backend process.
 
 ## Routing and request telemetry
 
-QueryContextAgent classifies semantic requirements and selects schema fields in one structured OpenRouter call. Simple requests normally use two calls (context and generation), skipping planning and summary. Multi-collection requests classified as simple are promoted to complex aggregation before generation.
+QueryContextAgent classifies semantic requirements and selects schema fields in one structured OpenAI call. Simple requests normally use two calls (context and generation), skipping planning and summary. Multi-collection requests classified as simple are promoted to complex aggregation before generation.
 
 Only field/type metadata reaches QueryContextAgent. QueryGeneratorAgent receives only selected collections and fields, the question, operation hint, and read-only constraints; no sampled documents, unrelated collections, conversation history or execution history are included. Repair sees only question, selected schema, failed query and error, with one repair maximum per request. Authentication and connectivity failures do not trigger repair.
 
-`OPENROUTER_MODEL=openrouter/free` selects one model for active LLM agents, with no application fallback. Legacy per-role model and fallback variables are ignored. `LLM_MAX_RETRIES=1` allows one transient retry against the same model; invalid structured output is not retried. Responses include `route`, `execution_path` and `telemetry`, including the `schema_cache_hit`, `schema_cache_miss`, `schema_cache_refresh`, and `schema_cache_stale_fallback` flags. Telemetry counts every LLM attempt, including retries, with agent, model, input/output tokens and latency; totals sum LLM attempt latency rather than whole-request time. Missing provider usage reports as zero. Enable Python DEBUG logging for path and per-attempt records; no request credentials are logged.
+`OPENAI_API_KEY` authenticates requests. `OPENAI_MODEL=gpt-6.1-sol` selects the same model for active LLM agents. GPT-6.1 Sol is OpenAI's near-flagship model for complex work at lower cost than Astra, and supports structured outputs. `LLM_MAX_RETRIES=1` allows one transient retry against the same model; invalid structured output is not retried. Responses include `route`, `execution_path` and `telemetry`, including the `schema_cache_hit`, `schema_cache_miss`, `schema_cache_refresh`, and `schema_cache_stale_fallback` flags. Telemetry counts every LLM attempt, including retries, with agent, model, input/output tokens and latency; totals sum LLM attempt latency rather than whole-request time. Missing provider usage reports as zero. Enable Python DEBUG logging for path and per-attempt records; no request credentials are logged.
 
 Run regression tests with `python -m pytest -q`. These tests mock classification and generation; live model routing quality and latency still need measurement against a representative database.
 
-All agents call OpenRouter directly using the single `OPENROUTER_MODEL` setting (default `openrouter/free`). There is no application-level model fallback. The existing telemetry field `fallback_used` is retained for compatibility and is always false. Restart the API after changing `.env`.
+All agents use OpenAI through the shared router and the single `OPENAI_MODEL` setting. There is no provider or application-level model fallback. The existing telemetry field `fallback_used` is retained for compatibility and is always false. Restart the API after adding `OPENAI_API_KEY` or changing `.env`.
 
 Structured-output failures report safe field/type validation details and the provider's finish reason without raw output or input values. `finish_reason=length` flags a response that reached the output token limit and may be incomplete; absent metadata is reported as `unknown`. Every telemetry attempt also records the finish reason. These failures are not retried, and the token budget is not automatically increased.
 
-The application does not send `max_tokens` or `max_completion_tokens` to OpenRouter. The former `LLM_MAX_OUTPUT_TOKENS` setting is no longer used. Generation follows the provider/model's own defaults and limits; the request timeout still applies.
+The application does not send `max_tokens` or `max_completion_tokens`. The former `LLM_MAX_OUTPUT_TOKENS` setting is no longer used. Generation follows the model's own defaults and limits; the request timeout still applies.
