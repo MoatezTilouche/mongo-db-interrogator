@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from agent.config import DEFAULT_LIMIT, MAX_LIMIT
+from agent.config import DEFAULT_LIMIT, MAX_LIMIT, QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION
 from agent.tracing import traceable
 
 
@@ -78,11 +78,21 @@ class ValidatorAgent:
             raise QueryValidationError(f"Unsupported operation: {operation}")
 
         collection = str(normalized.get("collection", "")).strip()
+        internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION}
+        if collection in internal:
+            raise QueryValidationError("Internal learning collections are not queryable")
         known_collections = _known_collections(schema_spec)
         if not collection or collection not in known_collections:
             raise QueryValidationError(f"Unknown or missing collection: {collection}")
 
         _validate_no_banned_keys(normalized)
+        for key, child in _walk_keys(normalized):
+            if key in {"$lookup", "$unionWith"}:
+                target = child.get("from") if key == "$lookup" and isinstance(child, dict) else (
+                    child.get("coll") if isinstance(child, dict) else child
+                )
+                if isinstance(target, str) and target in internal:
+                    raise QueryValidationError("Internal learning collections are not queryable")
         known_fields = _known_fields(schema_spec, collection)
 
         if operation == "find":

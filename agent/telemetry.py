@@ -2,6 +2,19 @@
 from contextvars import ContextVar
 from contextlib import contextmanager
 _records = ContextVar("llm_records", default=None)
+_request_id = ContextVar("llm_request_id", default=None)
+
+@contextmanager
+def request_context(request_id):
+    token = _request_id.set(request_id)
+    try:
+        yield
+    finally:
+        _request_id.reset(token)
+
+def current_request_id():
+    return _request_id.get()
+
 @contextmanager
 def capture_usage():
     records = []

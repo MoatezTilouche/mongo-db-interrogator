@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers.health import router as health_router
 from api.routers.query import router as query_router
+from api.routers.feedback import router as feedback_router
 
 
 def create_app() -> FastAPI:
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(query_router)
+    app.include_router(feedback_router)
     return app
 
 

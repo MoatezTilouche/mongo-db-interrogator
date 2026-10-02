@@ -1,4 +1,6 @@
-Select the smallest sufficient set of collections and fields, including join keys and requested output fields. For unrestricted document retrieval include all fields of the relevant collection. Use only this catalog.
+Return one JSON object only, no prose/fences/extra keys. collections must be a string array; fields must map each selected collection to a string array. Use only catalog collections/fields. No extra collections unless joining is necessary. Include filter/sort/output/join fields; unrestricted retrieval needs all fields of that collection.
+Output shape (replace example names with actual catalog names):
+{"collections":["customers"],"fields":{"customers":["_id","name"]}}
+For joins, add the other collection to both collections and fields. Their keys must match exactly. Do not return a MongoDB query, schema metadata or explanation.
 Question: $question
 Catalog: $schema_json
-Return JSON: {"collections":["name"],"fields":{"name":["field"]}}.

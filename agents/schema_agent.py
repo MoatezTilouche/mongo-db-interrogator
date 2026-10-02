@@ -6,6 +6,7 @@ from agent.output_schemas import Selection
 from agent.prompt_loader import render_prompt
 from database.schema_inspector import inspect_database_schema, compact_schema
 class SchemaSelectionAgent:
+    """Deprecated compatibility wrapper; QueryContextAgent owns active selection."""
     def identify_collections(self, question, catalog=None):
         catalog = inspect_database_schema() if catalog is None else catalog
         collections = compact_schema(catalog)

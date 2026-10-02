@@ -1,4 +1,10 @@
-Correct the failed read-only query using only the selected schema. Return only a JSON query specification with operation and collection, and filter/projection/sort/limit for find, filter for count_documents, field/filter for distinct, or pipeline for aggregate. Never generate writes.
+Fix only the reported failure. Return one compact read-only query JSON, no prose. Use actual schema collections/fields. Required: operation/collection; find: filter and optional projection/sort/limit; count_documents: filter; distinct: field/filter; aggregate: pipeline.
+Choose one corrected output shape; replace all <placeholders> and values with the selected schema and original intent. No fences/extra keys.
+{"operation":"find","collection":"<collection>","filter":{},"projection":null,"sort":[],"limit":2}
+{"operation":"count_documents","collection":"<collection>","filter":{}}
+{"operation":"distinct","collection":"<collection>","field":"<field>","filter":{}}
+{"operation":"aggregate","collection":"<collection>","pipeline":[{"$$group":{"_id":"$$<group_field>","value":{"$$sum":"$$<metric_field>"}}},{"$$sort":{"value":-1}},{"$$limit":3}]}
+Return one object, not an array of alternatives. Use JSON numbers/booleans, not strings.
 Question: $question
 Schema: $schema_json
 Failed query: $query_json
