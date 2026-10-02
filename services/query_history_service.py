@@ -58,6 +58,7 @@ class QueryHistoryService:
                 "selected_schema": compact_schema(result.get("schema_spec") or {}),
                 "query_context": result.get("query_context"),
                 "applied_preferences": result.get("applied_preferences", []),
+                "applied_knowledge": result.get("applied_knowledge", []),
                 "agents_called": (result.get("execution_path") or {}).get("agents_called", []),
                 "summary_skipped": (result.get("execution_path") or {}).get("summary_skipped", True),
                 "repair_used": (result.get("execution_path") or {}).get("repair_used", False),

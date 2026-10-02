@@ -9,6 +9,7 @@ from typing import Any
 
 from agent.config import (
     FEEDBACK_COLLECTION,
+    DATABASE_KNOWLEDGE_COLLECTION,
     MONGO_MAX_COLLECTIONS,
     MONGO_SCHEMA_SAMPLE_SIZE,
     SCHEMA_CACHE_COLLECTION,
@@ -59,6 +60,7 @@ def _walk(value: Any, prefix: str, out: dict[str, set[str]]) -> None:
 def _inspect_database_schema() -> dict[str, Any]:
     db = get_database()
     internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
+                DATABASE_KNOWLEDGE_COLLECTION,
                 SCHEMA_CACHE_COLLECTION}
     collection_names = sorted(
         name for name in db.list_collection_names()

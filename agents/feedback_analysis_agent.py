@@ -6,7 +6,7 @@ import re
 from typing import Literal
 
 from langchain_core.messages import HumanMessage
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from agent.llm import llm_router
 from agent.llm_structured import parse_json_from_text
@@ -26,8 +26,26 @@ class FeedbackAnalysis(StrictOutput):
     corrected_meaning: str | None = Field(max_length=500)
     reusable_preference: bool
     preference: str | None = Field(max_length=500)
-    scope: Literal["user", "potential_global", "one_off"]
+    knowledge_candidate: bool = False
+    knowledge_type: Literal["business_rule", "field_definition", "coded_value", "relationship"] | None = None
+    collections: list[str] = Field(default_factory=list, max_length=20)
+    fields: list[str] = Field(default_factory=list, max_length=50)
+    scope: Literal["user", "database", "one_off"]
     confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def consistent_learning_scope(self):
+        if self.scope == "database":
+            if not self.knowledge_candidate or self.reusable_preference or self.knowledge_type is None:
+                raise ValueError("database scope requires a knowledge candidate, type, and no user preference")
+        elif self.scope == "user":
+            if not self.reusable_preference or self.knowledge_candidate:
+                raise ValueError("user scope requires a reusable preference and no database candidate")
+        elif self.reusable_preference or self.knowledge_candidate:
+            raise ValueError("one_off scope cannot create reusable learning")
+        if not self.knowledge_candidate and self.knowledge_type is not None:
+            raise ValueError("knowledge_type requires knowledge_candidate=true")
+        return self
 
 
 class FeedbackAnalysisAgent:
@@ -35,7 +53,7 @@ class FeedbackAnalysisAgent:
     def _normalize_clear_ranking_correction(analysis: FeedbackAnalysis, history: dict,
                                            comment: str) -> FeedbackAnalysis:
         """Treat concrete corrections to ambiguous rankings as reusable user intent."""
-        if analysis.scope == "potential_global" or analysis.feedback_type != "wrong_sorting":
+        if analysis.scope == "database" or analysis.knowledge_candidate or analysis.feedback_type != "wrong_sorting":
             return analysis
         if analysis.reusable_preference and analysis.scope == "user" and analysis.preference:
             return analysis

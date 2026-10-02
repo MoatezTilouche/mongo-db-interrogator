@@ -10,9 +10,11 @@ Result previews default to at most five rows and 8192 serialized bytes in total;
 
 `POST /feedback` uses the same `X-API-Key` protection as `/query`. Send `request_id`, a strict boolean `liked`, and optionally `comment`. Negative feedback requires a non-empty comment. Responses use 200 for saved feedback, 422 for invalid input, 404 for a missing history ID and 503 if raw feedback cannot be stored. The API has no per-user authentication, so `DEFAULT_USER_ID=default` provides a configurable, single-user preference scope for now.
 
-Feedback uses the request ID as MongoDB's unique `_id`. Repeated submissions update one record, preserve its creation time, and replace old analysis. Revision-checked analysis updates prevent an older in-flight analysis from overwriting newer feedback. Raw feedback is saved before any analysis. Positive feedback makes no LLM calls. Negative feedback uses the existing centralized OpenRouter router and a strictly validated `FeedbackAnalysisAgent`. Reusable `scope=user` analyses are normalized into `user_preferences`; global candidates and one-off feedback are never promoted. Preferences are deduplicated by user, type and collection, so newer corrections update the active preference. Positive or replaced feedback deactivates preferences sourced from that request.
+Feedback uses the request ID as MongoDB's unique `_id`. Repeated submissions update one record, preserve its creation time, and replace old analysis. Revision-checked analysis updates prevent an older in-flight analysis from overwriting newer feedback. Raw feedback is saved before any analysis. Positive feedback makes no LLM calls. Negative feedback uses the centralized OpenAI router and a strictly validated `FeedbackAnalysisAgent`, followed by a deterministic `FeedbackLearningRouter`. Reusable `scope=user` analyses are normalized into `user_preferences`; database-scoped rules are stored separately as inactive candidates; one-off corrections remain only in feedback/history. Preferences are deduplicated by user, type and collection, so newer corrections update the active preference. Positive or replaced feedback deactivates preferences sourced from that request.
 
-The analyzer sees only the associated question, selected schema, plan, generated/validated query, response and comment. It does not receive result previews, complete database schemas, telemetry or unrelated requests. Before each query, active preferences are filtered by the mentioned collection, operation intent, confidence and schema-valid fields. Relevant preferences reach QueryContextAgent and QueryGeneratorAgent; explicit fields or sort directions in the current question take precedence. Ambiguous find sorting is also applied deterministically before validation. Applied preferences are recorded in `query_history`. There is no embedding, vector search, RAG or fine-tuning. The backend has no verified business-rule registry today, so `potential_global` feedback remains analysis-only.
+The analyzer sees only the associated question, selected schema, query context, generated/validated query, response and comment. It does not receive result previews, complete database schemas, telemetry or unrelated requests. Before each query, active preferences are filtered by the mentioned collection, operation intent, confidence and schema-valid fields. Relevant preferences reach QueryContextAgent and QueryGeneratorAgent; explicit fields or sort directions in the current question take precedence. Ambiguous find sorting is also applied deterministically before validation. Applied preferences are recorded in `query_history`.
+
+Database-knowledge candidates are stored in `_system_database_knowledge`, separate from technical schema metadata and personal preferences. Each candidate records its type, normalized text, verified collection/field references where available, source request IDs, conservative confidence, confirmation count and an OpenAI embedding. Equivalent feedback is deduplicated using type, normalized text and sorted references; evidence IDs are capped at 50. One event remains inactive. After two independent confirmations a candidate is marked `confirmed`; optional automatic activation is disabled by default and requires the configured confirmation count and confidence. Explicit internal approval also checks for a contradictory active rule with the same type and references. The runtime retriever queries only `{status: "active", active: true}`, returns at most `KNOWLEDGE_RETRIEVAL_TOP_K` records, and combines semantic score with text, selected-collection and field overlap. It shares the schema retriever's request embedding. Candidates never enter query prompts. Active knowledge is passed in a separate context section with precedence below the explicit current request and above user preferences; conflicting sorting preferences are suppressed before generation. Compact references are recorded as `applied_knowledge` in query history. No normal MongoDB business documents are embedded.
 
 Reusable preferences are stored in `user_preferences` with a stable identity based on user, preference type and collection. A later correction for the same category and collection updates the existing record. Preference retrieval is bounded by `USER_PREFERENCE_RETRIEVAL_LIMIT` (default 50) and then filtered to the request. Since authentication currently uses one shared API key without a user identity, all requests use the configurable `DEFAULT_USER_ID`; do not use this deployment setting for multiple independent users.
 
@@ -26,9 +28,17 @@ FEEDBACK_COLLECTION=feedback
 USER_PREFERENCES_COLLECTION=user_preferences
 DEFAULT_USER_ID=default
 USER_PREFERENCE_RETRIEVAL_LIMIT=50
+DATABASE_KNOWLEDGE_COLLECTION=_system_database_knowledge
+KNOWLEDGE_RETRIEVAL_TOP_K=3
+KNOWLEDGE_AUTO_PROMOTION_ENABLED=false
+KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS=3
+KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE=0.90
+KNOWLEDGE_EMBEDDING_MODEL=text-embedding-3-small  # defaults to SCHEMA_EMBEDDING_MODEL
 ```
 
-Collections are created lazily on the first write; their built-in unique `_id` indexes enforce one record per request or normalized preference identity. MongoDB credentials need permission for backend writes to these three collections, while generated user queries remain read-only. Do not choose business collection names for the internal collections. UTC timestamps are stored as BSON datetimes. `DEFAULT_USER_ID` is a shared deployment scope, not user authentication; use distinct authenticated user IDs before serving multiple independent users.
+`KNOWLEDGE_EMBEDDING_MODEL` must match `SCHEMA_EMBEDDING_MODEL`; the request's shared embedding is used for both indexes.
+
+Collections are created lazily on the first write; built-in unique `_id` indexes enforce one record per request, preference identity, or normalized knowledge candidate. MongoDB credentials need permission for backend writes to these internal collections, while generated user queries remain read-only. Do not choose business collection names for the internal collections. UTC timestamps are stored as BSON datetimes. `DEFAULT_USER_ID` is a shared deployment scope, not user authentication; use distinct authenticated user IDs before serving multiple independent users.
 
 Example `/query` response (abbreviated; remaining existing fields are preserved):
 
@@ -56,7 +66,7 @@ Negative feedback request and an illustrative response (model classifications ca
 {"request_id":"req_92e30f","feedback_saved":true,"analysis_created":true,"analysis":{"feedback_type":"wrong_metric","cause":"Customers were ranked by order count.","corrected_meaning":"Rank customers by total spending.","reusable_preference":true,"preference":"Interpret top customers as ranking by total spending.","scope":"user","confidence":0.95},"analysis_error":null}
 ```
 
-Tests use in-memory MongoDB interface fakes and mocked LLM responses; `tests/conftest.py` disables external trace export during tests. Run `python -m pytest -q`. Live MongoDB and OpenRouter behavior requires integration verification with deployment credentials.
+Tests use in-memory MongoDB interface fakes and mocked LLM responses; `tests/conftest.py` disables external trace export during tests. Run `python -m pytest -q`. Live MongoDB and OpenAI behavior requires integration verification with deployment credentials.
 
 ## Architecture
 
@@ -68,7 +78,7 @@ User -> SchemaInspector -> QueryContextAgent -> QueryGeneratorAgent
      -> query history; independent feedback endpoint
 ```
 
-QueryContextAgent selects relevant collections and fields while classifying the request. The deterministic SchemaInspector caches only compact schema metadata per database in process memory, so ordinary requests reuse the catalog until its TTL expires. Simple requests use 2 LLM calls (context and generator). Complex requests use 2, or 3 when a summary adds value. Repairs add one call. `query_plan` remains `null` for response compatibility.
+QueryContextAgent selects relevant collections and fields while classifying the request. At startup the deterministic SchemaInspector refreshes compact field/type metadata, then SchemaBootstrapService reuses or incrementally updates its persistent semantic cache. Each request retrieves a small schema candidate set and active business-knowledge chunks before QueryContextAgent. Simple requests use 2 chat calls (context and generator), plus one shared embedding request for schema and knowledge retrieval. Complex requests use 2, or 3 when a summary adds value. Repairs add one call. `query_plan` remains `null` for response compatibility.
 
 The LLM never generates Mongo shell code for direct execution. It produces a structured JSON query specification that is validated before PyMongo receives it.
 

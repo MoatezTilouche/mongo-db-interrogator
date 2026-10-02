@@ -6,6 +6,10 @@ import logging
 from agent.telemetry import capture_usage, totals
 from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
+from services.context_builder import ContextBuilder
+from services.knowledge_retriever import KnowledgeRetriever
+
+_knowledge_retriever = KnowledgeRetriever()
 
 from agent.tracing import traceable
 from agents.executor_agent import ExecutorAgent
@@ -29,6 +33,8 @@ class OrchestratorAgent:
         self.executor = ExecutorAgent()
         self.summary_agent = ResultsSummaryAgent()
         self.preference_service = UserPreferenceService(user_id=DEFAULT_USER_ID)
+        self.context_builder = ContextBuilder()
+        self.knowledge_retriever = _knowledge_retriever
 
     @traceable(name="orchestrator.run")
     def run(self, question: str) -> dict[str, Any]:
@@ -43,6 +49,7 @@ class OrchestratorAgent:
                 "schema_cache_stale_fallback": bool(cache.get("stale_fallback")),
             })
             usage.update(result.pop("_schema_retrieval", {}))
+            usage.update(result.pop("_knowledge_retrieval", {}))
             usage["query_context_input_tokens"] = sum(
                 attempt.get("input_tokens", 0) for attempt in usage["attempts"]
                 if attempt.get("agent") == "query_context"
@@ -66,6 +73,8 @@ class OrchestratorAgent:
         route = query_context = schema_spec = generated_query = validated_query = None
         cache_status: dict[str, Any] = {}
         retrieval_status: dict[str, Any] = {}
+        knowledge_status: dict[str, Any] = {}
+        applied_knowledge: list[dict[str, Any]] = []
         execution: dict[str, Any] = {}
         execution_time_ms = 0.0
         validation_errors: list[str] = []
@@ -89,17 +98,39 @@ class OrchestratorAgent:
             retrieval = schema_bootstrap_service.retrieve(question, preferences)
             candidate_catalog = retrieval["catalog"]
             retrieval_status = retrieval["telemetry"]
-            context_result = self.query_context_agent.build(question, candidate_catalog, preferences)
+            knowledge_result = self.knowledge_retriever.retrieve(
+                question, candidate_catalog, retrieval.pop("_query_embedding", None), catalog,
+            )
+            knowledge_candidates = knowledge_result["knowledge"]
+            knowledge_status = knowledge_result["telemetry"]
+            context = self.context_builder.build(
+                question, candidate_catalog, knowledge_candidates, preferences,
+            )
+            context_result = self.query_context_agent.build(
+                context["question"], context["schema"], context["user_preferences"],
+                context["database_knowledge"],
+            )
             if context_result.get("error"):
                 return {
                     "execution_success": False,
                     "execution_error": context_result.get("detail"),
                     "_schema_cache": cache_status,
                     "_schema_retrieval": retrieval_status,
+                    "_knowledge_retrieval": knowledge_status,
                 }
             query_context = context_result["query_context"]
             schema_spec = context_result["schema_spec"]
             preferences = context_result.get("user_preferences", preferences)
+            selected_collections = set(query_context.get("collections", []))
+            applied_knowledge = [
+                item for item in knowledge_candidates
+                if not item.get("collections") or selected_collections.intersection(item["collections"])
+            ]
+            if applied_knowledge:
+                logging.getLogger(__name__).info(
+                    "knowledge_applied_to_query request_id=%s count=%d",
+                    current_request_id(), len(applied_knowledge),
+                )
             route = {
                 "complexity": query_context["complexity"],
                 "operation": query_context["operation"],
@@ -107,7 +138,7 @@ class OrchestratorAgent:
             agents_called.append("query_generator")
             generated_query = self.query_generator.generate(
                 question, schema_spec, operation_hint=query_context["operation"],
-                user_preferences=preferences,
+                user_preferences=preferences, database_knowledge=applied_knowledge,
             )
             apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id)
             repairs = 0
@@ -124,7 +155,8 @@ class OrchestratorAgent:
                         repairs += 1
                         agents_called.append("repair")
                         generated_query = self.query_generator.repair(
-                            question, schema_spec, generated_query, str(exc), preferences
+                            question, schema_spec, generated_query, str(exc), preferences,
+                            database_knowledge=applied_knowledge,
                         )
                         apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id)
                     else:
@@ -145,6 +177,7 @@ class OrchestratorAgent:
                     validated_query,
                     str(execution.get("error") or "MongoDB execution failed"),
                     preferences,
+                    database_knowledge=applied_knowledge,
                 )
                 apply_preferences_to_query(repaired, preferences, self.preference_service.user_id)
                 try:
@@ -187,11 +220,13 @@ class OrchestratorAgent:
                 "generated_query": generated_query,
                 "validated_query": validated_query,
                 "applied_preferences": applied_preferences_for_query(validated_query, preferences),
+                "applied_knowledge": applied_knowledge,
                 "validation_errors": validation_errors,
                 "python_artifact": None,
                 "results_summary_agent_output": summary,
                 "_schema_cache": cache_status,
                 "_schema_retrieval": retrieval_status,
+                "_knowledge_retrieval": knowledge_status,
             }
         except Exception as exc:
             # Keep completed stages available for history even when a later stage fails.
@@ -206,10 +241,12 @@ class OrchestratorAgent:
                                    "summary_skipped": "summary" not in agents_called},
                 "generated_query": generated_query, "validated_query": validated_query,
                 "validation_errors": validation_errors,
+                "applied_knowledge": applied_knowledge,
                 "execution_result": execution.get("all_rows", []),
                 "execution_metadata": {"row_count": execution.get("row_count", 0), "execution_time_ms": execution_time_ms},
                 "_schema_cache": cache_status,
                 "_schema_retrieval": retrieval_status,
+                "_knowledge_retrieval": knowledge_status,
             }
 
 

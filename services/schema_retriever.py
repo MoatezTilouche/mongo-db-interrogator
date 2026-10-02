@@ -162,4 +162,6 @@ class SchemaRetriever:
         }
         logger.info("schema_retrieval_completed latency_ms=%.1f top_k=%d candidates=%d schema_chars=%d embedding_failed=%s",
                     elapsed, self.top_k, len(candidate_collections), stats["schema_context_size_chars"], embedding_failed)
-        return {"catalog": result, "telemetry": stats}
+        # The orchestrator shares this request embedding with KnowledgeRetriever;
+        # it is private transient context and is never returned to the API/history.
+        return {"catalog": result, "telemetry": stats, "_query_embedding": query_vector}

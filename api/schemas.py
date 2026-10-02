@@ -11,6 +11,7 @@ class QueryResponse(BaseModel):
     request_id: str
     query_context: dict[str, Any] | None = None
     applied_preferences: list[dict[str, Any]] = Field(default_factory=list)
+    applied_knowledge: list[dict[str, Any]] = Field(default_factory=list)
     execution_metadata: dict[str, Any] | None = None
     route: dict[str, Any] | None = None
     execution_path: dict[str, Any] | None = None
@@ -57,3 +58,8 @@ class FeedbackResponse(BaseModel):
     preference_saved: bool = False
     preference_action: str | None = None
     preference_error: str | None = None
+    knowledge_saved: bool = False
+    knowledge_action: str | None = None
+    knowledge_id: str | None = None
+    knowledge_status: str | None = None
+    knowledge_error: str | None = None

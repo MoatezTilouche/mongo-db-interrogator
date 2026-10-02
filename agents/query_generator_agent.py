@@ -24,7 +24,8 @@ class QueryGeneratorAgent:
 
     @traceable(name="query_generator.generate")
     def generate(self, question: str, schema_spec: dict[str, Any], plan: dict[str, Any] | None = None,
-                 operation_hint: str = "unknown", user_preferences: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                 operation_hint: str = "unknown", user_preferences: list[dict[str, Any]] | None = None,
+                 database_knowledge: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         # `plan` is accepted for compatibility but intentionally never enters the prompt.
         return self._invoke_json(render_prompt("query_generator", {
             "question": question,
@@ -32,6 +33,7 @@ class QueryGeneratorAgent:
             "operation_hint": operation_hint,
             "constraints_json": json.dumps({"read_only": True, "default_limit": DEFAULT_LIMIT, "max_limit": MAX_LIMIT}),
             "user_preferences_json": json.dumps(user_preferences or [], ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(database_knowledge or [], ensure_ascii=False, separators=(",", ":")),
         }), "query_generator")
 
     @traceable(name="query_generator.repair")
@@ -42,6 +44,7 @@ class QueryGeneratorAgent:
         previous_query: dict[str, Any],
         error: str,
         user_preferences: list[dict[str, Any]] | None = None,
+        database_knowledge: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return self._invoke_json(render_prompt("query_repair", {
             "question": question,
@@ -49,4 +52,5 @@ class QueryGeneratorAgent:
             "query_json": json.dumps(previous_query, ensure_ascii=False, default=str),
             "error": error,
             "user_preferences_json": json.dumps(user_preferences or [], ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(database_knowledge or [], ensure_ascii=False, separators=(",", ":")),
         }), "repair")

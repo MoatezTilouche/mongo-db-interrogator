@@ -17,10 +17,12 @@ from database.schema_inspector import compact_schema
 class QueryContextAgent:
     @traceable(name="query_context.build")
     def build(self, question: str, catalog: dict[str, Any] | None = None,
-              user_preferences: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+              user_preferences: list[dict[str, Any]] | None = None,
+              database_knowledge: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         if catalog is None:
             return {"error": "schema_not_ready", "detail": "The schema subsystem is not ready."}
         user_preferences = user_preferences or []
+        database_knowledge = database_knowledge or []
         available = compact_schema(catalog)
         if not available:
             return {"error": "no_collections", "detail": "The configured MongoDB database has no collections."}
@@ -28,6 +30,7 @@ class QueryContextAgent:
         prompt = render_prompt("query_context", {
             "question": question,
             "schema_catalog": json.dumps(available, ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(database_knowledge, ensure_ascii=False, separators=(",", ":")),
             "user_preferences_json": json.dumps(user_preferences, ensure_ascii=False, separators=(",", ":")),
         })
         response = llm_router.invoke("query_context", [HumanMessage(content=prompt)], QueryContext)
@@ -47,6 +50,9 @@ class QueryContextAgent:
             for preference in selected_preferences:
                 if preference.get("collection") == name and preference.get("field") in catalog_fields:
                     valid.append(preference["field"])
+            for item in database_knowledge:
+                if name in item.get("collections", []):
+                    valid.extend(field for field in item.get("fields", []) if field in catalog_fields)
             valid = list(dict.fromkeys(valid))
             if not valid:
                 valid = list(catalog_fields)

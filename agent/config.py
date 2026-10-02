@@ -14,6 +14,11 @@ MONGO_MAX_COLLECTIONS = int(os.getenv("MONGO_MAX_COLLECTIONS", "200"))
 SCHEMA_CACHE_ENABLED = os.getenv("SCHEMA_CACHE_ENABLED", "true").lower() == "true"
 SCHEMA_CACHE_TTL_SECONDS = max(0, int(os.getenv("SCHEMA_CACHE_TTL_SECONDS", "300")))
 SCHEMA_CACHE_COLLECTION = os.getenv("SCHEMA_CACHE_COLLECTION", "_system_schema_cache")
+DATABASE_KNOWLEDGE_COLLECTION = os.getenv("DATABASE_KNOWLEDGE_COLLECTION", "_system_database_knowledge")
+KNOWLEDGE_RETRIEVAL_TOP_K = max(1, int(os.getenv("KNOWLEDGE_RETRIEVAL_TOP_K", "3")))
+KNOWLEDGE_AUTO_PROMOTION_ENABLED = os.getenv("KNOWLEDGE_AUTO_PROMOTION_ENABLED", "false").lower() == "true"
+KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS = max(2, int(os.getenv("KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS", "3")))
+KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE = min(1.0, max(0.0, float(os.getenv("KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE", "0.90"))))
 SCHEMA_REBUILD_ON_STARTUP = os.getenv("SCHEMA_REBUILD_ON_STARTUP", "false").lower() == "true"
 SCHEMA_ENRICHMENT_BATCH_SIZE = min(50, max(1, int(os.getenv("SCHEMA_ENRICHMENT_BATCH_SIZE", "10"))))
 SCHEMA_RETRIEVAL_TOP_K = max(1, int(os.getenv("SCHEMA_RETRIEVAL_TOP_K", "5")))
@@ -32,6 +37,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
 SCHEMA_ENRICHMENT_MODEL = os.getenv("SCHEMA_ENRICHMENT_MODEL", OPENAI_MODEL)
 SCHEMA_EMBEDDING_MODEL = os.getenv("SCHEMA_EMBEDDING_MODEL", "text-embedding-3-small")
+KNOWLEDGE_EMBEDDING_MODEL = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", SCHEMA_EMBEDDING_MODEL)
+if KNOWLEDGE_EMBEDDING_MODEL != SCHEMA_EMBEDDING_MODEL:
+    raise ValueError("KNOWLEDGE_EMBEDDING_MODEL must match SCHEMA_EMBEDDING_MODEL for shared query embeddings")
 LLM_ROLE_CONFIG = {role: OPENAI_MODEL for role in (
     "feedback_analysis", "query_context", "query_generator", "repair", "summary",
 )}
@@ -56,5 +64,6 @@ DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "default")
 USER_PREFERENCE_RETRIEVAL_LIMIT = max(1, int(os.getenv("USER_PREFERENCE_RETRIEVAL_LIMIT", "50")))
 QUERY_HISTORY_PREVIEW_SIZE = max(0, int(os.getenv("QUERY_HISTORY_PREVIEW_SIZE", "5")))
 QUERY_HISTORY_PREVIEW_MAX_BYTES = max(0, int(os.getenv("QUERY_HISTORY_PREVIEW_MAX_BYTES", "8192")))
-if len({QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION, SCHEMA_CACHE_COLLECTION}) != 4:
-    raise ValueError("History, feedback, preferences, and schema cache must use separate collections")
+if len({QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
+        SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION}) != 5:
+    raise ValueError("History, feedback, preferences, schema cache, and database knowledge must use separate collections")
