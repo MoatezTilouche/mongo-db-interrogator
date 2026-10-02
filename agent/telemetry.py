@@ -33,5 +33,26 @@ def record_attempt(role, model, response, latency, fallback):
     if records is not None:
         records.append(record)
     return record
+
+def record_embedding(model, input_tokens, latency):
+    record = dict(kind="embedding", agent="schema_embedding", model=model,
+                  input_tokens=input_tokens, output_tokens=0, latency_ms=latency,
+                  fallback_used=False)
+    records = _records.get()
+    if records is not None:
+        records.append(record)
+    return record
+
 def totals(records):
-    return {"attempts": records, "total_llm_calls": len(records), "total_input_tokens": sum(r["input_tokens"] for r in records), "total_output_tokens": sum(r["output_tokens"] for r in records), "total_latency_ms": sum(r["latency_ms"] for r in records)}
+    chat_records = [record for record in records if record.get("kind") != "embedding"]
+    embedding_records = [record for record in records if record.get("kind") == "embedding"]
+    return {
+        "attempts": records,
+        "total_llm_calls": len(chat_records),
+        "total_input_tokens": sum(record["input_tokens"] for record in chat_records),
+        "total_output_tokens": sum(record["output_tokens"] for record in chat_records),
+        "total_latency_ms": sum(record["latency_ms"] for record in chat_records),
+        "embedding_calls": len(embedding_records),
+        "embedding_input_tokens": sum(record["input_tokens"] for record in embedding_records),
+        "embedding_latency_ms": sum(record["latency_ms"] for record in embedding_records),
+    }

@@ -22,11 +22,15 @@ class QueryContext(StrictOutput):
     collections: list[str] = Field(min_length=1)
     fields: dict[str, list[str]]
 
-    @model_validator(mode="after")
-    def selected_collections_match_fields(self):
-        if len(set(self.collections)) != len(self.collections) or set(self.fields) != set(self.collections):
-            raise ValueError("fields must match selected collections")
-        return self
+
+class CollectionEnrichment(StrictOutput):
+    collection: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=400)
+    aliases: list[str] = Field(max_length=12)
+
+
+class SchemaEnrichmentBatch(StrictOutput):
+    collections: list[CollectionEnrichment] = Field(min_length=1, max_length=50)
 class Plan(StrictOutput):
     operation: Literal["find", "count_documents", "distinct", "aggregate"]
     collection: str

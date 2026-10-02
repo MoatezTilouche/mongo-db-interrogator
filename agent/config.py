@@ -10,9 +10,15 @@ load_dotenv()
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "")
 MONGO_SCHEMA_SAMPLE_SIZE = int(os.getenv("MONGO_SCHEMA_SAMPLE_SIZE", "20"))
-MONGO_MAX_COLLECTIONS = int(os.getenv("MONGO_MAX_COLLECTIONS", "50"))
+MONGO_MAX_COLLECTIONS = int(os.getenv("MONGO_MAX_COLLECTIONS", "200"))
 SCHEMA_CACHE_ENABLED = os.getenv("SCHEMA_CACHE_ENABLED", "true").lower() == "true"
 SCHEMA_CACHE_TTL_SECONDS = max(0, int(os.getenv("SCHEMA_CACHE_TTL_SECONDS", "300")))
+SCHEMA_CACHE_COLLECTION = os.getenv("SCHEMA_CACHE_COLLECTION", "_system_schema_cache")
+SCHEMA_REBUILD_ON_STARTUP = os.getenv("SCHEMA_REBUILD_ON_STARTUP", "false").lower() == "true"
+SCHEMA_ENRICHMENT_BATCH_SIZE = min(50, max(1, int(os.getenv("SCHEMA_ENRICHMENT_BATCH_SIZE", "10"))))
+SCHEMA_RETRIEVAL_TOP_K = max(1, int(os.getenv("SCHEMA_RETRIEVAL_TOP_K", "5")))
+SCHEMA_RETRIEVAL_MAX_FIELDS = max(1, int(os.getenv("SCHEMA_RETRIEVAL_MAX_FIELDS", "60")))
+SCHEMA_RELATIONSHIP_EXPANSION = os.getenv("SCHEMA_RELATIONSHIP_EXPANSION", "true").lower() == "true"
 MONGO_QUERY_TIMEOUT_MS = int(os.getenv("MONGO_QUERY_TIMEOUT_MS", "15000"))
 DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT", "100"))
 MAX_LIMIT = int(os.getenv("MAX_LIMIT", "500"))
@@ -24,9 +30,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # One OpenAI model for every active agent; no provider or per-role fallback.
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
+SCHEMA_ENRICHMENT_MODEL = os.getenv("SCHEMA_ENRICHMENT_MODEL", OPENAI_MODEL)
+SCHEMA_EMBEDDING_MODEL = os.getenv("SCHEMA_EMBEDDING_MODEL", "text-embedding-3-small")
 LLM_ROLE_CONFIG = {role: OPENAI_MODEL for role in (
     "feedback_analysis", "query_context", "query_generator", "repair", "summary",
 )}
+LLM_ROLE_CONFIG["schema_enrichment"] = SCHEMA_ENRICHMENT_MODEL
 
 # Prompt loading
 PROMPT_VARIANT = os.getenv("PROMPT_VARIANT", "default")
@@ -47,5 +56,5 @@ DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "default")
 USER_PREFERENCE_RETRIEVAL_LIMIT = max(1, int(os.getenv("USER_PREFERENCE_RETRIEVAL_LIMIT", "50")))
 QUERY_HISTORY_PREVIEW_SIZE = max(0, int(os.getenv("QUERY_HISTORY_PREVIEW_SIZE", "5")))
 QUERY_HISTORY_PREVIEW_MAX_BYTES = max(0, int(os.getenv("QUERY_HISTORY_PREVIEW_MAX_BYTES", "8192")))
-if len({QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION}) != 3:
-    raise ValueError("History, feedback, and user preferences must use separate collections")
+if len({QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION, SCHEMA_CACHE_COLLECTION}) != 4:
+    raise ValueError("History, feedback, preferences, and schema cache must use separate collections")

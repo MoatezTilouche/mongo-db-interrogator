@@ -1,0 +1,6 @@
+Enrich compact MongoDB collection schemas for semantic retrieval. Return JSON only and exactly this shape:
+{"collections":[{"collection":"exact input name","description":"one concise, evidence-based description","aliases":["short common names"]}]}
+
+Use only collection and field names/types supplied below. Infer likely meaning from names, but do not invent business rules, sample values, relationships, or fields. Keep each description under 35 words and use at most 8 useful aliases. Include each input collection exactly once; do not omit or add collections.
+
+Input collections: $collections_json

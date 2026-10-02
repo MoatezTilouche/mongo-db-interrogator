@@ -134,24 +134,37 @@ Open `http://127.0.0.1:8000/docs`.
 }
 ```
 
-## MongoDB schema inference
+## Schema bootstrap and semantic retrieval
 
-MongoDB is schemaless, so the deterministic SchemaInspector samples up to `MONGO_SCHEMA_SAMPLE_SIZE` documents per collection to infer dotted field paths and Python/BSON type names. Sampled documents are discarded; downstream agents receive only compact field/type metadata. The process-local cache is keyed by database name, expires after `SCHEMA_CACHE_TTL_SECONDS`, and can be invalidated with `database.schema_inspector.invalidate_cache()` or refreshed with `refresh_schema()`.
+FastAPI startup runs `SchemaBootstrapService` before the normal query path is enabled. The deterministic `SchemaInspector` samples documents only to infer compact field paths and types; sample documents and values are discarded. A stable SHA-256 fingerprint uses the database name, sorted collection names, field paths, and types.
+
+The persistent cache and semantic index are stored together in the internal MongoDB collection `_system_schema_cache`, one record per database. The record contains compact schema metadata, descriptions, aliases, relationship candidates, search text, and OpenAI embedding vectors. It never contains sampled documents. On startup, matching fingerprints load the cached index. When the schema changes, unchanged collection entries and embeddings are reused; only changed metadata and any entries affected by relationship changes are enriched or re-embedded. Set `SCHEMA_REBUILD_ON_STARTUP=true` to force a full rebuild. Internal collections beginning with `_system_` are excluded from inspection and blocked by the validator.
+
+`SchemaEnrichmentAgent` uses the central OpenAI router only during bootstrap or refresh, in batches controlled by `SCHEMA_ENRICHMENT_BATCH_SIZE`. Invalid batches are retried with smaller batches; if one collection still fails, a deterministic name-and-field description is used. Embeddings use the OpenAI `text-embedding-3-small` model through that same central provider layer. Vectors are persisted in MongoDB and searched with cosine similarity, so no local FAISS files or per-request schema index rebuilds are needed.
+
+For each user question, `SchemaRetriever` embeds the question, combines semantic similarity with lexical matches for actual collection/field names and aliases, then expands likely relationships. It normally returns at most `SCHEMA_RETRIEVAL_TOP_K` collections and limits the field catalog to `SCHEMA_RETRIEVAL_MAX_FIELDS`, while retaining fields required by relevant saved preferences. QueryContext sees only those candidate schemas; QueryGenerator sees only QueryContext's selected collections and fields. Embedding calls, retrieval latency, candidate counts, context characters, and QueryContext input-token usage appear in telemetry.
+
+`/ready` reports whether schema bootstrap completed and returns the schema source and version without exposing the schema. `/query` returns HTTP 503 until readiness is true. If refresh fails while an older persistent index exists, startup loads that index and reports `stale_fallback`. `schema_bootstrap_service.refresh()` and `.invalidate()` provide internal refresh/invalidation operations without adding an admin endpoint.
 
 ```env
 SCHEMA_CACHE_ENABLED=true
-SCHEMA_CACHE_TTL_SECONDS=300
+SCHEMA_CACHE_COLLECTION=_system_schema_cache
+SCHEMA_REBUILD_ON_STARTUP=false
+SCHEMA_ENRICHMENT_MODEL=gpt-6.1-sol
+SCHEMA_ENRICHMENT_BATCH_SIZE=10
+SCHEMA_EMBEDDING_MODEL=text-embedding-3-small
+SCHEMA_RETRIEVAL_TOP_K=5
+SCHEMA_RETRIEVAL_MAX_FIELDS=60
+SCHEMA_RELATIONSHIP_EXPANSION=true
 ```
-
-The cache uses a thread lock for concurrent requests within one backend process. Each worker process has its own cache. On an inspection failure, a previously cached schema is returned as a clearly logged stale fallback.
 
 ## Routing and request telemetry
 
-QueryContextAgent classifies semantic requirements and selects schema fields in one structured OpenAI call. Simple requests normally use two calls (context and generation), skipping planning and summary. Multi-collection requests classified as simple are promoted to complex aggregation before generation.
+QueryContextAgent classifies semantic requirements and selects schema fields in one structured OpenAI call over retrieved candidates only. Simple requests normally use two chat calls (context and generation), skipping planning and summary. Multi-collection requests classified as simple are promoted to complex aggregation before generation.
 
 Only field/type metadata reaches QueryContextAgent. QueryGeneratorAgent receives only selected collections and fields, the question, operation hint, and read-only constraints; no sampled documents, unrelated collections, conversation history or execution history are included. Repair sees only question, selected schema, failed query and error, with one repair maximum per request. Authentication and connectivity failures do not trigger repair.
 
-`OPENAI_API_KEY` authenticates requests. `OPENAI_MODEL=gpt-6.1-sol` selects the same model for active LLM agents. GPT-6.1 Sol is OpenAI's near-flagship model for complex work at lower cost than Astra, and supports structured outputs. `LLM_MAX_RETRIES=1` allows one transient retry against the same model; invalid structured output is not retried. Responses include `route`, `execution_path` and `telemetry`, including the `schema_cache_hit`, `schema_cache_miss`, `schema_cache_refresh`, and `schema_cache_stale_fallback` flags. Telemetry counts every LLM attempt, including retries, with agent, model, input/output tokens and latency; totals sum LLM attempt latency rather than whole-request time. Missing provider usage reports as zero. Enable Python DEBUG logging for path and per-attempt records; no request credentials are logged.
+`OPENAI_API_KEY` authenticates requests. `OPENAI_MODEL=gpt-6.1-sol` selects the shared chat model; `SCHEMA_ENRICHMENT_MODEL` may override it for startup-only schema descriptions. `LLM_MAX_RETRIES=1` allows one transient retry against the same model; invalid structured output is not retried. Query responses include cache and retrieval metrics, plus per-agent input/output tokens and latency. `query_context_input_tokens` records provider usage for the context call when supplied. Enable Python DEBUG logging for execution paths; no request credentials are logged.
 
 Run regression tests with `python -m pytest -q`. These tests mock classification and generation; live model routing quality and latency still need measurement against a representative database.
 

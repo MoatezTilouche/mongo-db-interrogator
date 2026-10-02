@@ -5,7 +5,7 @@ from typing import Any
 import logging
 from agent.telemetry import capture_usage, totals
 from agents.query_context_agent import QueryContextAgent
-from database.schema_inspector import inspect_database_schema
+from services.schema_bootstrap_service import schema_bootstrap_service
 
 from agent.tracing import traceable
 from agents.executor_agent import ExecutorAgent
@@ -42,6 +42,11 @@ class OrchestratorAgent:
                 "schema_cache_refresh": bool(cache.get("refresh")),
                 "schema_cache_stale_fallback": bool(cache.get("stale_fallback")),
             })
+            usage.update(result.pop("_schema_retrieval", {}))
+            usage["query_context_input_tokens"] = sum(
+                attempt.get("input_tokens", 0) for attempt in usage["attempts"]
+                if attempt.get("agent") == "query_context"
+            )
             result["telemetry"] = usage
             path = result.get("execution_path")
             if path is not None:
@@ -60,13 +65,20 @@ class OrchestratorAgent:
 
         route = query_context = schema_spec = generated_query = validated_query = None
         cache_status: dict[str, Any] = {}
+        retrieval_status: dict[str, Any] = {}
         execution: dict[str, Any] = {}
         execution_time_ms = 0.0
         validation_errors: list[str] = []
         agents_called: list[str] = []
         try:
-            catalog = inspect_database_schema()
-            cache_status = catalog.get("_schema_cache", {})
+            catalog = schema_bootstrap_service.get_catalog()
+            state = schema_bootstrap_service.status()
+            cache_status = {
+                "hit": state.get("schema_source") == "cache",
+                "miss": state.get("schema_source") == "rebuilt",
+                "refresh": state.get("schema_source") == "refreshed",
+                "stale_fallback": state.get("schema_source") == "stale_fallback",
+            }
             if not catalog.get("collections"):
                 return {"execution_success": False, "execution_error": "The configured MongoDB database has no collections.",
                         "_schema_cache": cache_status}
@@ -74,12 +86,16 @@ class OrchestratorAgent:
             preferences = self.preference_service.retrieve_for_query(
                 question, catalog, current_request_id(),
             ) if catalog.get("database") else []
-            context_result = self.query_context_agent.build(question, catalog, preferences)
+            retrieval = schema_bootstrap_service.retrieve(question, preferences)
+            candidate_catalog = retrieval["catalog"]
+            retrieval_status = retrieval["telemetry"]
+            context_result = self.query_context_agent.build(question, candidate_catalog, preferences)
             if context_result.get("error"):
                 return {
                     "execution_success": False,
                     "execution_error": context_result.get("detail"),
                     "_schema_cache": cache_status,
+                    "_schema_retrieval": retrieval_status,
                 }
             query_context = context_result["query_context"]
             schema_spec = context_result["schema_spec"]
@@ -175,6 +191,7 @@ class OrchestratorAgent:
                 "python_artifact": None,
                 "results_summary_agent_output": summary,
                 "_schema_cache": cache_status,
+                "_schema_retrieval": retrieval_status,
             }
         except Exception as exc:
             # Keep completed stages available for history even when a later stage fails.
@@ -192,6 +209,7 @@ class OrchestratorAgent:
                 "execution_result": execution.get("all_rows", []),
                 "execution_metadata": {"row_count": execution.get("row_count", 0), "execution_time_ms": execution_time_ms},
                 "_schema_cache": cache_status,
+                "_schema_retrieval": retrieval_status,
             }
 
 

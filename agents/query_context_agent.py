@@ -11,14 +11,15 @@ from agent.llm_structured import parse_json_from_text
 from agent.output_schemas import QueryContext
 from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
-from database.schema_inspector import compact_schema, inspect_database_schema
+from database.schema_inspector import compact_schema
 
 
 class QueryContextAgent:
     @traceable(name="query_context.build")
     def build(self, question: str, catalog: dict[str, Any] | None = None,
               user_preferences: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        catalog = inspect_database_schema() if catalog is None else catalog
+        if catalog is None:
+            return {"error": "schema_not_ready", "detail": "The schema subsystem is not ready."}
         user_preferences = user_preferences or []
         available = compact_schema(catalog)
         if not available:

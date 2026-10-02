@@ -11,6 +11,7 @@ from agent.config import (
     FEEDBACK_COLLECTION,
     MONGO_MAX_COLLECTIONS,
     MONGO_SCHEMA_SAMPLE_SIZE,
+    SCHEMA_CACHE_COLLECTION,
     QUERY_HISTORY_COLLECTION,
     USER_PREFERENCES_COLLECTION,
     SCHEMA_CACHE_ENABLED,
@@ -57,8 +58,12 @@ def _walk(value: Any, prefix: str, out: dict[str, set[str]]) -> None:
 
 def _inspect_database_schema() -> dict[str, Any]:
     db = get_database()
-    internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION}
-    collection_names = sorted(name for name in db.list_collection_names() if name not in internal)[:MONGO_MAX_COLLECTIONS]
+    internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
+                SCHEMA_CACHE_COLLECTION}
+    collection_names = sorted(
+        name for name in db.list_collection_names()
+        if name not in internal and not name.startswith("_system_")
+    )[:MONGO_MAX_COLLECTIONS]
     collections: dict[str, Any] = {}
 
     for name in collection_names:
@@ -147,5 +152,12 @@ def select_schema(full_schema: dict[str, Any], names: list[str]) -> dict[str, An
 
 
 def compact_schema(schema):
-    """Only type metadata crosses the LLM boundary."""
-    return {name: {"fields": info.get("fields", {})} for name, info in schema.get("collections", {}).items()}
+    """Return compact schema metadata, retaining semantic labels when available."""
+    compact = {}
+    for name, info in schema.get("collections", {}).items():
+        entry = {"fields": info.get("fields", {})}
+        for key in ("description", "aliases", "relationships"):
+            if info.get(key):
+                entry[key] = info[key]
+        compact[name] = entry
+    return compact

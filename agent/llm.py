@@ -11,6 +11,7 @@ from agent.config import (
     LLM_ROLE_CONFIG,
     LLM_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
+    SCHEMA_EMBEDDING_MODEL,
 )
 from agent.llm_structured import parse_json_from_text
 from agent.token_usage import get_token_usage_callback
@@ -30,6 +31,7 @@ class StructuredOutputError(ValueError):
 class LLMRouter:
     def __init__(self) -> None:
         self._clients: dict[str, Any] = {}
+        self._embedding_clients: dict[str, Any] = {}
 
     def _client(self, model: str) -> Any:
         if model in self._clients:
@@ -50,6 +52,40 @@ class LLMRouter:
         )
         self._clients[model] = client
         return client
+
+    def _embedding_client(self, model: str | None = None) -> Any:
+        model = model or SCHEMA_EMBEDDING_MODEL
+        if model in self._embedding_clients:
+            return self._embedding_clients[model]
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is required")
+        from langchain_openai import OpenAIEmbeddings
+
+        client = OpenAIEmbeddings(model=model, api_key=OPENAI_API_KEY)
+        self._embedding_clients[model] = client
+        return client
+
+    def embed_documents(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+        model = model or SCHEMA_EMBEDDING_MODEL
+        started = time.perf_counter()
+        vectors = self._embedding_client(model).embed_documents(texts)
+        try:
+            import tiktoken
+            try:
+                encoding = tiktoken.encoding_for_model(model)
+            except KeyError:
+                encoding = tiktoken.get_encoding("cl100k_base")
+            input_tokens = sum(len(encoding.encode(text)) for text in texts)
+        except Exception:
+            input_tokens = sum(max(1, len(text) // 4) for text in texts)
+        from agent.telemetry import record_embedding
+        record = record_embedding(model, input_tokens, (time.perf_counter() - started) * 1000)
+        logger.info("embedding model=%s input_tokens=%d latency_ms=%.1f request_id=%s",
+                    model, input_tokens, record["latency_ms"], current_request_id())
+        return vectors
+
+    def embed_query(self, text: str, model: str | None = None) -> list[float]:
+        return self.embed_documents([text], model)[0]
 
     @staticmethod
     def _is_recoverable(exc: Exception) -> bool:
