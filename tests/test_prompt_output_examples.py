@@ -24,7 +24,7 @@ def examples(prompt_name):
     ("planner", Plan, 1),
     ("query_generator", Query, 4),
     ("query_repair", Query, 4),
-    ("feedback_analysis", FeedbackAnalysis, 1),
+    ("feedback_analysis", FeedbackAnalysis, 2),
     ("query_context", QueryContext, 1),
 ])
 def test_json_examples_match_strict_output_contracts(name, contract, count):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Literal
 
 from langchain_core.messages import HumanMessage
@@ -30,6 +31,42 @@ class FeedbackAnalysis(StrictOutput):
 
 
 class FeedbackAnalysisAgent:
+    @staticmethod
+    def _normalize_clear_ranking_correction(analysis: FeedbackAnalysis, history: dict,
+                                           comment: str) -> FeedbackAnalysis:
+        """Treat concrete corrections to ambiguous rankings as reusable user intent."""
+        if analysis.scope == "potential_global" or analysis.feedback_type != "wrong_sorting":
+            return analysis
+        if analysis.reusable_preference and analysis.scope == "user" and analysis.preference:
+            return analysis
+        try:
+            confidence = float(analysis.confidence)
+        except (TypeError, ValueError):
+            return analysis
+        question = str(history.get("question") or "")
+        if confidence < 0.75 or not re.search(r"\b(top|rank|ranking|highest|lowest|most|least|best|sort|order)\b", question, re.I):
+            return analysis
+        explicit_one_off = re.search(
+            r"\b(?:for\s+)?(?:this|that)\s+(?:request|query|report)\s+only\b"
+            r"|\bonly\s+for\s+(?:this|that)\s+(?:request|query|report)\b"
+            r"|\bonly\s+(?:this|that)\s+(?:request|query|report)\b"
+            r"|\b(?:just\s+)?this\s+time\s+only\b"
+            r"|\bjust\s+this\s+once\b"
+            r"|\bone[- ]time\s+(?:only\s+)?(?:request|query|report)\b",
+            comment,
+            re.I,
+        )
+        if explicit_one_off:
+            return analysis
+        preference = (analysis.corrected_meaning or "").strip()
+        if not preference:
+            return analysis
+        return analysis.model_copy(update={
+            "reusable_preference": True,
+            "preference": preference,
+            "scope": "user",
+        })
+
     @traceable(name="feedback_analysis.analyze")
     def analyze(self, history: dict, comment: str) -> FeedbackAnalysis:
         # Explicit allowlist: never forward previews, telemetry or other requests.
@@ -45,4 +82,5 @@ class FeedbackAnalysisAgent:
             "output_schema": json.dumps(FeedbackAnalysis.model_json_schema()),
         })
         response = llm_router.invoke("feedback_analysis", [HumanMessage(content=prompt)], FeedbackAnalysis)
-        return FeedbackAnalysis.model_validate(parse_json_from_text(response.content))
+        analysis = FeedbackAnalysis.model_validate(parse_json_from_text(response.content))
+        return self._normalize_clear_ranking_correction(analysis, history, comment)

@@ -6,11 +6,14 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from agent.config import DEFAULT_USER_ID
 from agents.feedback_analysis_agent import FeedbackAnalysis, FeedbackAnalysisAgent
 from agent.telemetry import request_context
 from database.feedback_repository import FeedbackRepository
 from database.query_history_repository import QueryHistoryRepository
 from database.record_safety import safe_record
+from database.user_preference_repository import UserPreferenceRepository
+from services.user_preference_service import UserPreferenceService
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +27,14 @@ class FeedbackPersistenceError(RuntimeError):
 
 
 class FeedbackService:
-    def __init__(self, history_repository=None, feedback_repository=None, analyzer=None):
+    def __init__(self, history_repository=None, feedback_repository=None, analyzer=None,
+                 preference_repository=None):
         self.history_repository = history_repository if history_repository is not None else QueryHistoryRepository()
         self.feedback_repository = feedback_repository if feedback_repository is not None else FeedbackRepository()
         self.analyzer = analyzer if analyzer is not None else FeedbackAnalysisAgent()
+        if preference_repository is None:
+            preference_repository = UserPreferenceRepository(getattr(self.feedback_repository, "database", None))
+        self.preference_service = UserPreferenceService(preference_repository, DEFAULT_USER_ID)
 
     def submit(self, request_id: str, liked: bool, comment: str | None = None) -> dict:
         log_id = safe_record(request_id)
@@ -42,7 +49,8 @@ class FeedbackService:
 
         now = datetime.now(timezone.utc)
         revision = uuid4().hex
-        record = safe_record({"request_id": request_id, "liked": liked, "comment": comment,
+        user_id = history.get("user_id") or DEFAULT_USER_ID
+        record = safe_record({"request_id": request_id, "user_id": user_id, "liked": liked, "comment": comment,
                               "analysis": None, "revision": revision,
                               "created_at": now, "updated_at": now})
         try:
@@ -52,8 +60,14 @@ class FeedbackService:
             raise FeedbackPersistenceError("Feedback storage is unavailable.") from None
         logger.info("feedback_saved request_id=%s liked=%s", log_id, liked)
         response = {"request_id": request_id, "feedback_saved": True,
-                    "analysis_created": False, "analysis": None, "analysis_error": None}
+                    "analysis_created": False, "analysis": None, "analysis_error": None,
+                    "preference_saved": False, "preference_action": None, "preference_error": None}
         if liked:
+            try:
+                self.preference_service.deactivate_source(request_id, user_id)
+            except Exception as exc:
+                logger.warning("user_preference_deactivation_failed request_id=%s user_id=%s error_type=%s",
+                               log_id, safe_record(user_id), type(exc).__name__)
             return response
 
         started = time.perf_counter()
@@ -66,6 +80,25 @@ class FeedbackService:
                 response["analysis_error"] = "Feedback was updated while analysis was running; stale analysis was discarded."
                 return response
             response.update(analysis_created=True, analysis=output)
+            try:
+                self.preference_service.deactivate_source(request_id, user_id)
+            except Exception as exc:
+                logger.warning("user_preference_deactivation_failed request_id=%s user_id=%s error_type=%s",
+                               log_id, safe_record(user_id), type(exc).__name__)
+            if output.get("scope") == "user" and output.get("reusable_preference"):
+                try:
+                    action = self.preference_service.promote(history, output, request_id, user_id)
+                    response.update(preference_saved=bool(action), preference_action=action)
+                    if action is None:
+                        response["preference_error"] = "Reusable preference could not be matched to the query schema."
+                        logger.info("user_preference_skipped request_id=%s user_id=%s reason=not_normalizable",
+                                    log_id, safe_record(user_id))
+                except Exception as exc:
+                    # Analysis remains saved; preference persistence can be retried separately.
+                    response["analysis_error"] = "Analysis was saved, but preference storage is unavailable."
+                    response["preference_error"] = "Preference storage is unavailable."
+                    logger.warning("user_preference_save_failed request_id=%s user_id=%s error_type=%s",
+                                   log_id, safe_record(user_id), type(exc).__name__)
             logger.info("feedback_analysis_completed request_id=%s feedback_type=%s latency_ms=%.1f",
                         log_id, output["feedback_type"], (time.perf_counter() - started) * 1000)
         except Exception as exc:

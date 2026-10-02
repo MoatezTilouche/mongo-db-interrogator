@@ -1,8 +1,10 @@
 One compact read-only query JSON. No prose/fences/unused keys. Use only supplied selected schema; never join unselected collections.
+Precedence: explicit current request, then any verified rule explicitly supplied in context, then stored user preferences, then model defaults. Use supplied preferences only to resolve ambiguity. Never invent or mention preferences in the response.
 Question: $question
 Schema: $schema_json
 Operation hint: $operation_hint
 Constraints: $constraints_json
+User preferences: $user_preferences_json
 Hint `count` means `count_documents`.
 Choose exactly one output shape below. Replace every <placeholder>, filters, limits and stages with values required by the question and selected schema. Do not copy absent schema names or return all four shapes.
 find:

@@ -17,8 +17,10 @@ from api.routers.feedback import get_feedback_service
 from api.routers.query import get_query_history_service
 from database.feedback_repository import FeedbackRepository
 from database.query_history_repository import QueryHistoryRepository
+from database.user_preference_repository import UserPreferenceRepository
 from services.feedback_service import FeedbackService
 from services.query_history_service import QueryHistoryService
+from services.user_preference_service import UserPreferenceService, apply_preferences_to_query
 
 
 class MemoryCollection:
@@ -39,23 +41,62 @@ class MemoryCollection:
             result.pop("_id")
         return result
 
+    def find(self, query, projection=None):
+        records = [deepcopy(record) for record in self.records.values()
+                   if all(record.get(key) == value for key, value in query.items())]
+        if projection and projection.get("_id") == 0:
+            for record in records:
+                record.pop("_id", None)
+        return MemoryCursor(records)
+
     def update_one(self, query, update, upsert=False):
-        record = self.records.get(query["_id"])
+        record = self.records.get(query.get("_id")) if "_id" in query else next(
+            (item for item in self.records.values()
+             if all(item.get(key) == value for key, value in query.items())), None,
+        )
         if record is not None and any(record.get(key) != value for key, value in query.items()):
             return SimpleNamespace(matched_count=0)
+        created = record is None
         if record is None:
             if not upsert:
                 return SimpleNamespace(matched_count=0)
             record = {"_id": query["_id"], **deepcopy(update.get("$setOnInsert", {}))}
             self.records[query["_id"]] = record
         record.update(deepcopy(update.get("$set", {})))
-        return SimpleNamespace(matched_count=1)
+        return SimpleNamespace(matched_count=0 if created else 1,
+                               upserted_id=query["_id"] if created else None)
+
+    def update_many(self, query, update):
+        modified = 0
+        for record in self.records.values():
+            if all(record.get(key) == value for key, value in query.items()):
+                record.update(deepcopy(update.get("$set", {})))
+                modified += 1
+        return SimpleNamespace(modified_count=modified)
+
+
+class MemoryCursor:
+    def __init__(self, records):
+        self.records = records
+
+    def sort(self, key, direction):
+        self.records.sort(key=lambda record: record.get(key) or datetime.min.replace(tzinfo=timezone.utc),
+                          reverse=direction < 0)
+        return self
+
+    def limit(self, count):
+        self.records = self.records[:count]
+        return self
+
+    def __iter__(self):
+        return iter(self.records)
 
 
 @pytest.fixture
 def repositories():
-    from agent.config import FEEDBACK_COLLECTION, QUERY_HISTORY_COLLECTION
-    database = {QUERY_HISTORY_COLLECTION: MemoryCollection(), FEEDBACK_COLLECTION: MemoryCollection()}
+    from agent.config import FEEDBACK_COLLECTION, QUERY_HISTORY_COLLECTION, USER_PREFERENCES_COLLECTION
+    database = {QUERY_HISTORY_COLLECTION: MemoryCollection(), FEEDBACK_COLLECTION: MemoryCollection(),
+                USER_PREFERENCES_COLLECTION: MemoryCollection()}
     return QueryHistoryRepository(database), FeedbackRepository(database), database
 
 
@@ -187,6 +228,142 @@ def test_negative_feedback_is_analyzed_and_persisted(monkeypatch, repositories, 
     assert feedback.get_by_request_id(request_id)["analysis"] == analysis.model_dump()
 
 
+def test_reusable_sort_feedback_uses_full_catalog_when_selected_schema_omits_target(monkeypatch, repositories):
+    from agent.config import USER_PREFERENCES_COLLECTION
+    from agents.feedback_analysis_agent import FeedbackAnalysis
+    import database.schema_inspector as inspector
+    queries, feedback, database = repositories
+    request_id = "req_products_sort"
+    queries.save({
+        "request_id": request_id, "user_id": "default", "question": "Give me top 2 products",
+        # QueryContext selected the incorrect field, so history lacks the correction target.
+        "selected_schema": {"products": {"fields": {"price": ["int"]}}},
+        "generated_query": {"operation": "find", "collection": "products", "sort": [["price", -1]]},
+        "validated_query": {"operation": "find", "collection": "products", "sort": [["price", -1]]},
+    })
+    analysis = FeedbackAnalysis(
+        feedback_type="wrong_sorting", cause="sorted by price instead of stock count",
+        corrected_meaning="products should be ranked by stock count", reusable_preference=True,
+        preference="rank products by stock count", scope="user", confidence=0.9,
+    )
+    analyzer = Mock()
+    analyzer.analyze.return_value = analysis
+    monkeypatch.setattr(inspector, "inspect_database_schema", lambda: {
+        "collections": {"products": {"fields": {"price": ["int"], "stock": ["int"]}}},
+    })
+    service = FeedbackService(queries, feedback, analyzer)
+    first = service.submit(request_id, False, "Rank by stock")
+    second = service.submit(request_id, False, "Rank by stock")
+    records = list(database[USER_PREFERENCES_COLLECTION].records.values())
+    assert first["preference_saved"] and first["preference_action"] == "created"
+    assert second["preference_action"] == "updated"
+    assert len(records) == 1
+    assert {key: records[0][key] for key in ("user_id", "type", "collection", "field", "direction")} == {
+        "user_id": "default", "type": "sorting_preference", "collection": "products",
+        "field": "stock", "direction": -1,
+    }
+
+
+def test_user_preference_retrieval_filters_unrelated_and_explicit_sort(repositories):
+    from agent.config import USER_PREFERENCES_COLLECTION
+    _, _, database = repositories
+    repository = UserPreferenceRepository(database)
+    for preference_id, collection, field in (("stock", "products", "stock"), ("name", "customers", "name")):
+        repository.upsert({
+            "_id": preference_id, "user_id": "default", "scope": "user", "type": "sorting_preference",
+            "collection": collection, "field": field, "direction": -1,
+            "preference": f"rank {collection} by {field}", "confidence": 0.9,
+            "active": True, "source_request_id": preference_id,
+            "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+        })
+    service = UserPreferenceService(repository)
+    catalog = {"collections": {
+        "products": {"fields": {"stock": ["int"], "price": ["int"]}},
+        "customers": {"fields": {"name": ["string"]}},
+    }}
+    assert [p["field"] for p in service.retrieve_for_query("Give me top 2 products", catalog)] == ["stock"]
+    assert service.retrieve_for_query("Give me top 2 products by price", catalog) == []
+    assert service.retrieve_for_query("Give me top 2 customers", catalog)[0]["field"] == "name"
+    assert USER_PREFERENCES_COLLECTION in database
+
+
+def test_retrieval_repairs_stale_field_from_preference_text(repositories):
+    from agent.config import USER_PREFERENCES_COLLECTION
+    _, _, database = repositories
+    repository = UserPreferenceRepository(database)
+    repository.upsert({
+        "_id": "products_sort", "user_id": "default", "scope": "user", "type": "sorting_preference",
+        "collection": "products", "field": "price", "direction": -1,
+        "preference": "products.stock_count", "confidence": 0.9,
+        "active": True, "source_request_id": "req_feedback",
+        "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+    })
+    catalog = {"collections": {"products": {"fields": {"stock": ["int"], "price": ["int"]}}}}
+    preferences = UserPreferenceService(repository).retrieve_for_query("give me top 3 products", catalog)
+    assert preferences[0]["field"] == "stock"
+    assert list(database[USER_PREFERENCES_COLLECTION].records.values())[0]["field"] == "stock"
+    query = {"operation": "find", "collection": "products", "sort": [["price", -1]], "limit": 3}
+    assert apply_preferences_to_query(query, preferences) == [{
+        "type": "sorting_preference", "collection": "products", "field": "stock", "direction": -1,
+    }]
+    assert query["sort"] == [["stock", -1]]
+
+
+def test_learned_sort_is_passed_to_agents_applied_and_saved_in_history(monkeypatch, repositories):
+    from agent.config import USER_PREFERENCES_COLLECTION
+    from agents.feedback_analysis_agent import FeedbackAnalysis
+    from database.user_preference_repository import UserPreferenceRepository
+    import agents.query_context_agent as context_module
+    import agents.query_generator_agent as generator_module
+    import orchestrator as orchestrator_module
+
+    queries, _, database = repositories
+    preference_repo = UserPreferenceRepository(database)
+    preference_repo.upsert({
+        "_id": "products_sort", "user_id": "default", "scope": "user", "type": "sorting_preference",
+        "collection": "products", "field": "stock", "direction": -1,
+        "preference": "rank products by stock count", "confidence": 0.9,
+        "active": True, "source_request_id": "req_feedback",
+        "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+    })
+    catalog = {"database": "test", "collections": {"products": {"fields": {
+        "name": ["string"], "price": ["int"], "stock": ["int"],
+    }}}}
+    monkeypatch.setattr(orchestrator_module, "inspect_database_schema", lambda: catalog)
+    captured = {}
+
+    def invoke(role, messages, schema):
+        captured[role] = messages[0].content
+        if role == "query_context":
+            return SimpleNamespace(content=json.dumps({
+                "complexity": "simple", "operation": "find", "collections": ["products"],
+                "fields": {"products": ["name", "price"]},
+            }))
+        return SimpleNamespace(content=json.dumps({
+            "operation": "find", "collection": "products", "filter": {},
+            "projection": None, "sort": [["price", -1]], "limit": 2,
+        }))
+
+    monkeypatch.setattr(context_module.llm_router, "invoke", invoke)
+    monkeypatch.setattr(generator_module.llm_router, "invoke", invoke)
+    app = orchestrator_module.OrchestratorAgent()
+    app.preference_service = UserPreferenceService(preference_repo)
+    app.executor.execute = Mock(return_value={
+        "ok": True, "row_count": 2, "all_rows": [{"name": "A", "stock": 50}, {"name": "B", "stock": 30}],
+        "execution_time_ms": 1,
+    })
+    response = QueryHistoryService(queries, app.run).run("Give me top 2 products")
+    record = queries.get_by_request_id(response["request_id"])
+    assert response["generated_query"]["sort"] == [["stock", -1]]
+    assert response["applied_preferences"] == [{
+        "type": "sorting_preference", "collection": "products", "field": "stock", "direction": -1,
+    }]
+    assert '"field":"stock"' in captured["query_context"]
+    assert '"field":"stock"' in captured["query_generator"]
+    assert record["applied_preferences"] == response["applied_preferences"]
+    assert USER_PREFERENCES_COLLECTION in database
+
+
 @pytest.mark.parametrize("payload", [
     {"request_id": "req_unknown", "liked": False},
     {"request_id": "req_unknown", "liked": False, "comment": "   "},
@@ -214,7 +391,7 @@ def test_unknown_request_is_404(monkeypatch, repositories):
 
 
 def test_duplicate_feedback_updates_one_record_and_clears_old_analysis(repositories, analysis):
-    from agent.config import FEEDBACK_COLLECTION
+    from agent.config import FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION
     queries, feedback, database = repositories
     request_id = history(queries)
     analyzer = Mock()
@@ -229,6 +406,8 @@ def test_duplicate_feedback_updates_one_record_and_clears_old_analysis(repositor
     assert second["updated_at"] >= first["updated_at"]
     assert second["analysis"] is None
     assert second["liked"] is True
+    stored_preferences = list(database[USER_PREFERENCES_COLLECTION].records.values())
+    assert stored_preferences and all(not preference["active"] for preference in stored_preferences)
 
 
 def test_raw_feedback_survives_analysis_failure(monkeypatch, repositories, caplog):
@@ -313,6 +492,54 @@ def test_feedback_agent_uses_central_router_with_minimal_context(monkeypatch, an
     assert "Rank by spending" in captured[0]
 
 
+def test_feedback_agent_promotes_clear_ranking_correction(monkeypatch):
+    import agents.feedback_analysis_agent as module
+    analysis = FeedbackAnalysis(
+        feedback_type="wrong_sorting", cause="Query sorted by price instead of stock count",
+        corrected_meaning="Products should be ranked by stock count", reusable_preference=False,
+        preference=None, scope="one_off", confidence=0.9,
+    )
+    monkeypatch.setattr(module.llm_router, "invoke", lambda *args: SimpleNamespace(content=analysis.model_dump_json()))
+    output = FeedbackAnalysisAgent().analyze(
+        {"question": "Give me the top 2 products"},
+        "Query sorted by price instead of stock count",
+    )
+    assert output.reusable_preference is True
+    assert output.preference == "Products should be ranked by stock count"
+    assert output.scope == "user"
+
+
+@pytest.mark.parametrize("comment", [
+    "Only this request",
+    "For this report only",
+    "Just this once",
+])
+def test_feedback_agent_keeps_explicit_one_off_ranking_correction(monkeypatch, comment):
+    import agents.feedback_analysis_agent as module
+    analysis = FeedbackAnalysis(
+        feedback_type="wrong_sorting", cause="Sorted by price instead of stock",
+        corrected_meaning="Rank products by stock", reusable_preference=False,
+        preference=None, scope="one_off", confidence=0.9,
+    )
+    monkeypatch.setattr(module.llm_router, "invoke", lambda *args: SimpleNamespace(content=analysis.model_dump_json()))
+    output = FeedbackAnalysisAgent().analyze({"question": "Show top products"}, comment)
+    assert output.reusable_preference is False
+    assert output.preference is None
+    assert output.scope == "one_off"
+
+
+def test_feedback_agent_never_promotes_potential_global_rule():
+    analysis = FeedbackAnalysis(
+        feedback_type="wrong_sorting", cause="Shared reporting rule", corrected_meaning="Rank by stock",
+        reusable_preference=False, preference=None, scope="potential_global", confidence=0.99,
+    )
+    output = FeedbackAnalysisAgent._normalize_clear_ranking_correction(
+        analysis, {"question": "Show top products"}, "Sort by stock",
+    )
+    assert output.scope == "potential_global"
+    assert output.reusable_preference is False
+
+
 @pytest.mark.parametrize("patch", [{"confidence": 1.5}, {"feedback_type": "invented"}, {"scope": "global"}, {"reusable_preference": "true"}, {"extra": "field"}])
 def test_feedback_analysis_contract_is_strict(analysis, patch):
     with pytest.raises(ValidationError):
@@ -330,7 +557,9 @@ def test_potential_global_is_stored_without_changing_business_data(repositories,
     FeedbackService(queries, feedback, analyzer).submit(request_id, False, "Exclude refunds")
     assert feedback.get_by_request_id(request_id)["analysis"]["scope"] == "potential_global"
     assert database[QUERY_HISTORY_COLLECTION].records == original
-    assert set(database) == {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION}
+    from agent.config import USER_PREFERENCES_COLLECTION
+    assert set(database) == {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION}
+    assert database[USER_PREFERENCES_COLLECTION].records == {}
 
 
 def test_secrets_are_redacted_from_history_feedback_and_prompts(monkeypatch, repositories, analysis):
@@ -361,10 +590,11 @@ def test_secrets_are_redacted_from_history_feedback_and_prompts(monkeypatch, rep
 
 def test_internal_collections_are_excluded_from_schema(monkeypatch):
     import database.schema_inspector as inspector
-    from agent.config import QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION
+    from agent.config import QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION
     db = Mock()
     db.name = "test"
-    db.list_collection_names.return_value = [QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, "customers"]
+    db.list_collection_names.return_value = [QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION,
+                                             USER_PREFERENCES_COLLECTION, "customers"]
     customers = Mock()
     customers.find.return_value = [{"name": "Alice"}]
     db.__getitem__ = Mock(return_value=customers)
@@ -375,13 +605,15 @@ def test_internal_collections_are_excluded_from_schema(monkeypatch):
 
 
 def test_internal_collections_are_rejected_by_validator():
-    from agent.config import QUERY_HISTORY_COLLECTION
+    from agent.config import QUERY_HISTORY_COLLECTION, USER_PREFERENCES_COLLECTION
     from agents.validator_agent import QueryValidationError, ValidatorAgent
     schema = {"collections": {QUERY_HISTORY_COLLECTION: {"fields": {}}, "customers": {"fields": {}}}}
     with pytest.raises(QueryValidationError, match="Internal"):
         ValidatorAgent().validate({"operation": "find", "collection": QUERY_HISTORY_COLLECTION}, schema)
     with pytest.raises(QueryValidationError, match="Internal"):
         ValidatorAgent().validate({"operation": "aggregate", "collection": "customers", "pipeline": [{"$lookup": {"from": QUERY_HISTORY_COLLECTION}}]}, schema)
+    with pytest.raises(QueryValidationError, match="Internal"):
+        ValidatorAgent().validate({"operation": "find", "collection": USER_PREFERENCES_COLLECTION}, schema)
 
 
 def test_feedback_endpoint_keeps_existing_api_key_protection(monkeypatch):

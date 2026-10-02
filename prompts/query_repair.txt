@@ -1,4 +1,5 @@
 Fix only the reported failure. Return one compact read-only query JSON, no prose. Use actual schema collections/fields. Required: operation/collection; find: filter and optional projection/sort/limit; count_documents: filter; distinct: field/filter; aggregate: pipeline.
+Use supplied user preferences only when the current question is ambiguous; explicit current instructions and verified rules supplied in context override them. Never invent preferences.
 Choose one corrected output shape; replace all <placeholders> and values with the selected schema and original intent. No fences/extra keys.
 {"operation":"find","collection":"<collection>","filter":{},"projection":null,"sort":[],"limit":2}
 {"operation":"count_documents","collection":"<collection>","filter":{}}
@@ -9,3 +10,4 @@ Question: $question
 Schema: $schema_json
 Failed query: $query_json
 Error: $error
+User preferences: $user_preferences_json

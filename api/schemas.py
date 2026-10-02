@@ -10,6 +10,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     request_id: str
     query_context: dict[str, Any] | None = None
+    applied_preferences: list[dict[str, Any]] = Field(default_factory=list)
     execution_metadata: dict[str, Any] | None = None
     route: dict[str, Any] | None = None
     execution_path: dict[str, Any] | None = None
@@ -53,3 +54,6 @@ class FeedbackResponse(BaseModel):
     analysis_created: bool
     analysis: FeedbackAnalysis | None = None
     analysis_error: str | None = None
+    preference_saved: bool = False
+    preference_action: str | None = None
+    preference_error: str | None = None

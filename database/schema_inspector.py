@@ -12,6 +12,7 @@ from agent.config import (
     MONGO_MAX_COLLECTIONS,
     MONGO_SCHEMA_SAMPLE_SIZE,
     QUERY_HISTORY_COLLECTION,
+    USER_PREFERENCES_COLLECTION,
     SCHEMA_CACHE_ENABLED,
     SCHEMA_CACHE_TTL_SECONDS,
 )
@@ -56,7 +57,7 @@ def _walk(value: Any, prefix: str, out: dict[str, set[str]]) -> None:
 
 def _inspect_database_schema() -> dict[str, Any]:
     db = get_database()
-    internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION}
+    internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION}
     collection_names = sorted(name for name in db.list_collection_names() if name not in internal)[:MONGO_MAX_COLLECTIONS]
     collections: dict[str, Any] = {}
 

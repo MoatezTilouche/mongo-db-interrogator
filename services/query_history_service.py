@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
-from agent.config import QUERY_HISTORY_PREVIEW_MAX_BYTES, QUERY_HISTORY_PREVIEW_SIZE
+from agent.config import DEFAULT_USER_ID, QUERY_HISTORY_PREVIEW_MAX_BYTES, QUERY_HISTORY_PREVIEW_SIZE
 from agent.telemetry import request_context
 from database.query_history_repository import QueryHistoryRepository
 from database.record_safety import safe_record
@@ -53,10 +53,11 @@ class QueryHistoryService:
             route = result.get("route") or {}
             metadata = result.get("execution_metadata") or {}
             record = {
-                "request_id": request_id, "user_id": None, "question": question,
+                "request_id": request_id, "user_id": DEFAULT_USER_ID, "question": question,
                 "route": route.get("complexity") if isinstance(route, dict) else route,
                 "selected_schema": compact_schema(result.get("schema_spec") or {}),
                 "query_context": result.get("query_context"),
+                "applied_preferences": result.get("applied_preferences", []),
                 "agents_called": (result.get("execution_path") or {}).get("agents_called", []),
                 "summary_skipped": (result.get("execution_path") or {}).get("summary_skipped", True),
                 "repair_used": (result.get("execution_path") or {}).get("repair_used", False),

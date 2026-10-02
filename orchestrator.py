@@ -12,6 +12,13 @@ from agents.executor_agent import ExecutorAgent
 from agents.query_generator_agent import QueryGeneratorAgent
 from agents.results_summary_agent import ResultsSummaryAgent
 from agents.validator_agent import QueryValidationError, ValidatorAgent
+from agent.config import DEFAULT_USER_ID
+from agent.telemetry import current_request_id
+from services.user_preference_service import (
+    UserPreferenceService,
+    applied_preferences_for_query,
+    apply_preferences_to_query,
+)
 
 
 class OrchestratorAgent:
@@ -21,6 +28,7 @@ class OrchestratorAgent:
         self.validator = ValidatorAgent()
         self.executor = ExecutorAgent()
         self.summary_agent = ResultsSummaryAgent()
+        self.preference_service = UserPreferenceService(user_id=DEFAULT_USER_ID)
 
     @traceable(name="orchestrator.run")
     def run(self, question: str) -> dict[str, Any]:
@@ -63,7 +71,10 @@ class OrchestratorAgent:
                 return {"execution_success": False, "execution_error": "The configured MongoDB database has no collections.",
                         "_schema_cache": cache_status}
             agents_called.append("query_context")
-            context_result = self.query_context_agent.build(question, catalog)
+            preferences = self.preference_service.retrieve_for_query(
+                question, catalog, current_request_id(),
+            ) if catalog.get("database") else []
+            context_result = self.query_context_agent.build(question, catalog, preferences)
             if context_result.get("error"):
                 return {
                     "execution_success": False,
@@ -72,14 +83,17 @@ class OrchestratorAgent:
                 }
             query_context = context_result["query_context"]
             schema_spec = context_result["schema_spec"]
+            preferences = context_result.get("user_preferences", preferences)
             route = {
                 "complexity": query_context["complexity"],
                 "operation": query_context["operation"],
             }
             agents_called.append("query_generator")
             generated_query = self.query_generator.generate(
-                question, schema_spec, operation_hint=query_context["operation"]
+                question, schema_spec, operation_hint=query_context["operation"],
+                user_preferences=preferences,
             )
+            apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id)
             repairs = 0
 
             validation_errors: list[str] = []
@@ -94,8 +108,9 @@ class OrchestratorAgent:
                         repairs += 1
                         agents_called.append("repair")
                         generated_query = self.query_generator.repair(
-                            question, schema_spec, generated_query, str(exc)
+                            question, schema_spec, generated_query, str(exc), preferences
                         )
+                        apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id)
                     else:
                         raise
 
@@ -113,7 +128,9 @@ class OrchestratorAgent:
                     schema_spec,
                     validated_query,
                     str(execution.get("error") or "MongoDB execution failed"),
+                    preferences,
                 )
+                apply_preferences_to_query(repaired, preferences, self.preference_service.user_id)
                 try:
                     validated_query = self.validator.validate(repaired, schema_spec)
                     generated_query = repaired
@@ -153,6 +170,7 @@ class OrchestratorAgent:
                 "query_plan": None,
                 "generated_query": generated_query,
                 "validated_query": validated_query,
+                "applied_preferences": applied_preferences_for_query(validated_query, preferences),
                 "validation_errors": validation_errors,
                 "python_artifact": None,
                 "results_summary_agent_output": summary,

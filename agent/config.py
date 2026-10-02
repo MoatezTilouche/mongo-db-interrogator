@@ -43,7 +43,10 @@ TOKEN_USAGE_LOG_PATH = os.getenv("TOKEN_USAGE_LOG_PATH", "data/token_usage.jsonl
 # Backend learning records are not part of the user-query schema.
 QUERY_HISTORY_COLLECTION = os.getenv("QUERY_HISTORY_COLLECTION", "query_history")
 FEEDBACK_COLLECTION = os.getenv("FEEDBACK_COLLECTION", "feedback")
+USER_PREFERENCES_COLLECTION = os.getenv("USER_PREFERENCES_COLLECTION", "user_preferences")
+DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "default")
+USER_PREFERENCE_RETRIEVAL_LIMIT = max(1, int(os.getenv("USER_PREFERENCE_RETRIEVAL_LIMIT", "50")))
 QUERY_HISTORY_PREVIEW_SIZE = max(0, int(os.getenv("QUERY_HISTORY_PREVIEW_SIZE", "5")))
 QUERY_HISTORY_PREVIEW_MAX_BYTES = max(0, int(os.getenv("QUERY_HISTORY_PREVIEW_MAX_BYTES", "8192")))
-if QUERY_HISTORY_COLLECTION == FEEDBACK_COLLECTION:
-    raise ValueError("History and feedback must use separate collections")
+if len({QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION}) != 3:
+    raise ValueError("History, feedback, and user preferences must use separate collections")

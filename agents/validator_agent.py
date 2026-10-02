@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from agent.config import DEFAULT_LIMIT, MAX_LIMIT, QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION
+from agent.config import DEFAULT_LIMIT, MAX_LIMIT, QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION
 from agent.tracing import traceable
 
 
@@ -78,7 +78,7 @@ class ValidatorAgent:
             raise QueryValidationError(f"Unsupported operation: {operation}")
 
         collection = str(normalized.get("collection", "")).strip()
-        internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION}
+        internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION}
         if collection in internal:
             raise QueryValidationError("Internal learning collections are not queryable")
         known_collections = _known_collections(schema_spec)

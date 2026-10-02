@@ -1,5 +1,7 @@
 Choose the operation and minimum schema needed. JSON only, exactly these keys: complexity, operation, collections, fields. Collections must be catalog keys; fields maps each collection to catalog field-name arrays. Select one collection for direct questions; add collections only for a required join. Simple: find/filter/sort/limit/count/distinct. Complex aggregate: joins, grouping, computed metrics or multi-stage transformations. Aggregate iff complex. No reasoning or extra keys.
+Precedence: explicit current request, then any verified rule explicitly supplied in context, then stored user preferences, then model defaults. User preferences resolve ambiguity only; include the preference field when relevant. Use only supplied preferences; never invent one or mention memory in output.
 Output:
 {"complexity":"simple","operation":"find","collections":["<collection>"],"fields":{"<collection>":["<field>"]}}
 Question: $question
 Catalog: $schema_catalog
+User preferences: $user_preferences_json
