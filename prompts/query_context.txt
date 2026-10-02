@@ -1,0 +1,5 @@
+Choose the operation and minimum schema needed. JSON only, exactly these keys: complexity, operation, collections, fields. Collections must be catalog keys; fields maps each collection to catalog field-name arrays. Select one collection for direct questions; add collections only for a required join. Simple: find/filter/sort/limit/count/distinct. Complex aggregate: joins, grouping, computed metrics or multi-stage transformations. Aggregate iff complex. No reasoning or extra keys.
+Output:
+{"complexity":"simple","operation":"find","collections":["<collection>"],"fields":{"<collection>":["<field>"]}}
+Question: $question
+Catalog: $schema_catalog

@@ -1,4 +1,7 @@
-Plan transformations using the selected schema and its join keys. Return compact steps without reasoning prose or query syntax.
+Compact plan JSON only. Collection must be a schema key, not a field. Start from metric source; join only if needed.
 Question: $question
 Schema: $schema_json
-Return JSON: {"operation":"aggregate","collection":"name","steps":["step"],"python_postprocessing_required":false,"python_goal":""}. Request Python only when MongoDB cannot reasonably perform the analysis.
+Keys: operation (find/aggregate/count_documents/distinct), collection, steps (brief, no reasoning), python_postprocessing_required (false unless MongoDB cannot suffice), python_goal (empty when false).
+Output shape (replace <collection> with an actual selected collection key and describe only required transformations):
+{"operation":"aggregate","collection":"<collection>","steps":["required transformation"],"python_postprocessing_required":false,"python_goal":""}
+No prose/fences/extra keys. steps is a string array; python_postprocessing_required is a boolean. Never output literal placeholders.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import time
 
 from agent.config import DEFAULT_LIMIT, MAX_LIMIT, MONGO_QUERY_TIMEOUT_MS
 from agent.tracing import traceable
@@ -12,11 +13,11 @@ from database.value_codec import decode_special_values, to_json_safe
 class ExecutorAgent:
     @traceable(name="executor.execute")
     def execute(self, query: dict[str, Any]) -> dict[str, Any]:
-        db = get_database()
-        collection = db[query["collection"]]
-        operation = query["operation"]
-
+        started = time.perf_counter()
         try:
+            db = get_database()
+            collection = db[query["collection"]]
+            operation = query["operation"]
             if operation == "find":
                 filt = decode_special_values(query.get("filter", {}))
                 projection = query.get("projection")
@@ -54,6 +55,7 @@ class ExecutorAgent:
 
             return {
                 "ok": True,
+                "execution_time_ms": (time.perf_counter() - started) * 1000,
                 "query": query,
                 "row_count": len(rows),
                 "sample_rows": rows[:10],
@@ -63,6 +65,7 @@ class ExecutorAgent:
         except Exception as exc:
             return {
                 "ok": False,
+                "execution_time_ms": (time.perf_counter() - started) * 1000,
                 "query": query,
                 "row_count": 0,
                 "sample_rows": [],

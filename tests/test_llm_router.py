@@ -1,177 +1,94 @@
 import logging
-
+from types import SimpleNamespace
+from unittest.mock import Mock
 import pytest
+import agent.llm as module
+from agent.llm import LLMRouter, LLMRouterError, StructuredOutputError
+from agent.telemetry import capture_usage, totals
 
-import agent.llm as llm_module
-from agent.llm import LLMRouter, LLMRouterError
-from agents.validator_agent import QueryValidationError, ValidatorAgent
-
-
-class Response:
-    def __init__(self, content):
-        self.content = content
-
-
-class ProviderError(Exception):
-    def __init__(self, status_code, message="provider failure"):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class FakeClient:
-    def __init__(self, response=None, error=None):
-        self.response = response
-        self.error = error
-        self.calls = 0
-
-    def invoke(self, messages):
-        self.calls += 1
-        if self.error:
-            raise self.error
-        return self.response
-
-
-def install_clients(monkeypatch, clients):
+@pytest.mark.parametrize("role", list(module.LLM_ROLE_CONFIG))
+def test_all_roles_use_single_openrouter_model(monkeypatch, role):
     router = LLMRouter()
-    calls = []
-
-    def client(model):
-        calls.append(model)
-        return clients[model]
-
-    monkeypatch.setattr(router, "_client", client)
-    return router, calls
-
-
-def test_role_mapping_uses_configured_primary_and_fallback(monkeypatch):
-    primary = "qwen/qwen3.8-27b:free"
-    fallback = "openrouter/free"
-    router, calls = install_clients(monkeypatch, {
-        primary: FakeClient(response=Response('{"ok": true}')),
-        fallback: FakeClient(response=Response('{"ok": true}')),
-    })
-
-    router.invoke("query_generator", [], dict)
-
-    assert calls == [primary]
-
-
-@pytest.mark.parametrize("role, primary, fallback", [
-    ("schema_selection", "qwen/qwen3.8-27b:free", "openrouter/free"),
-    ("planner", "qwen/qwen3.8-27b:free", "openrouter/free"),
-    ("query_generator", "qwen/qwen3.8-27b:free", "openrouter/free"),
-    ("repair", "openrouter/free", "qwen/qwen3.8-27b:free"),
-    ("summary", "openrouter/free", "qwen/qwen3.8-27b:free"),
-    ("python_artifact", "qwen/qwen3.8-27b:free", "openrouter/free"),
-])
-def test_each_role_uses_its_configured_provider_and_model(monkeypatch, role, primary, fallback):
-    router, calls = install_clients(monkeypatch, {
-        primary: FakeClient(response=Response('{"ok": true}')),
-        fallback: FakeClient(response=Response('{"ok": true}')),
-    })
-
+    client = Mock()
+    client.invoke.return_value = SimpleNamespace(content='{"ok":true}')
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(router, "_client", factory)
     router.invoke(role, [], dict)
+    factory.assert_called_once_with(module.LLM_ROLE_CONFIG[role])
+    assert len(set(module.LLM_ROLE_CONFIG.values())) == 1
 
-    assert calls == [primary]
-
-
-@pytest.mark.parametrize("status", [429, 504])
-def test_openrouter_falls_back_on_rate_limit_and_5xx(monkeypatch, status):
-    primary = "qwen/qwen3.8-27b:free"
-    fallback = "openrouter/free"
-    router, calls = install_clients(monkeypatch, {
-        primary: FakeClient(error=ProviderError(status)),
-        fallback: FakeClient(response=Response('{"ok": true}')),
-    })
-    monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", 0)
-
-    router.invoke("query_generator", [], dict)
-
-    assert calls == [primary, fallback]
-
-
-def test_openrouter_falls_back_to_second_model_on_timeout(monkeypatch):
-    primary = "openrouter/free"
-    fallback = "qwen/qwen3.8-27b:free"
-    router, calls = install_clients(monkeypatch, {
-        primary: FakeClient(error=TimeoutError("timed out")),
-        fallback: FakeClient(response=Response("answer")),
-    })
-    monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", 0)
-
-    router.invoke("summary", [])
-
-    assert calls == [primary, fallback]
+@pytest.mark.parametrize("error", [TimeoutError("timed out"), type("RateLimitError", (Exception,), {"status_code":429})("rate limit")])
+def test_transient_error_retries_same_model_without_fallback(monkeypatch, error):
+    monkeypatch.setattr(module, "LLM_MAX_RETRIES", 1)
+    router = LLMRouter()
+    client = Mock()
+    client.invoke.side_effect = error
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(router, "_client", factory)
+    with capture_usage() as records, pytest.raises(LLMRouterError):
+        router.invoke("planner", [])
+    assert client.invoke.call_count == 2
+    assert {call.args[0] for call in factory.call_args_list} == {module.LLM_ROLE_CONFIG["planner"]}
+    assert all(not record["fallback_used"] for record in records)
 
 
-def test_malformed_structured_output_falls_back_without_retry(monkeypatch):
-    primary = "qwen/qwen3.8-27b:free"
-    fallback = "openrouter/free"
-    primary_client = FakeClient(response=Response("not json"))
-    router, calls = install_clients(monkeypatch, {
-        primary: primary_client,
-        fallback: FakeClient(response=Response('{"operation": "find"}')),
-    })
-    monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", 1)
-
-    response = router.invoke("query_generator", [], dict)
-
-    assert response.content == '{"operation": "find"}'
-    assert primary_client.calls == 1
-    assert calls == [primary, fallback]
+def test_structured_error_is_not_retried(monkeypatch):
+    monkeypatch.setattr(module, "LLM_MAX_RETRIES", 1)
+    router = LLMRouter()
+    client = Mock()
+    client.invoke.return_value = SimpleNamespace(content="not json")
+    monkeypatch.setattr(router, "_client", lambda model: client)
+    with pytest.raises(LLMRouterError, match="StructuredOutputError"):
+        router.invoke("query_generator", [], dict)
+    client.invoke.assert_called_once()
 
 
-def test_no_fallback_for_mongo_validation_errors():
-    with pytest.raises(QueryValidationError):
-        ValidatorAgent().validate({"operation": "find", "collection": "missing"}, {
-            "collections": {"orders": {"fields": {}}},
-        })
+def test_retry_can_succeed_and_telemetry_counts_tokens(monkeypatch):
+    monkeypatch.setattr(module, "LLM_MAX_RETRIES", 1)
+    router = LLMRouter()
+    client = Mock()
+    response = SimpleNamespace(content="answer", usage_metadata={"input_tokens":12,"output_tokens":3})
+    client.invoke.side_effect = [TimeoutError("timed out"), response]
+    monkeypatch.setattr(router, "_client", lambda model: client)
+    with capture_usage() as records:
+        assert router.invoke("summary", []) == response
+    usage = totals(records)
+    assert usage["total_llm_calls"] == 2
+    assert usage["total_input_tokens"] == 12
+    assert usage["total_output_tokens"] == 3
+    assert all(not r["fallback_used"] for r in records)
 
 
-def test_both_models_failing_raises_router_error(monkeypatch):
-    primary = "qwen/qwen3.8-27b:free"
-    fallback = "openrouter/free"
-    router, _ = install_clients(monkeypatch, {
-        primary: FakeClient(error=ProviderError(503)),
-        fallback: FakeClient(error=ProviderError(429)),
-    })
-    monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", 0)
-
-    with pytest.raises(LLMRouterError):
-        router.invoke("query_generator", [])
-
-
-def test_telemetry_has_model_and_never_api_key(monkeypatch, caplog):
-    primary = "openrouter/free"
-    secret = "super-secret-api-key"
-    router, _ = install_clients(monkeypatch, {
-        primary: FakeClient(response=Response("answer")),
-    })
-    with caplog.at_level(logging.INFO, logger="agent.llm"):
+def test_failures_do_not_expose_provider_secrets(monkeypatch, caplog):
+    router = LLMRouter()
+    client = Mock()
+    client.invoke.side_effect = TimeoutError("private-credential timed out")
+    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(module, "LLM_MAX_RETRIES", 0)
+    with caplog.at_level(logging.INFO), pytest.raises(LLMRouterError) as failure:
         router.invoke("summary", [])
-
-    text = caplog.text
-    assert "model=openrouter/free" in text
-    assert "fallback_used=False" in text
-    assert secret not in text
+    assert "private-credential" not in str(failure.value) + caplog.text
+    assert "fallback_used=False" in caplog.text
 
 
-def test_fallback_telemetry_records_actual_provider_and_model(monkeypatch, caplog):
-    primary = "qwen/qwen3.8-27b:free"
-    fallback = "openrouter/free"
-    router, _ = install_clients(monkeypatch, {
-        primary: FakeClient(error=ProviderError(429)),
-        fallback: FakeClient(response=Response("answer")),
-    })
-    monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", 0)
-
-    with caplog.at_level(logging.INFO, logger="agent.llm"):
-        router.invoke("query_generator", [])
-
-    assert "model=openrouter/free" in caplog.text
-    assert "fallback_used=True" in caplog.text
+def test_unknown_role_is_rejected():
+    with pytest.raises(ValueError, match="Unknown LLM role"):
+        LLMRouter().invoke("missing", [])
 
 
-def test_non_openrouter_provider_cannot_be_instantiated():
+def test_other_provider_signature_is_not_supported():
     with pytest.raises(TypeError):
-        LLMRouter()._client("openrouter", "qwen/qwen3.8-27b:free")
+        LLMRouter()._client("another-provider", "model")
+
+
+def test_openrouter_client_does_not_set_an_output_token_cap(monkeypatch):
+    import langchain_openai
+    constructor = Mock(return_value=Mock())
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", constructor)
+    monkeypatch.setattr(module, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(module, "get_token_usage_callback", lambda: None)
+    LLMRouter()._client("openrouter/free")
+    options = constructor.call_args.kwargs
+    assert "max_tokens" not in options
+    assert "max_completion_tokens" not in options
+    assert options["model"] == "openrouter/free"

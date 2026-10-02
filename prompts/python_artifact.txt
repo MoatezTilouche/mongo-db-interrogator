@@ -1,19 +1,8 @@
-Create a Python post-processing artifact for a MongoDB analytics result.
-
-Original question:
-$question
-
-Post-processing goal:
-$goal
-
-Sample/result rows:
-$rows_json
-
-Return Python code only, without Markdown fences.
-Requirements:
-- Define `def transform(rows):` and return JSON-serializable data.
-- Treat `rows` as a list of dictionaries.
-- No file access, network access, subprocesses, eval, exec, dynamic imports, or environment access.
-- Prefer Python standard library modules.
-- Do not embed secrets.
-The artifact will be reviewed before execution; it is not automatically executed by the application.
+Return concise Python code only: def transform(rows), list-of-dicts input, JSON-serializable output. Prefer standard library. No files, network, subprocesses, eval/exec, dynamic imports, environment access or embedded secrets. Artifact is not executed automatically.
+Output: Python source only, no JSON wrapper or Markdown fences. Required function shape:
+def transform(rows):
+    # Implement the supplied goal; return JSON-serializable data.
+    return rows
+Question: $question
+Goal: $goal
+Rows: $rows_json
