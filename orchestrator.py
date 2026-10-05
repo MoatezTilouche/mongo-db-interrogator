@@ -9,6 +9,9 @@ from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
+from services.query_cost_guard import QueryCostGuard
+from services.optimization_advisor import OptimizationAdvisor
+from services.query_performance_memory import PerformanceLogger
 
 _knowledge_retriever = KnowledgeRetriever()
 
@@ -99,13 +102,18 @@ class OrchestratorAgent:
             retrieval = stage("SchemaRetriever", schema_bootstrap_service.retrieve, question, preferences)
             candidate_catalog = retrieval["catalog"]
             retrieval_status = retrieval["telemetry"]
+            # Natural wording may not name the collection. Schema selection gives
+            # deterministic collection scope for a second relevance check.
+            preferences = stage("PreferenceRetriever", self.preference_service.retrieve_for_query,
+                question, catalog, current_request_id(),
+                selected_collections=set(candidate_catalog.get("collections", {})))
             knowledge_result = self.knowledge_retriever.retrieve(
                 question, candidate_catalog, retrieval.pop("_query_embedding", None), catalog,
             )
             knowledge_candidates = knowledge_result["knowledge"]
             knowledge_status = knowledge_result["telemetry"]
             context = self.context_builder.build(
-                question, candidate_catalog, knowledge_candidates, preferences,
+                question, candidate_catalog, knowledge_candidates, preferences, full_catalog=catalog,
             )
             context_result = stage("QueryContextAgent", self.query_context_agent.build,
                 context["question"], context["schema"], context["user_preferences"],
@@ -141,7 +149,7 @@ class OrchestratorAgent:
                 question, schema_spec, operation_hint=query_context["operation"],
                 user_preferences=preferences, database_knowledge=applied_knowledge,
             )
-            apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id)
+            apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id, question=question)
             repairs = 0
 
             validation_errors: list[str] = []
@@ -159,12 +167,19 @@ class OrchestratorAgent:
                             question, schema_spec, generated_query, str(exc), preferences,
                             database_knowledge=applied_knowledge,
                         )
-                        apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id)
+                        apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id, question=question)
                     else:
                         raise
 
             assert validated_query is not None
+            cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
+            if cost["status"] == "heavy":
+                return {"status": "optimization_required", "question": question, "cost_analysis": cost,
+                        "query_signature": cost["query_signature"], **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, validated_query, cost),
+                        "schema_spec": schema_spec, "query_context": query_context, "generated_query": generated_query,
+                        "validated_query": validated_query, "applied_preferences": preferences, "applied_knowledge": applied_knowledge}
             execution = stage("ExecutorAgent", self.executor.execute, validated_query)
+            PerformanceLogger().record(validated_query, cost, execution)
             execution_time_ms += execution.get("execution_time_ms", 0)
 
             # One repair attempt for a database execution error.
@@ -180,11 +195,18 @@ class OrchestratorAgent:
                     preferences,
                     database_knowledge=applied_knowledge,
                 )
-                apply_preferences_to_query(repaired, preferences, self.preference_service.user_id)
+                apply_preferences_to_query(repaired, preferences, self.preference_service.user_id, question=question)
                 try:
                     validated_query = stage("ValidatorAgent", self.validator.validate, repaired, schema_spec)
                     generated_query = repaired
+                    cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
+                    if cost["status"] == "heavy":
+                        return {"status": "optimization_required", "question": question, "cost_analysis": cost,
+                                "query_signature": cost["query_signature"], **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, validated_query, cost),
+                                "validated_query": validated_query, "generated_query": generated_query, "schema_spec": schema_spec,
+                                "query_context": query_context, "applied_preferences": preferences, "applied_knowledge": applied_knowledge}
                     execution = stage("ExecutorAgent", self.executor.execute, validated_query)
+                    PerformanceLogger().record(validated_query, cost, execution)
                     execution_time_ms += execution.get("execution_time_ms", 0)
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
@@ -199,7 +221,7 @@ class OrchestratorAgent:
                 emit("ResultsSummaryAgent", "skipped", message="Deterministic summary used")
                 rows = execution.get("all_rows", [])
                 if not execution.get("ok"):
-                    text = "I could not execute the MongoDB query."
+                    text = execution.get("error") if execution.get("error_code") == "query_timeout" else "I could not execute the MongoDB query."
                 elif validated_query["operation"] == "count_documents" and rows:
                     text = f"Count: {rows[0]['count']}."
                 else:
@@ -209,6 +231,7 @@ class OrchestratorAgent:
                     "repair_used": bool(repairs), "summary_used": needs_summary, "summary_skipped": not needs_summary}
             logging.getLogger(__name__).debug("execution_path=%s", path)
             return {
+                "status": "completed", "cost_analysis": cost, "query_signature": cost["query_signature"],
                 "route": route,
                 "query_context": query_context,
                 "execution_path": path,
@@ -216,6 +239,7 @@ class OrchestratorAgent:
                 "execution_success": bool(execution.get("ok")),
                 "execution_result": execution.get("all_rows", []),
                 "execution_error": execution.get("error"),
+                "execution_error_code": execution.get("error_code"),
                 "execution_metadata": {"row_count": execution.get("row_count", 0), "execution_time_ms": execution_time_ms},
                 "schema_spec": schema_spec,
                 "query_plan": None,

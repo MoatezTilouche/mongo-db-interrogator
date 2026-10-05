@@ -17,3 +17,7 @@ distinct:
 aggregate:
 {"operation":"aggregate","collection":"<collection>","pipeline":[{"$$group":{"_id":"$$<group_field>","value":{"$$sum":"$$<metric_field>"}}},{"$$sort":{"value":-1}},{"$$limit":3},{"$$lookup":{"from":"<related_collection>","localField":"_id","foreignField":"_id","as":"related"}},{"$$unwind":"$$related"},{"$$project":{"_id":0,"name":"$$related.<output_field>","value":1}}]}
 Prefer direct operations. Sort is [["field",1]] or [["field",-1]]. Numeric values must be JSON numbers; filter/projection are objects, pipeline/sort are arrays. Respect constraints. Literals: {"$$oid":"..."}, {"$$date":"ISO-8601"}.
+
+Preserve the requested result scope. Use null/omitted limit when the question and explicit user preferences do not request a limit. Do not silently add a default limit or an aggregation $$limit; the deterministic cost guard asks for confirmation and the executor enforces server safety caps.
+
+For aggregations, include only lookups needed by output fields, filters, or calculations. Apply relevant base-collection filters before lookups when semantics allow. Do not move a top-N limit before computing the ranking metric. Put the requested ranking metric first in the sort; use _id only as a secondary tie-breaker.

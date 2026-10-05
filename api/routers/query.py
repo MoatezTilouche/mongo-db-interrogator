@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.schemas import QueryRequest, QueryResponse
+from api.schemas import QueryRequest, QueryResponse, OptimizationRequest
 from api.security import require_api_key
 from services.query_history_service import QueryHistoryService
 import asyncio
@@ -23,7 +23,7 @@ def query(payload: QueryRequest, request: Request,
         raise HTTPException(status_code=503, detail={
             "message": "Schema bootstrap has not completed.", "schema_ready": False,
         })
-    return QueryResponse(**service.run(payload.question))
+    return public_response(service.run(payload.question))
 
 
 def schema_ready(request: Request) -> bool:
@@ -45,7 +45,7 @@ async def stream_query(payload: QueryRequest, request: Request,
     def run():
         try:
             with workflow_listener(lambda data: send("workflow", data)):
-                result = QueryResponse(**service.run(payload.question))
+                result = public_response(service.run(payload.question))
             send("result", jsonable_encoder(result))
         except Exception:
             send("error", {"message": "Query could not be completed."})
@@ -70,3 +70,22 @@ async def stream_query(payload: QueryRequest, request: Request,
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/{request_id}/optimize", response_model=QueryResponse)
+def optimize_query(request_id: str, payload: OptimizationRequest):
+    from services.query_optimization_service import QueryOptimizationService
+    from agents.validator_agent import QueryValidationError
+    try:
+        result = QueryOptimizationService().continue_query(request_id, payload)
+    except QueryValidationError:
+        raise HTTPException(status_code=422, detail="The optimized query failed validation. Refine the request and try again.") from None
+    return public_response(result)
+
+
+def public_response(result):
+    result = dict(result)
+    if result.get("status") == "optimization_required":
+        for key in ("generated_query", "validated_query", "schema_spec"):
+            result.pop(key, None)
+    return QueryResponse(**result)

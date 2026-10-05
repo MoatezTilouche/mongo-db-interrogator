@@ -31,10 +31,28 @@ class QueryGeneratorAgent:
             "question": question,
             "schema_json": json.dumps(compact_schema(schema_spec), ensure_ascii=False, default=str),
             "operation_hint": operation_hint,
-            "constraints_json": json.dumps({"read_only": True, "default_limit": DEFAULT_LIMIT, "max_limit": MAX_LIMIT}),
+            "constraints_json": json.dumps({"read_only": True, "default_limit": None, "preserve_requested_limit": True, "server_enforces_output_cap": True}),
             "user_preferences_json": json.dumps(user_preferences or [], ensure_ascii=False, separators=(",", ":")),
             "database_knowledge_json": json.dumps(database_knowledge or [], ensure_ascii=False, separators=(",", ":")),
         }), "query_generator")
+
+    @traceable(name="query_generator.optimize")
+    def optimize(self, original_question, query_context, schema_spec, previous_query,
+                 refinement, user_preferences=None, database_knowledge=None):
+        prompt = (
+            "You are refining an existing validated MongoDB query. Do not reinterpret intent from scratch. "
+            "Preserve the primary collection, original operation (except an explicitly requested summary), "
+            "all valid filters, limits and business rules. Apply only the supplied refinement. "
+            "Do not broaden or remove constraints unless the user explicitly replaces them. "
+            "Use only the selected schema; do not retrieve new context. Prefer more selective filters. "
+            "For summaries compute compact counts/groups in MongoDB, never fetch raw rows to summarize. "
+            "Return only the revised structured read-only MongoDB query JSON, no explanations.\n"
+        )
+        context = {"mode": "optimize", "original_question": original_question,
+                   "query_context": query_context, "selected_schema": compact_schema(schema_spec),
+                   "previous_query": previous_query, "refinement": refinement,
+                   "user_preferences": user_preferences or [], "database_knowledge": database_knowledge or []}
+        return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str), "query_generator")
 
     @traceable(name="query_generator.repair")
     def repair(

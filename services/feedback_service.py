@@ -92,11 +92,8 @@ class FeedbackService:
                 response["analysis_error"] = "Feedback was updated while analysis was running; stale analysis was discarded."
                 return response
             response.update(analysis_created=True, analysis=output)
-            try:
-                self.preference_service.deactivate_source(request_id, user_id)
-            except Exception as exc:
-                logger.warning("user_preference_deactivation_failed request_id=%s user_id=%s error_type=%s",
-                               log_id, safe_record(user_id), type(exc).__name__)
+            # Upsert the replacement before touching existing learning. Failed
+            # normalization/storage must leave the previously active record intact.
             try:
                 learning = self.learning_router.route(history, output, request_id, user_id)
                 if learning.get("route") == "user_preference":
@@ -104,7 +101,7 @@ class FeedbackService:
                     response.update(preference_saved=bool(action), preference_action=action)
                     if action is None:
                         response["preference_error"] = "Reusable preference could not be matched to the query schema."
-                        logger.info("user_preference_skipped request_id=%s user_id=%s reason=not_normalizable",
+                        logger.info("user_preference_skipped request_id=%s user_id=%s reason=see_normalization_log",
                                     log_id, safe_record(user_id))
                 elif learning.get("route") == "database_knowledge":
                     outcome = learning.get("knowledge") or {}

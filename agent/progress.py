@@ -33,3 +33,14 @@ def stage(agent, function, *args, **kwargs):
     emit(agent, "failed" if failed else "completed",
          elapsed_ms=round((perf_counter() - started) * 1000))
     return result
+
+
+@contextmanager
+def capture_workflow():
+    events = []
+    parent = _listener.get()
+    def capture(event):
+        events.append(event)
+        if parent: parent(event)
+    with workflow_listener(capture):
+        yield events

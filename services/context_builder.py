@@ -2,14 +2,38 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Any
 
 
 class ContextBuilder:
     def build(self, question: str, schema: dict[str, Any],
               knowledge: list[dict[str, Any]] | None = None,
-              preferences: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+              preferences: list[dict[str, Any]] | None = None,
+              full_catalog: dict[str, Any] | None = None) -> dict[str, Any]:
         knowledge = knowledge or []
+        schema = deepcopy(schema)
+        # Retrieval budgets must not discard fields needed by verified rules.
+        authoritative = (full_catalog or schema).get("collections", {})
+        selected = schema.get("collections", {})
+        for rule in knowledge:
+            for name in rule.get("collections", []):
+                if name not in selected:
+                    continue
+                fields = authoritative.get(name, {}).get("fields", {})
+                for field in rule.get("fields", []):
+                    if field not in fields and field != "_id":
+                        raise ValueError(
+                            f"Knowledge/schema conflict: rule references {name}.{field}, "
+                            "but the schema catalog does not contain that field. "
+                            "Refresh the schema or correct the learned rule; no substitute field was used."
+                        )
+                    if field in fields:
+                        selected[name].setdefault("fields", {})[field] = deepcopy(fields[field])
+        for preference in preferences or []:
+            name, field = preference.get("collection"), preference.get("field")
+            if name in selected and field in authoritative.get(name, {}).get("fields", {}):
+                selected[name].setdefault("fields", {})[field] = deepcopy(authoritative[name]["fields"][field])
         applicable_preferences = []
         for preference in preferences or []:
             blocked = False

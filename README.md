@@ -262,3 +262,5 @@ on their next ingestion, rather than bulk activated.
 Each answer has a **View query** button. It reveals a formatted validated MongoDB
 query (or the generated query if validation was unavailable), hidden by default
 and reset for each new answer.
+
+Query cost protection and optimization flow: see [QUERY_PERFORMANCE.md](QUERY_PERFORMANCE.md).

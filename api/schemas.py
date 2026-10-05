@@ -16,6 +16,17 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     request_id: str
+    status: str = "completed"
+    question: str | None = None
+    message: str | None = None
+    cost_analysis: dict[str, Any] | None = None
+    query_signature: str | None = None
+    suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    execution_trace: list[dict[str, Any]] = Field(default_factory=list)
+    optimization_iteration: int = 0
+    optimization_history: list[dict[str, Any]] = Field(default_factory=list)
+    optimization: dict[str, Any] | None = None
+    pagination: dict[str, Any] | None = None
     query_context: dict[str, Any] | None = None
     applied_preferences: list[dict[str, Any]] = Field(default_factory=list)
     applied_knowledge: list[dict[str, Any]] = Field(default_factory=list)
@@ -27,6 +38,7 @@ class QueryResponse(BaseModel):
     execution_success: bool = False
     execution_result: list[dict[str, Any]] | None = None
     execution_error: str | None = None
+    execution_error_code: str | None = None
     schema_spec: dict[str, Any] | None = None
     query_plan: dict[str, Any] | None = None
     generated_query: dict[str, Any] | None = None
@@ -70,3 +82,10 @@ class FeedbackResponse(BaseModel):
     knowledge_id: str | None = None
     knowledge_status: str | None = None
     knowledge_error: str | None = None
+
+class OptimizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    optimization: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    value: int | None = Field(default=None, ge=1, le=50000)
+    page: int = Field(default=1, ge=1, le=10000)
+    refinement: str | None = Field(default=None, min_length=1, max_length=4000)

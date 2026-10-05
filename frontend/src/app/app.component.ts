@@ -5,7 +5,7 @@ import { Subscription, catchError, firstValueFrom, map, throwError, timeout } fr
 import { ApiService, QueryEvent, QueryResponse, WorkflowEvent } from './services/api.service';
 import { environment } from '../environments/environment';
 
-const agentNames = ['Precheck', 'SchemaRetriever', 'QueryContextAgent', 'QueryGeneratorAgent', 'ValidatorAgent', 'ExecutorAgent', 'ResultsSummaryAgent'];
+const agentNames = ['Precheck', 'SchemaRetriever', 'QueryContextAgent', 'QueryGeneratorAgent', 'ValidatorAgent', 'QueryCostGuard', 'OptimizationAdvisor', 'ExecutorAgent', 'ResultsSummaryAgent'];
 
 @Component({
   selector: 'app-root',
@@ -21,6 +21,15 @@ export class AppComponent implements OnInit, OnDestroy {
   private destroyed = false;
   private detailTrigger: HTMLElement | null = null;
   private previousBodyOverflow = "";
+  optimizationRequired = false;
+  costAnalysis: QueryResponse['cost_analysis'];
+  optimizationSuggestions: NonNullable<QueryResponse['suggestions']> = [];
+  optimizationSubmitting = false;
+  pendingRequestId = '';
+  refinement = '';
+  refining = false;
+  pagination: QueryResponse['pagination'];
+  optimizationMessage = '';
   question = '';
   originalQuestion = '';
   requestId = '';
@@ -53,7 +62,7 @@ export class AppComponent implements OnInit, OnDestroy {
   queryCollection = '';
   readonly icons = { pending: '○', running: '→', completed: '✓', failed: '×', skipped: '–' };
 
-  get busy(): boolean { return this.loading || this.regenerating || this.feedbackSubmitting; }
+  get busy(): boolean { return this.loading || this.regenerating || this.feedbackSubmitting || this.optimizationSubmitting; }
 
   ngOnInit(): void { this.checkHealth(); }
   ngOnDestroy(): void {
@@ -126,19 +135,30 @@ export class AppComponent implements OnInit, OnDestroy {
         if (regenerating && priorResult) this.feedbackMessage = 'Your feedback was saved. You can retry regeneration below.';
       },
       complete: () => {
-        this.runStatus = this.result?.execution_success ? 'Workflow complete' : 'Workflow failed';
-        this.finishTrace(); this.workflowExpanded = false; this.loading = this.regenerating = false;
+        this.runStatus = this.optimizationRequired ? 'Optimization required' : this.result?.execution_success ? 'Workflow complete' : 'Workflow failed';
+        if (!this.optimizationRequired) this.finishTrace(); this.workflowExpanded = this.optimizationRequired; this.loading = this.regenerating = false;
       }
     }));
   }
 
   private clearAnswer(): void {
+    this.optimizationRequired = false; this.refining = false; this.refinement = ''; this.pagination = undefined;
     this.result = null; this.requestId = ''; this.results = []; this.columns = []; this.summary = ''; this.scalarResult = null;
     this.queryExpanded = false; this.queryText = ''; this.queryOperation = ''; this.queryCollection = '';
     this.feedbackChoice = null; this.feedbackComment = ''; this.feedbackSaved = false; this.feedbackMessage = '';
   }
   private displayResult(result: QueryResponse): void {
     this.clearAnswer(); this.result = result; this.requestId = result.request_id;
+    this.pagination = result.pagination;
+    if (result.status === 'optimization_required') {
+      this.optimizationRequired = true; this.pendingRequestId = result.request_id;
+      this.costAnalysis = result.cost_analysis; this.optimizationSuggestions = result.suggestions || [];
+      this.optimizationMessage = result.message || 'This request may be expensive.';
+      this.runStatus = 'Optimization required'; this.workflowExpanded = true;
+      this.updateWorkflow({ agent: 'QueryCostGuard', status: 'completed', message: 'Heavy query detected' });
+      this.updateWorkflow({ agent: 'OptimizationAdvisor', status: 'completed', message: 'Choose an optimization' });
+      return;
+    }
     const query = result.validated_query || result.generated_query;
     if (query) {
       this.queryText = JSON.stringify(query, null, 2);
@@ -151,7 +171,9 @@ export class AppComponent implements OnInit, OnDestroy {
       this.columns = [...new Set(this.results.flatMap(row => Object.keys(row)))];
     } else if (raw !== undefined && raw !== null) this.scalarResult = this.format(raw);
     this.summary = result.results_summary_agent_output?.summary_text || result.final_response || 'No summary available.';
-    if (!result.execution_success) this.error = 'The backend could not complete this query. Please revise the question or try again.';
+    if (!result.execution_success) this.error = result.execution_error_code === 'query_timeout'
+      ? 'This query exceeded the execution time limit. Narrow the filters or date range, or simplify the joins. Limiting returned rows alone may not reduce aggregation work.'
+      : 'The backend could not complete this query. Please revise the question or try again.';
   }
   private finishTrace(): void {
     this.executionTrace = this.executionTrace.map(step => step.status === 'running' ? { ...step, status: 'failed' } :
@@ -166,6 +188,11 @@ export class AppComponent implements OnInit, OnDestroy {
     if (result.validated_query) completed.add('ValidatorAgent');
     if (result.execution_success) completed.add('ExecutorAgent');
     if (called.includes('summary') && result.results_summary_agent_output) completed.add('ResultsSummaryAgent');
+    if (result.cost_analysis) completed.add('QueryCostGuard');
+    if (result.status === 'optimization_required') {
+      this.executionTrace = this.newTrace().map(step => ({ ...step, status: ['QueryCostGuard', 'OptimizationAdvisor'].includes(step.agent) ? 'completed' : ['ExecutorAgent', 'ResultsSummaryAgent'].includes(step.agent) ? 'pending' : 'completed' }));
+      return;
+    }
     this.executionTrace = this.newTrace().map(step => ({ ...step,
       status: completed.has(step.agent) ? 'completed' : step.agent === 'ExecutorAgent' && result.execution_error && result.validated_query ? 'failed' : 'skipped',
       message: step.agent === 'ResultsSummaryAgent' && result.execution_path?.summary_skipped ? 'Deterministic summary used' : 'Returned execution metadata'
@@ -173,6 +200,32 @@ export class AppComponent implements OnInit, OnDestroy {
     const names: Record<string, string> = { query_context: 'QueryContextAgent', query_generator: 'QueryGeneratorAgent', repair: 'QueryGeneratorAgent (repair)', summary: 'ResultsSummaryAgent' };
     this.transitions = called.map((agent, index) => `${index + 1}. ${names[agent] || agent}`);
   }
+  async optimize(optimization: string, page = 1): Promise<void> {
+    if (this.busy) return;
+    if (['refine', 'narrow_date'].includes(optimization) && !this.refining) { this.refining = true; return; }
+    if (['refine', 'narrow_date'].includes(optimization) && !this.refinement.trim()) return;
+    this.optimizationSubmitting = true; this.error = ''; this.runStatus = 'Applying optimization...';
+    const requestId = this.pendingRequestId || this.requestId;
+    const pageSize = this.pagination?.page_size;
+    this.transitions.push(`Optimization selected: ${optimization}`);
+    this.updateWorkflow({ agent: ['refine', 'narrow_date', 'summary'].includes(optimization) ? 'QueryGeneratorAgent' : 'ValidatorAgent', status: 'running', message: 'Reusing saved context' });
+    try {
+      const result = await firstValueFrom(this.api.optimizeQuery(requestId, {
+        optimization, page, value: pageSize, refinement: this.refinement.trim() || undefined
+      }));
+      if (result.request_id !== requestId && result.question) this.originalQuestion = result.question;
+      this.displayResult(result);
+      for (const event of result.execution_trace || []) this.updateWorkflow(event);
+      if (!this.optimizationRequired) {
+        this.updateWorkflow({ agent: 'ExecutorAgent', status: result.execution_success ? 'completed' : 'failed' });
+        this.finishTrace(); this.runStatus = result.execution_success ? 'Workflow complete' : 'Workflow failed';
+      }
+    } catch (error) {
+      this.error = this.message(error); this.runStatus = 'Optimization could not be completed';
+      this.updateWorkflow({ agent: 'ExecutorAgent', status: 'pending' });
+    } finally { this.optimizationSubmitting = false; }
+  }
+
   label(key: string): string {
     if (key === '_id') return 'ID';
     const text = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_.-]+/g, ' ').trim();
@@ -273,6 +326,7 @@ export class AppComponent implements OnInit, OnDestroy {
         return 'The backend is not ready. Please wait for schema preparation or check the database connection.';
       }
       if (error.status === 0) return 'The backend is unavailable. Check the connection and try again.';
+      if (error.status === 422) return 'The query could not be validated. Refine the request and try again.';
       if (error.status === 404) return 'The answer history is unavailable. Ask the question again before submitting feedback.';
       return `The request failed (${error.status}). Please try again.`;
     }

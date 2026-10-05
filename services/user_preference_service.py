@@ -36,6 +36,24 @@ _ASCENDING = re.compile(r"\b(ascending|lowest|least|fewest|smallest|bottom|lowes
 _DESCENDING = re.compile(r"\b(descending|highest|most|top|best|greatest)\b", re.I)
 
 
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+                 "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twenty": 20}
+
+def result_limit_instruction(text):
+    match = re.search(r"\b(last|latest|first|top|limit(?:\s+(?:to|of))?|return(?:\s+only)?)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twenty)\b", text or "", re.I)
+    if not match: return None
+    token = match[2].lower()
+    value = int(token) if token.isdigit() else _NUMBER_WORDS[token]
+    if not 1 <= value <= 50000: return None
+    return {"limit": value, "latest": match[1].lower() in {"last", "latest"}}
+
+def explicit_result_limit(question):
+    return result_limit_instruction(question)
+
+def unlimited_requested(question):
+    return bool(re.search(r"\b(without (?:a )?limit|no limit|unlimited|all (?:matching )?(?:rows|records|results|documents)|every (?:matching )?(?:row|record|result|document))\b", question or "", re.I))
+
+
 def _singular(word: str) -> str:
     if word.endswith("ies") and len(word) > 4:
         return word[:-3] + "y"
@@ -45,9 +63,16 @@ def _singular(word: str) -> str:
 
 
 def _collection_is_mentioned(question: str, collection: str) -> bool:
-    words = set(re.findall(r"[a-z0-9]+", question.lower()))
-    names = re.findall(r"[a-z0-9]+", collection.lower().replace("_", " ").replace(".", " "))
-    return bool(names) and all(name in words or _singular(name) in words for name in names)
+    def tokens(text):
+        text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+        return {_singular(word) for word in re.findall(r"[a-z0-9]+", text.lower())}
+    words = tokens(question)
+    # Database namespaces are infrastructure, not words users need to type.
+    names = tokens(collection.rsplit(".", 1)[-1])
+    names = {"history" if name == "hist" else name for name in names}
+    words = {"history" if word == "hist" else word for word in words}
+    return bool(names) and names <= words
+
 
 
 def _schema_fields(selected_schema: dict[str, Any], collection: str) -> list[str]:
@@ -85,13 +110,17 @@ def _explicit_sort_field(question: str, fields: list[str]) -> str | None:
 def preference_from_analysis(
     history: dict[str, Any], analysis: dict[str, Any], user_id: str, request_id: str,
     schema_catalog: dict[str, Any] | None = None,
+    rejection_reasons: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Normalize supported feedback into an upsertable preference document."""
-    if analysis.get("scope") != "user" or not analysis.get("reusable_preference"):
+    def reject(reason):
+        if rejection_reasons is not None: rejection_reasons.append(reason)
         return None
+    if analysis.get("scope") != "user": return reject("scope_not_user")
+    if not analysis.get("reusable_preference"): return reject("not_reusable")
     preference = str(analysis.get("preference") or "").strip()
     if not preference:
-        return None
+        return reject("empty_preference")
 
     query = history.get("validated_query") or history.get("generated_query") or {}
     collection = query.get("collection") if isinstance(query, dict) else None
@@ -100,10 +129,19 @@ def preference_from_analysis(
     if not collection and len(selected_schema) == 1:
         collection = next(iter(selected_schema))
     if not collection:
-        return None
+        return reject("missing_collection")
+    source_collection = collection
+    if analysis.get("feedback_type") == "wrong_collection":
+        known = {**selected_schema, **catalog_collections}
+        candidates = []
+        for text in (analysis.get("corrected_meaning") or "", preference):
+            candidates = [name for name in known if re.search(r"(?<![\w.])"+re.escape(name)+r"(?![\w.])", text)]
+            if candidates: break
+        if len(candidates) != 1: return reject("target_collection_unresolved")
+        collection = candidates[0]
     collection_schema = catalog_collections.get(collection) or selected_schema.get(collection)
     if not isinstance(collection_schema, dict):
-        return None
+        return reject("missing_collection_schema")
 
     preference_type = _PREFERENCE_TYPES.get(analysis.get("feedback_type"), "user_preference")
     fields = _schema_fields({collection: collection_schema}, collection)
@@ -114,14 +152,18 @@ def preference_from_analysis(
     field = _field_from_preference(
         [analysis.get("corrected_meaning"), preference, analysis.get("cause")], fields,
     )
+    limit_instruction = result_limit_instruction(preference)
+    if limit_instruction and preference_type in {"format_preference", "user_preference"}:
+        preference_type = "result_limit_preference"
     direction = None
     if preference_type == "sorting_preference":
         # A sorting preference without a field cannot safely affect later queries.
         if field is None:
-            return None
+            return reject("sorting_field_unresolved")
         direction = 1 if _ASCENDING.search(f"{preference} {analysis.get('corrected_meaning') or ''}") else -1
 
-    identity = "\0".join((user_id, preference_type, str(collection)))
+    identity_collection = source_collection if preference_type == "collection_preference" else collection
+    identity = "\0".join((user_id, preference_type, str(identity_collection)))
     preference_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     now = datetime.now(timezone.utc)
     return {
@@ -130,8 +172,11 @@ def preference_from_analysis(
         "scope": "user",
         "type": preference_type,
         "collection": str(collection),
+        "source_collection": str(source_collection),
         "field": field,
         "direction": direction,
+        "limit": (limit_instruction or {}).get("limit"),
+        "latest": (limit_instruction or {}).get("latest", False),
         "preference": preference[:500],
         "source_request_id": request_id,
         "confidence": float(analysis.get("confidence", 0)),
@@ -150,7 +195,7 @@ class UserPreferenceService:
                 user_id: str | None = None) -> str | None:
         effective_user_id = user_id or self.user_id
         catalog = None
-        if analysis.get("feedback_type") == "wrong_sorting" \
+        if analysis.get("feedback_type") in {"wrong_sorting", "wrong_collection"} \
                 and analysis.get("scope") == "user" and analysis.get("reusable_preference"):
             # The failed query's selected schema may omit the corrected field.
             # SchemaInspector is deterministic and normally serves this from its cache.
@@ -160,12 +205,13 @@ class UserPreferenceService:
             except Exception as exc:
                 logger.warning("user_preference_schema_lookup_failed request_id=%s error_type=%s",
                                _safe_id(request_id), type(exc).__name__)
+        reasons = []
         record = preference_from_analysis(
-            history, analysis, effective_user_id, request_id, schema_catalog=catalog,
+            history, analysis, effective_user_id, request_id, schema_catalog=catalog, rejection_reasons=reasons,
         )
         if record is None:
-            logger.warning("user_preference_not_promoted request_id=%s user_id=%s reason=not_normalizable",
-                           _safe_id(request_id), _safe_id(effective_user_id))
+            logger.warning("user_preference_not_promoted request_id=%s user_id=%s reason=%s",
+                           _safe_id(request_id), _safe_id(effective_user_id), reasons[0] if reasons else "unknown")
             return None
         action = self.repository.upsert(record)
         logger.info(
@@ -181,7 +227,8 @@ class UserPreferenceService:
                         _safe_id(request_id), _safe_id(user_id or self.user_id), count)
         return count
 
-    def retrieve_for_query(self, question: str, catalog: dict[str, Any], request_id: str | None = None) -> list[dict[str, Any]]:
+    def retrieve_for_query(self, question: str, catalog: dict[str, Any], request_id: str | None = None,
+                           selected_collections: set[str] | None = None) -> list[dict[str, Any]]:
         try:
             candidates = self.repository.list_active(self.user_id, USER_PREFERENCE_RETRIEVAL_LIMIT)
         except Exception as exc:
@@ -191,15 +238,28 @@ class UserPreferenceService:
 
         available = catalog.get("collections", {})
         relevant = []
+        selected_limits = set()
         for candidate in candidates:
             collection = candidate.get("collection")
-            if collection not in available or not _collection_is_mentioned(question, collection):
+            if collection not in available or (collection not in (selected_collections or set()) and not any(_collection_is_mentioned(question, name) for name in {collection, candidate.get("source_collection") or collection})):
                 continue
             try:
                 if float(candidate.get("confidence", 0)) < 0.5:
                     continue
             except (TypeError, ValueError):
                 continue
+            candidate = dict(candidate)
+            instruction = result_limit_instruction(candidate.get("preference", ""))
+            if candidate.get("type") in {"format_preference", "user_preference", "result_limit_preference"} and instruction:
+                if collection in selected_limits or unlimited_requested(question) or explicit_result_limit(question): continue
+                selected_limits.add(collection)  # list_active sorts newest first, across legacy types.
+                candidate.update(type="result_limit_preference", **instruction)
+                if instruction["latest"]:
+                    known_fields = available[collection].get("fields", {})
+                    explicit_date = _field_from_preference([candidate.get("preference", "")], list(known_fields))
+                    date_fields = [f for f in known_fields if f.lower() in {"executiondate", "createdat", "created_at", "creationdate", "crt_dt"}]
+                    candidate["field"] = explicit_date or (date_fields[0] if len(date_fields) == 1 else "_id")
+                    candidate["direction"] = -1
             fields = available[collection].get("fields", {})
             field = candidate.get("field")
             if candidate.get("type") == "sorting_preference":
@@ -224,23 +284,24 @@ class UserPreferenceService:
                             _safe_id(request_id or current_request_id()), _safe_id(self.user_id), type(exc).__name__,
                         )
                     field = described_field
-            if field and field not in fields:
+            if field and field != "_id" and field not in fields:
                 continue
+            always = bool(re.search(r"\b(always|by default|default)\b", candidate.get("preference", ""), re.I))
             if candidate.get("type") == "sorting_preference":
-                if not _SORT_INTENT.search(question):
+                if not always and not _SORT_INTENT.search(question):
                     continue
                 explicit = _explicit_sort_field(question, list(fields))
                 if explicit and field:
                     if explicit.lower() != field.lower() and explicit.split(".")[-1].lower() != field.split(".")[-1].lower():
                         continue
-            elif candidate.get("type") == "filter_preference" and not _FILTER_INTENT.search(question):
+            elif candidate.get("type") == "filter_preference" and not always and not _FILTER_INTENT.search(question):
                 continue
-            elif candidate.get("type") == "metric_preference" and not _METRIC_INTENT.search(question):
+            elif candidate.get("type") == "metric_preference" and not always and not _METRIC_INTENT.search(question):
                 continue
-            elif candidate.get("type") == "format_preference" and not _FORMAT_INTENT.search(question):
+            elif candidate.get("type") == "format_preference" and not always and not _FORMAT_INTENT.search(question):
                 continue
             selected = {key: candidate.get(key) for key in (
-                "type", "collection", "field", "direction", "preference", "confidence",
+                "type", "collection", "source_collection", "field", "direction", "limit", "latest", "preference", "confidence",
             ) if candidate.get(key) is not None}
             if field:
                 selected["field"] = field
@@ -254,6 +315,8 @@ class UserPreferenceService:
         request_id = request_id or current_request_id()
         logger.info("user_preferences_retrieved request_id=%s user_id=%s count=%d",
                     _safe_id(request_id), _safe_id(self.user_id), len(relevant))
+        logger.info("user_preferences_filter_summary request_id=%s candidates=%d matched=%d",
+                    _safe_id(request_id), len(candidates), len(relevant))
         for item in relevant:
             logger.info("user_preference_retrieved request_id=%s user_id=%s collection=%s preference_type=%s preference_field=%s",
                         _safe_id(request_id), _safe_id(self.user_id), item.get("collection"), item.get("type"), item.get("field"))
@@ -261,10 +324,23 @@ class UserPreferenceService:
 
 
 def apply_preferences_to_query(query: dict[str, Any], preferences: list[dict[str, Any]],
-                                user_id: str = DEFAULT_USER_ID) -> list[dict[str, Any]]:
+                                user_id: str = DEFAULT_USER_ID, question: str = "") -> list[dict[str, Any]]:
     """Apply relevant sorting memory deterministically after generation."""
     applied = []
+    explicit = explicit_result_limit(question)
+    if query.get("operation") == "find" and explicit:
+        query["limit"] = explicit["limit"]
     for preference in preferences:
+        if preference.get("type") == "result_limit_preference":
+            if query.get("operation") != "find" or query.get("collection") != preference.get("collection"):
+                continue
+            if explicit or unlimited_requested(question): continue
+            query["limit"] = preference["limit"]
+            if preference.get("latest") and not _explicit_sort_field(question, [preference.get("field", "")]):
+                query["sort"] = [[preference.get("field") or "_id", -1]]
+            applied.append(dict(preference))
+            logger.info("user_result_limit_applied request_id=%s limit=%d", _safe_id(current_request_id()), preference["limit"])
+            continue
         if preference.get("type") != "sorting_preference":
             continue
         if query.get("operation") != "find" or query.get("collection") != preference.get("collection"):
@@ -282,7 +358,10 @@ def apply_preferences_to_query(query: dict[str, Any], preferences: list[dict[str
 
 
 def applied_preferences_for_query(query: dict[str, Any], preferences: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
+    limits = [dict(p) for p in preferences if p.get("type") == "result_limit_preference"
+              and query.get("operation") == "find" and query.get("collection") == p.get("collection")
+              and query.get("limit") == p.get("limit")]
+    return limits + [
         {key: preference[key] for key in ("type", "collection", "field", "direction")}
         for preference in preferences
         if preference.get("type") == "sorting_preference"

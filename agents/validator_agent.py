@@ -6,7 +6,7 @@ from typing import Any
 
 from agent.config import (DEFAULT_LIMIT, MAX_LIMIT, QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION,
                           USER_PREFERENCES_COLLECTION, SCHEMA_CACHE_COLLECTION,
-                          DATABASE_KNOWLEDGE_COLLECTION)
+                          DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION)
 from agent.tracing import traceable
 
 
@@ -53,6 +53,9 @@ def _known_fields(schema_spec: dict[str, Any], collection: str) -> set[str]:
 
 
 def _field_is_known(field: str, known_fields: set[str]) -> bool:
+    # MongoDB collection documents have _id even when compact retrieval omits it.
+    if field == "_id":
+        return True
     root = field.split(".", 1)[0]
     return field in known_fields or root in {item.split(".", 1)[0] for item in known_fields}
 
@@ -81,7 +84,7 @@ class ValidatorAgent:
 
         collection = str(normalized.get("collection", "")).strip()
         internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
-                    SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION}
+                    SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION}
         if collection in internal or collection.startswith("_system_"):
             raise QueryValidationError("Internal learning collections are not queryable")
         known_collections = _known_collections(schema_spec)
@@ -102,8 +105,9 @@ class ValidatorAgent:
             normalized.setdefault("filter", {})
             normalized.setdefault("projection", None)
             normalized.setdefault("sort", [])
-            limit = int(normalized.get("limit") or DEFAULT_LIMIT)
-            normalized["limit"] = max(1, min(limit, MAX_LIMIT))
+            limit = normalized.get("limit")
+            normalized["limit"] = max(1, int(limit)) if limit is not None else None
+            normalized["skip"] = max(0, int(normalized.get("skip") or 0))
             _validate_filter_fields(normalized["filter"], known_fields)
 
             sort = normalized.get("sort", [])

@@ -96,8 +96,9 @@ class SchemaRetriever:
         required_by_collection: dict[str, set[str]] = {}
         for preference in preferences or []:
             collection, field = preference.get("collection"), preference.get("field")
-            if collection and field:
-                required_by_collection.setdefault(collection, set()).add(field)
+            if collection:
+                required = required_by_collection.setdefault(collection, set())
+                if field: required.add(field)
 
         query_vector = None
         embedding_failed = False

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from agent.config import DEFAULT_USER_ID, QUERY_HISTORY_PREVIEW_MAX_BYTES, QUERY_HISTORY_PREVIEW_SIZE
 from agent.telemetry import request_context
+from agent.progress import capture_workflow
 from database.query_history_repository import QueryHistoryRepository
 from database.record_safety import safe_record
 from database.schema_inspector import compact_schema
@@ -40,13 +41,17 @@ class QueryHistoryService:
         request_id = f"req_{uuid4().hex}"
         started = time.perf_counter()
         try:
-            with request_context(request_id):
+            with request_context(request_id), capture_workflow() as trace:
                 result = self.pipeline(question)
+                result["execution_trace"] = trace
         except Exception as exc:
             logger.error("query_pipeline_failed request_id=%s error_type=%s", request_id, type(exc).__name__)
             result = {"execution_success": False, "execution_error": "Query pipeline failed."}
         elapsed = (time.perf_counter() - started) * 1000
         result["request_id"] = request_id
+        if result.get("status") == "optimization_required":
+            from services.query_optimization_service import QueryOptimizationService
+            QueryOptimizationService().pause(result, question)
         try:
             rows = result.get("execution_result") or []
             usage = result.get("telemetry") or {}
@@ -54,6 +59,9 @@ class QueryHistoryService:
             metadata = result.get("execution_metadata") or {}
             record = {
                 "request_id": request_id, "user_id": DEFAULT_USER_ID, "question": question,
+                "status": result.get("status", "completed"), "query_signature": result.get("query_signature"),
+                "cost_guard": result.get("cost_analysis"), "optimization": result.get("optimization"),
+                "execution_metrics": result.get("execution_metadata"),
                 "route": route.get("complexity") if isinstance(route, dict) else route,
                 "selected_schema": compact_schema(result.get("schema_spec") or {}),
                 "query_context": result.get("query_context"),

@@ -12,9 +12,20 @@ export interface WorkflowEvent {
 }
 export interface QueryResponse {
   request_id: string;
+  status?: string;
+  question?: string | null;
+  optimization_iteration?: number;
+  optimization_history?: Record<string, unknown>[];
+  optimization?: Record<string, unknown>;
+  message?: string;
+  cost_analysis?: { estimated_rows?: number; risk_score?: number; signals?: string[] };
+  suggestions?: { id: string; label: string; type?: string; value?: number }[];
+  execution_trace?: WorkflowEvent[];
+  pagination?: { page: number; page_size: number; has_next: boolean; has_previous: boolean };
   execution_success: boolean;
   execution_result?: Record<string, unknown>[] | null;
   execution_error?: string | null;
+  execution_error_code?: string | null;
   final_response?: string | null;
   results_summary_agent_output?: { summary_text?: string } | null;
   execution_path?: { agents_called?: string[]; summary_skipped?: boolean } | null;
@@ -46,6 +57,10 @@ export class ApiService {
 
   query(question: string): Observable<QueryResponse> {
     return this.http.post<QueryResponse>(`${this.baseUrl}/query`, { question }, { headers: this.headers() });
+  }
+
+  optimizeQuery(requestId: string, payload: { optimization: string; value?: number; page?: number; refinement?: string }): Observable<QueryResponse> {
+    return this.http.post<QueryResponse>(`${this.baseUrl}/query/${encodeURIComponent(requestId)}/optimize`, payload, { headers: this.headers() });
   }
 
   submitFeedback(requestId: string, liked: boolean, comment?: string): Observable<FeedbackResponse> {

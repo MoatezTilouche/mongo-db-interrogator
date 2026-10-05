@@ -3,3 +3,7 @@
 .record-action .text-button{white-space:nowrap}
 
 .query-inspector{margin:0 22px 18px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}.query-meta{padding:10px 14px;display:flex;align-items:center;gap:10px;background:#f7f8fa;font-size:12px;flex-wrap:wrap}.query-kind{background:#fff0e2;color:#a44d00;padding:3px 7px;border-radius:4px;font-family:monospace}.query-meta small{margin-left:auto;font-size:10px}.query-inspector pre{margin:0;padding:16px;max-height:320px;overflow:auto;background:#fafbfc;color:#253244;font:12px/1.7 Consolas,monospace;tab-size:2}.query-toggle{font-size:12px;padding:7px 12px}
+
+.optimization-panel { background: #fff; border: 1px solid #ff7900; border-left: 4px solid #ff7900; padding: 24px; margin: 24px 0; border-radius: 8px; }
+.optimization-options, .pagination { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 16px 0; }
+.optimization-panel input { padding: 12px; border: 1px solid #ddd; margin: 12px; max-width: 100%; }

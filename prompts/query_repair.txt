@@ -12,3 +12,9 @@ Failed query: $query_json
 Error: $error
 User preferences: $user_preferences_json
 Verified active database knowledge: $database_knowledge_json
+
+Preserve the requested result scope. Use null/omitted limit when the question and explicit user preferences do not request a limit. Do not silently add a default limit or an aggregation $$limit; the deterministic cost guard asks for confirmation and the executor enforces server safety caps.
+
+For aggregations, include only lookups needed by output fields, filters, or calculations. Apply relevant base-collection filters before lookups when semantics allow. Do not move a top-N limit before computing the ranking metric. Put the requested ranking metric first in the sort; use _id only as a secondary tie-breaker.
+
+An unknown-field error is not evidence that a different schema field has the same meaning. Never replace a field explicitly required by supplied business knowledge with another field (for example, requestStatus with actionDetails.actionCode). Preserve its business meaning; schema/knowledge conflicts must not be repaired by guessing an alternative field.
