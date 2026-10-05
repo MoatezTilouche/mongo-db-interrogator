@@ -183,3 +183,68 @@ All agents use OpenAI through the shared router and the single `OPENAI_MODEL` se
 Structured-output failures report safe field/type validation details and the provider's finish reason without raw output or input values. `finish_reason=length` flags a response that reached the output token limit and may be incomplete; absent metadata is reported as `unknown`. Every telemetry attempt also records the finish reason. These failures are not retried, and the token budget is not automatically increased.
 
 The application does not send `max_tokens` or `max_completion_tokens`. The former `LLM_MAX_OUTPUT_TOKENS` setting is no longer used. Generation follows the model's own defaults and limits; the request timeout still applies.
+
+## Angular web interface
+
+The frontend is a small Angular 21 standalone application: one main component,
+Angular forms, and a centralized HttpClient API service. No frontend router or
+state-management library is needed.
+
+Start the backend from the repository root:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn main_api:app --reload
+```
+
+Install and build the frontend:
+
+```powershell
+cd frontend
+npm.cmd ci
+npm.cmd run build
+```
+
+Open http://localhost:8000/. FastAPI serves the compiled Angular page and assets
+from `frontend/dist`. Build before opening that page; without a build the root
+returns a helpful 503. For frontend development, run `npm.cmd start` inside
+`frontend` and open http://127.0.0.1:4200/. Its proxy sends API requests to the
+backend on port 8000. On shells without Windows script restrictions, `npm` works
+in place of `npm.cmd`.
+
+Configure `apiBaseUrl` and `useStreaming` in
+`frontend/src/environments/environment.ts`. Empty `apiBaseUrl` uses the current
+origin or development proxy. Live execution uses the existing authenticated
+`POST /query/stream` SSE endpoint through HttpClient download events. If streaming
+is disabled or the endpoint responds with 404/405, the app uses `POST /query` and
+shows only returned operational execution metadata after completion. No agent
+progress is simulated. `GET /health` controls schema readiness and Ask availability.
+
+There is no authentication screen. If the backend uses a shared API key, set it
+for the browser tab using its developer console, then reload:
+
+```javascript
+sessionStorage.setItem('mongo-api-key', 'your-api-key');
+```
+
+The API service sends it in `X-API-Key`; no key is bundled in source/build assets.
+Remove it with `sessionStorage.removeItem('mongo-api-key')` when finished.
+
+Feedback uses `POST /feedback` and the displayed answer's `request_id`. Yes sends
+`liked: true` and shows thanks without querying again. No requires a trimmed,
+non-empty comment; after the feedback endpoint responds successfully, Angular
+reruns the **exact original question**. Existing backend feedback learning applies
+any saved preference/knowledge. Each regenerated answer replaces the displayed
+request ID. If regeneration fails, the previous answer remains visible and a
+retry button reruns the question without saving duplicate feedback. Feedback
+analysis errors are shown as a learning limitation, rather than claiming a
+correction was applied. The UI never generates its own summary or exposes raw
+server exceptions or hidden reasoning.
+
+Verify the frontend with `npm.cmd run build` followed by `npm.cmd run test:smoke`
+inside `frontend`. The browser smoke check uses a local fixture API, tests live
+SSE, feedback and regeneration failures/retries, dynamic tables, and mobile
+layout; it does not query MongoDB or OpenAI. It uses installed Microsoft Edge on
+Windows. Elsewhere, install Playwright Chromium or set `BROWSER_PATH` to an
+existing Chromium-based browser. Screenshots are written to ignored
+`frontend/test-results/`. Set `ANGULAR_DEV_URL` to a running Angular dev-server URL
+to check that page and its development assets as well.

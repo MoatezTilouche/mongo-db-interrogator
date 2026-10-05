@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from agent.progress import stage, emit
 import logging
 from agent.telemetry import capture_usage, totals
 from agents.query_context_agent import QueryContextAgent
@@ -80,7 +81,7 @@ class OrchestratorAgent:
         validation_errors: list[str] = []
         agents_called: list[str] = []
         try:
-            catalog = schema_bootstrap_service.get_catalog()
+            catalog = stage("Precheck", schema_bootstrap_service.get_catalog)
             state = schema_bootstrap_service.status()
             cache_status = {
                 "hit": state.get("schema_source") == "cache",
@@ -95,7 +96,7 @@ class OrchestratorAgent:
             preferences = self.preference_service.retrieve_for_query(
                 question, catalog, current_request_id(),
             ) if catalog.get("database") else []
-            retrieval = schema_bootstrap_service.retrieve(question, preferences)
+            retrieval = stage("SchemaRetriever", schema_bootstrap_service.retrieve, question, preferences)
             candidate_catalog = retrieval["catalog"]
             retrieval_status = retrieval["telemetry"]
             knowledge_result = self.knowledge_retriever.retrieve(
@@ -106,7 +107,7 @@ class OrchestratorAgent:
             context = self.context_builder.build(
                 question, candidate_catalog, knowledge_candidates, preferences,
             )
-            context_result = self.query_context_agent.build(
+            context_result = stage("QueryContextAgent", self.query_context_agent.build,
                 context["question"], context["schema"], context["user_preferences"],
                 context["database_knowledge"],
             )
@@ -136,7 +137,7 @@ class OrchestratorAgent:
                 "operation": query_context["operation"],
             }
             agents_called.append("query_generator")
-            generated_query = self.query_generator.generate(
+            generated_query = stage("QueryGeneratorAgent", self.query_generator.generate,
                 question, schema_spec, operation_hint=query_context["operation"],
                 user_preferences=preferences, database_knowledge=applied_knowledge,
             )
@@ -147,14 +148,14 @@ class OrchestratorAgent:
             validated_query: dict[str, Any] | None = None
             for attempt in range(2):
                 try:
-                    validated_query = self.validator.validate(generated_query, schema_spec)
+                    validated_query = stage("ValidatorAgent", self.validator.validate, generated_query, schema_spec)
                     break
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
                     if attempt == 0 and "Banned" not in str(exc) and "Unsupported operation" not in str(exc):
                         repairs += 1
                         agents_called.append("repair")
-                        generated_query = self.query_generator.repair(
+                        generated_query = stage("QueryGeneratorAgent", self.query_generator.repair,
                             question, schema_spec, generated_query, str(exc), preferences,
                             database_knowledge=applied_knowledge,
                         )
@@ -163,7 +164,7 @@ class OrchestratorAgent:
                         raise
 
             assert validated_query is not None
-            execution = self.executor.execute(validated_query)
+            execution = stage("ExecutorAgent", self.executor.execute, validated_query)
             execution_time_ms += execution.get("execution_time_ms", 0)
 
             # One repair attempt for a database execution error.
@@ -171,7 +172,7 @@ class OrchestratorAgent:
             if not execution.get("ok") and repairs == 0 and execution.get("repairable", False):
                 repairs += 1
                 agents_called.append("repair")
-                repaired = self.query_generator.repair(
+                repaired = stage("QueryGeneratorAgent", self.query_generator.repair,
                     question,
                     schema_spec,
                     validated_query,
@@ -181,9 +182,9 @@ class OrchestratorAgent:
                 )
                 apply_preferences_to_query(repaired, preferences, self.preference_service.user_id)
                 try:
-                    validated_query = self.validator.validate(repaired, schema_spec)
+                    validated_query = stage("ValidatorAgent", self.validator.validate, repaired, schema_spec)
                     generated_query = repaired
-                    execution = self.executor.execute(validated_query)
+                    execution = stage("ExecutorAgent", self.executor.execute, validated_query)
                     execution_time_ms += execution.get("execution_time_ms", 0)
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
@@ -193,8 +194,9 @@ class OrchestratorAgent:
             ))
             if needs_summary:
                 agents_called.append("summary")
-                summary = self.summary_agent.summarize(question, execution)
+                summary = stage("ResultsSummaryAgent", self.summary_agent.summarize, question, execution)
             else:
+                emit("ResultsSummaryAgent", "skipped", message="Deterministic summary used")
                 rows = execution.get("all_rows", [])
                 if not execution.get("ok"):
                     text = "I could not execute the MongoDB query."

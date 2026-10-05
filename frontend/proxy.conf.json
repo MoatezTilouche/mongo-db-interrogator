@@ -1,0 +1,6 @@
+{
+  "/query": { "target": "http://127.0.0.1:8000", "secure": false },
+  "/query/**": { "target": "http://127.0.0.1:8000", "secure": false },
+  "/feedback": { "target": "http://127.0.0.1:8000", "secure": false },
+  "/health": { "target": "http://127.0.0.1:8000", "secure": false }
+}

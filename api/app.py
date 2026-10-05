@@ -2,8 +2,11 @@ import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 from api.routers.health import router as health_router
 from api.routers.query import router as query_router
@@ -42,6 +45,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    frontend = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    app.mount("/static", StaticFiles(directory=frontend, check_dir=False), name="frontend")
+
+    @app.get("/", include_in_schema=False)
+    def home():
+        if not (frontend / "index.html").is_file():
+            raise HTTPException(status_code=503, detail="Build the Angular frontend with npm run build in frontend/.")
+        return FileResponse(frontend / "index.html")
+
+    # Register the page before the legacy health router's JSON root route.
     app.include_router(health_router)
     app.include_router(query_router)
     app.include_router(feedback_router)

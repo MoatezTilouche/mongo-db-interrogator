@@ -6,6 +6,13 @@ from agents.feedback_analysis_agent import FeedbackAnalysis
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1)
 
+    @field_validator("question")
+    @classmethod
+    def nonempty_question(cls, value):
+        if not value.strip():
+            raise ValueError("Question must not be empty")
+        return value.strip()
+
 
 class QueryResponse(BaseModel):
     request_id: str
