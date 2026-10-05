@@ -248,3 +248,17 @@ Windows. Elsewhere, install Playwright Chromium or set `BROWSER_PATH` to an
 existing Chromium-based browser. Screenshots are written to ignored
 `frontend/test-results/`. Set `ANGULAR_DEV_URL` to a running Angular dev-server URL
 to check that page and its development assets as well.
+
+## Knowledge learning modes
+
+Set `KNOWLEDGE_LEARNING_MODE=immediate` to activate eligible database rules on
+the first feedback, or `confirmations` to wait for
+`KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS` independent request IDs (minimum 1).
+Both require `KNOWLEDGE_AUTO_PROMOTION_ENABLED=true`, meet the configured confidence
+threshold, and retain conflict checks. Immediate mode bypasses only the evidence
+count. Changes require a backend restart; existing candidates are reconsidered
+on their next ingestion, rather than bulk activated.
+
+Each answer has a **View query** button. It reveals a formatted validated MongoDB
+query (or the generated query if validation was unavailable), hidden by default
+and reset for each new answer.

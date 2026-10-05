@@ -47,6 +47,10 @@ export class AppComponent implements OnInit, OnDestroy {
   columns: string[] = [];
   scalarResult: string | null = null;
   summary = '';
+  queryExpanded = false;
+  queryText = '';
+  queryOperation = '';
+  queryCollection = '';
   readonly icons = { pending: '○', running: '→', completed: '✓', failed: '×', skipped: '–' };
 
   get busy(): boolean { return this.loading || this.regenerating || this.feedbackSubmitting; }
@@ -130,10 +134,17 @@ export class AppComponent implements OnInit, OnDestroy {
 
   private clearAnswer(): void {
     this.result = null; this.requestId = ''; this.results = []; this.columns = []; this.summary = ''; this.scalarResult = null;
+    this.queryExpanded = false; this.queryText = ''; this.queryOperation = ''; this.queryCollection = '';
     this.feedbackChoice = null; this.feedbackComment = ''; this.feedbackSaved = false; this.feedbackMessage = '';
   }
   private displayResult(result: QueryResponse): void {
     this.clearAnswer(); this.result = result; this.requestId = result.request_id;
+    const query = result.validated_query || result.generated_query;
+    if (query) {
+      this.queryText = JSON.stringify(query, null, 2);
+      this.queryOperation = typeof query['operation'] === 'string' ? query['operation'] : '';
+      this.queryCollection = typeof query['collection'] === 'string' ? query['collection'] : '';
+    }
     const raw: unknown = result.execution_result;
     if (Array.isArray(raw)) {
       this.results = raw.map(value => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { value });

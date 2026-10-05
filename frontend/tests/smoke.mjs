@@ -28,7 +28,7 @@ const server = createServer(async (request, response) => {
         request_id: `req_${queryCount}`, execution_success: true,
         execution_result: [{ customer: '<script>unsafe</script>', total: queryCount * 100, optional: null, details: { firstName: 'Sample', lastName: 'Customer', addressInfo: { locality: 'Sfax', country: 'Tunisia' }, tags: ['test'] }, longText: 'A long note '.repeat(300) }, { customer: 'Bob', extra: 'dynamic column' }],
         final_response: `Summary ${queryCount}`, results_summary_agent_output: { summary_text: `Summary ${queryCount}` },
-        schema_spec: {}, query_context: { operation: 'aggregate' }, generated_query: {}, validated_query: {},
+        schema_spec: {}, query_context: { operation: 'aggregate' }, generated_query: {}, validated_query: { operation: 'find', collection: 'v2DB.requests', filter: { 'actionDetails.services.serviceDes': { '$regex': 'voice', '$options': 'i' } }, projection: { '_id': 0 }, limit: 10 },
         execution_path: { agents_called: ['query_context', 'query_generator', 'summary'], summary_skipped: false }
       };
       if (path === '/query') return json(response, 200, result);
@@ -71,6 +71,12 @@ try {
   await page.locator('.step.running').first().waitFor();
   await page.getByText('Summary 1', { exact: true }).waitFor();
   assert.equal(await page.locator('tbody tr').count(), 2);
+  assert.equal(await page.locator('#query-inspector').count(), 0);
+  await page.getByRole('button', { name: 'View query', exact: true }).click();
+  assert.ok((await page.getByLabel('MongoDB query').textContent()).includes('v2DB.requests'));
+  assert.ok((await page.getByLabel('MongoDB query').textContent()).includes('$regex'));
+  await page.getByRole('button', { name: 'Hide query', exact: true }).click();
+  assert.equal(await page.locator('#query-inspector').count(), 0);
   assert.equal(await page.getByRole('columnheader', { name: 'Extra', exact: true }).count(), 1);
   assert.equal(await page.locator('tbody tr').first().evaluate(row => row.getBoundingClientRect().height < 100), true);
   await page.getByRole('button', { name: /Sample Customer/ }).click();

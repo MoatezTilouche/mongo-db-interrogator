@@ -13,6 +13,7 @@ from agent.config import (
     KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS,
     KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE,
     KNOWLEDGE_EMBEDDING_MODEL,
+    KNOWLEDGE_LEARNING_MODE,
 )
 from agent.llm import llm_router
 from database.knowledge_repository import KnowledgeRepository
@@ -143,7 +144,8 @@ class KnowledgeIngestionService:
         if confirmations >= 2 and saved.get("status") == "candidate":
             self.repository.set_status(key, "confirmed", False)
             saved["status"] = "confirmed"
-        if KNOWLEDGE_AUTO_PROMOTION_ENABLED and confirmations >= KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS \
+        required_confirmations = 1 if KNOWLEDGE_LEARNING_MODE == "immediate" else KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS
+        if KNOWLEDGE_AUTO_PROMOTION_ENABLED and confirmations >= required_confirmations \
                 and confidence >= KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE:
             for active in self.repository.find_active_with_same_scope(saved):
                 if self._is_contradiction(saved, active):
