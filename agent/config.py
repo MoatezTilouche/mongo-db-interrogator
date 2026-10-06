@@ -84,3 +84,16 @@ if QUERY_PERFORMANCE_COLLECTION in {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTIO
     raise ValueError("Performance memory must use a separate collection")
 
 QUERY_MAX_OPTIMIZATION_ITERATIONS = max(1, int(os.getenv("QUERY_MAX_OPTIMIZATION_ITERATIONS", "3")))
+
+# Semantic template suggestions always require an explicit user decision.
+QUERY_TEMPLATES_COLLECTION = os.getenv("QUERY_TEMPLATES_COLLECTION", "_system_query_templates")
+SEMANTIC_TEMPLATE_CACHE_ENABLED = os.getenv("SEMANTIC_TEMPLATE_CACHE_ENABLED", "true").lower() == "true"
+SEMANTIC_TEMPLATE_TOP_K = max(1, int(os.getenv("SEMANTIC_TEMPLATE_TOP_K", "3")))
+SEMANTIC_TEMPLATE_MIN_THRESHOLD = float(os.getenv("SEMANTIC_TEMPLATE_MIN_THRESHOLD", "0.65"))
+SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD = float(os.getenv("SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD", "0.82"))
+if not 0 <= SEMANTIC_TEMPLATE_MIN_THRESHOLD <= SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD <= 1:
+    raise ValueError("Semantic template thresholds must satisfy 0 <= min <= suggest <= 1")
+if QUERY_TEMPLATES_COLLECTION in {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
+        SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION}:
+    raise ValueError("Query templates must use a separate collection")
+LLM_ROLE_CONFIG["template_parameters"] = OPENAI_MODEL

@@ -12,6 +12,9 @@ export interface WorkflowEvent {
 }
 export interface QueryResponse {
   request_id: string;
+  similarity?: { score: number; template_id: string };
+  template_info?: { source_question: string; semantic_intent: string; operation: string; collections: string[]; template: Record<string, unknown> };
+  semantic_template_cache?: { checked: boolean; hit: boolean; user_decision?: string };
   status?: string;
   question?: string | null;
   optimization_iteration?: number;
@@ -61,6 +64,11 @@ export class ApiService {
 
   optimizeQuery(requestId: string, payload: { optimization: string; value?: number; page?: number; refinement?: string }): Observable<QueryResponse> {
     return this.http.post<QueryResponse>(`${this.baseUrl}/query/${encodeURIComponent(requestId)}/optimize`, payload, { headers: this.headers() });
+  }
+
+  templateDecision(requestId: string, templateId: string, action: 'reuse' | 'regenerate'): Observable<QueryResponse> {
+    return this.http.post<QueryResponse>(`${this.baseUrl}/query/${encodeURIComponent(requestId)}/template-decision`,
+      { action, template_id: templateId }, { headers: this.headers() });
   }
 
   submitFeedback(requestId: string, liked: boolean, comment?: string): Observable<FeedbackResponse> {

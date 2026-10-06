@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 from agents.feedback_analysis_agent import FeedbackAnalysis
 
@@ -17,6 +17,11 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     request_id: str
     status: str = "completed"
+    similarity: dict[str, Any] | None = None
+    template_info: dict[str, Any] | None = None
+    semantic_template_cache: dict[str, Any] | None = None
+    query_template_id: str | None = None
+    query_parameters: dict[str, Any] | None = None
     question: str | None = None
     message: str | None = None
     cost_analysis: dict[str, Any] | None = None
@@ -89,3 +94,9 @@ class OptimizationRequest(BaseModel):
     value: int | None = Field(default=None, ge=1, le=50000)
     page: int = Field(default=1, ge=1, le=10000)
     refinement: str | None = Field(default=None, min_length=1, max_length=4000)
+
+
+class TemplateDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["reuse", "regenerate"]
+    template_id: str = Field(min_length=1, max_length=160, pattern=r"^tpl_[a-zA-Z0-9_]+$")

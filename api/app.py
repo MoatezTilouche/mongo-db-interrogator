@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -46,12 +46,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     frontend = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-    app.mount("/static", StaticFiles(directory=frontend, check_dir=False), name="frontend")
+    if frontend.is_dir():
+        app.mount("/static", StaticFiles(directory=frontend), name="frontend")
 
     @app.get("/", include_in_schema=False)
     def home():
         if not (frontend / "index.html").is_file():
-            raise HTTPException(status_code=503, detail="Build the Angular frontend with npm run build in frontend/.")
+            return {"service": "mongo-db-interrogator", "docs": "/docs",
+                    "health": "/health", "ready": "/ready", "frontend": "served separately"}
         return FileResponse(frontend / "index.html")
 
     # Register the page before the legacy health router's JSON root route.

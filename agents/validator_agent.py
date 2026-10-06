@@ -6,7 +6,7 @@ from typing import Any
 
 from agent.config import (DEFAULT_LIMIT, MAX_LIMIT, QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION,
                           USER_PREFERENCES_COLLECTION, SCHEMA_CACHE_COLLECTION,
-                          DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION)
+                          DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION, QUERY_TEMPLATES_COLLECTION)
 from agent.tracing import traceable
 
 
@@ -84,8 +84,8 @@ class ValidatorAgent:
 
         collection = str(normalized.get("collection", "")).strip()
         internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
-                    SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION}
-        if collection in internal or collection.startswith("_system_"):
+                    SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION, QUERY_TEMPLATES_COLLECTION}
+        if collection in internal or collection.split(".")[-1].startswith("_system_"):
             raise QueryValidationError("Internal learning collections are not queryable")
         known_collections = _known_collections(schema_spec)
         if not collection or collection not in known_collections:
@@ -97,7 +97,7 @@ class ValidatorAgent:
                 target = child.get("from") if key == "$lookup" and isinstance(child, dict) else (
                     child.get("coll") if isinstance(child, dict) else child
                 )
-                if isinstance(target, str) and (target in internal or target.startswith("_system_")):
+                if isinstance(target, str) and (target in internal or target.split(".")[-1].startswith("_system_")):
                     raise QueryValidationError("Internal learning collections are not queryable")
         known_fields = _known_fields(schema_spec, collection)
 
@@ -133,7 +133,7 @@ class ValidatorAgent:
                     lookup = stage[stage_name]
                     if isinstance(lookup, dict):
                         target = lookup.get("from")
-                        if target and (str(target) in internal or str(target).startswith("_system_")):
+                        if target and (str(target) in internal or str(target).split(".")[-1].startswith("_system_")):
                             raise QueryValidationError("Internal system collections are not queryable")
                         if target and str(target) not in known_collections:
                             raise QueryValidationError(f"Unknown $lookup collection: {target}")

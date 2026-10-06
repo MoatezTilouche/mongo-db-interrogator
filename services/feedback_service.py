@@ -74,6 +74,17 @@ class FeedbackService:
                     "preference_saved": False, "preference_action": None, "preference_error": None,
                     "knowledge_saved": False, "knowledge_action": None,
                     "knowledge_id": None, "knowledge_status": None, "knowledge_error": None}
+        if liked and history.get("query_template_id") and history.get("execution_success"):
+            try:
+                from agent.config import QUERY_TEMPLATES_COLLECTION
+                from database.mongo_client import get_database
+                get_database()[QUERY_TEMPLATES_COLLECTION].update_one(
+                    {"_id": history["query_template_id"], "user_id": user_id,
+                        "positive_feedback_request_ids": {"$ne": request_id}},
+                    {"$addToSet": {"positive_feedback_request_ids": request_id},
+                        "$inc": {"positive_feedback_count": 1}})
+            except Exception as exc:
+                logger.warning("template_feedback_update_failed error_type=%s", type(exc).__name__)
         if liked:
             try:
                 self.preference_service.deactivate_source(request_id, user_id)

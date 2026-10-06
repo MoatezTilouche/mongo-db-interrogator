@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.schemas import QueryRequest, QueryResponse, OptimizationRequest
+from api.schemas import QueryRequest, QueryResponse, OptimizationRequest, TemplateDecisionRequest
 from api.security import require_api_key
 from services.query_history_service import QueryHistoryService
 import asyncio
@@ -89,3 +89,9 @@ def public_response(result):
         for key in ("generated_query", "validated_query", "schema_spec"):
             result.pop(key, None)
     return QueryResponse(**result)
+
+
+@router.post("/{request_id}/template-decision", response_model=QueryResponse)
+def template_decision(request_id: str, payload: TemplateDecisionRequest):
+    from services.template_decision_service import TemplateDecisionService
+    return public_response(TemplateDecisionService().decide(request_id, payload))

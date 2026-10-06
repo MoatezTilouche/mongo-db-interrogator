@@ -8,6 +8,19 @@
 @if (workflowExpanded) { <ol id="workflow">@for (step of executionTrace; track step.agent) { <li [class]="'step ' + step.status"><span class="indicator" aria-hidden="true">{{ icons[step.status] }}</span><div><strong>{{ step.agent === 'Precheck' ? 'Precheck' : step.agent }}</strong><small>{{ step.status }}@if (step.elapsed_ms !== undefined) { &middot; {{ step.elapsed_ms }} ms }@if (step.message && step.message !== 'Returned execution metadata') { &middot; {{ step.message }} }</small></div></li> }</ol>
 @if (transitions.length) { <details id="transitions"><summary>Execution transitions</summary><ol id="transition-log">@for (transition of transitions; track $index) { <li>{{ transition }}</li> }</ol></details> } }
 </section> }
+@if (templateSuggestion) {
+<section class="template-panel" aria-live="polite" [attr.aria-busy]="templateSubmitting">
+<h2>The system detected a similar reusable template.</h2>
+<p>Similarity: {{ ((templateSuggestion.similarity?.score || 0) * 100).toFixed(0) }}%</p>
+<p><strong>Previous question:</strong> {{ templateSuggestion.template_info?.source_question }}</p>
+<p>{{ templateSuggestion.template_info?.semantic_intent }}</p>
+<p><strong>Reusable MongoDB template:</strong></p><pre>{{ templateJson }}</pre>
+<p>Would you like to reuse this template or regenerate the query?</p>
+<div class="optimization-options"><button type="button" [disabled]="busy" (click)="decideTemplate('reuse')">Reuse template</button>
+<button class="secondary" type="button" [disabled]="busy" (click)="decideTemplate('regenerate')">Regenerate</button></div>
+@if (templateSubmitting) { <p>Processing your decision...</p> }
+</section>
+}
 @if (optimizationRequired) {
 <section class="optimization-panel" role="status"><h2>Large request detected</h2><p>{{ originalQuestion }}</p><p>{{ optimizationMessage }}</p><p>Choose an option to continue:</p><div class="optimization-options">
 @for (option of optimizationSuggestions; track option.id) { <button class="secondary" type="button" [disabled]="busy" (click)="optimize(option.id)">{{ option.label }}</button> }
@@ -15,7 +28,7 @@
 @if (refining) { <form (ngSubmit)="optimize('refine')"><label for="refinement">Refine your request</label><input id="refinement" name="refinement" [(ngModel)]="refinement" maxlength="4000" placeholder="Example: only orders from Tunisia" [disabled]="busy"><button type="submit" [disabled]="busy || !refinement.trim()">Apply refinement</button></form> }
 @if (optimizationSubmitting) { <p>Applying optimization...</p> }
 </section> }
-@if (result && !optimizationRequired) {
+@if (result && !optimizationRequired && !templateSuggestion) {
 <section id="answer" [attr.aria-busy]="regenerating"><div class="section-title"><div class="title-group"><span class="section-icon" aria-hidden="true">&#8801;</span><h2>Query results</h2><span class="count-badge">{{ scalarResult !== null ? 'Value' : results.length + (results.length === 1 ? ' record' : ' records') }}</span></div>@if (queryText) { <button class="secondary query-toggle" type="button" (click)="queryExpanded = !queryExpanded" [attr.aria-expanded]="queryExpanded" aria-controls="query-inspector">{{ queryExpanded ? 'Hide query' : 'View query' }}</button> }</div>
 @if (queryExpanded && queryText) { <div id="query-inspector" class="query-inspector"><div class="query-meta"><span class="query-kind">{{ queryOperation || 'MongoDB' }}</span><strong>{{ queryCollection }}</strong><small>Validated query when available</small></div><pre tabindex="0" aria-label="MongoDB query"><code>{{ queryText }}</code></pre></div> }
 <div class="table-wrap" tabindex="0" aria-label="Query results">@if (scalarResult !== null) { <p class="empty-result">{{ scalarResult }}</p> } @else if (results.length) {

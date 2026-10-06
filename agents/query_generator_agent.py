@@ -6,8 +6,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from agent.llm import llm_router
-from agent.output_schemas import Query
-from agent.config import DEFAULT_LIMIT, MAX_LIMIT
+from agent.output_schemas import GeneratedQuery
+from services.query_parameter_binder import parameterize_filter_values
 from database.schema_inspector import compact_schema
 from agent.llm_structured import parse_json_from_text
 from agent.prompt_loader import render_prompt
@@ -16,11 +16,12 @@ from agent.tracing import traceable
 
 class QueryGeneratorAgent:
     def _invoke_json(self, prompt: str, role: str) -> dict[str, Any]:
-        response = llm_router.invoke(role, [HumanMessage(content=prompt)], Query)
+        response = llm_router.invoke(role, [HumanMessage(content=prompt)], GeneratedQuery)
         parsed = parse_json_from_text((getattr(response, "content", "") or "").strip())
         if not isinstance(parsed, dict):
             raise ValueError("Query generator returned a non-object JSON response")
-        return parsed
+        generated = GeneratedQuery.model_validate(parsed).model_dump(by_alias=True, exclude_unset=True)
+        return parameterize_filter_values(generated)
 
     @traceable(name="query_generator.generate")
     def generate(self, question: str, schema_spec: dict[str, Any], plan: dict[str, Any] | None = None,
@@ -46,7 +47,7 @@ class QueryGeneratorAgent:
             "Do not broaden or remove constraints unless the user explicitly replaces them. "
             "Use only the selected schema; do not retrieve new context. Prefer more selective filters. "
             "For summaries compute compact counts/groups in MongoDB, never fetch raw rows to summarize. "
-            "Return only the revised structured read-only MongoDB query JSON, no explanations.\n"
+            'Return only {"semantic_intent": <normalized intent>, "template": <revised query>, "parameters": <current values>} JSON. Parameterize filter literal values (including command IDs, statuses, numbers, dates, and membership lists) using named $param objects; keep field names and operators fixed. Parameterize explicit requested limit using {"$param":"limit"}, including top-level pipeline $limit. Keep sort, skip, projection, joins, aggregation structure, and filter operators fixed. Never parameterize $expr field references or structural $exists/$type/$options flags. Keep unrequested defaults literal. Also include semantic_intent: a compact normalized intent without current parameter values. No explanations.\n'
         )
         context = {"mode": "optimize", "original_question": original_question,
                    "query_context": query_context, "selected_schema": compact_schema(schema_spec),

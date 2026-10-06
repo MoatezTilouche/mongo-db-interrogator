@@ -7,3 +7,7 @@
 .optimization-panel { background: #fff; border: 1px solid #ff7900; border-left: 4px solid #ff7900; padding: 24px; margin: 24px 0; border-radius: 8px; }
 .optimization-options, .pagination { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 16px 0; }
 .optimization-panel input { padding: 12px; border: 1px solid #ddd; margin: 12px; max-width: 100%; }
+
+.template-panel { border: 1px solid #ed8b23; border-left: 5px solid #ee7d00; background: #fff6ec; border-radius: 12px; padding: 24px; margin: 20px 0; }
+.template-panel h2 { color: #9c4800; }
+.template-panel pre { background: #fff; padding: 16px; border-radius: 8px; overflow: auto; max-height: 360px; white-space: pre-wrap; overflow-wrap: anywhere; }

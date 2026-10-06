@@ -12,7 +12,7 @@ from agent.config import (
     SCHEMA_RELATIONSHIP_EXPANSION,
     SCHEMA_RETRIEVAL_MAX_FIELDS,
     SCHEMA_RETRIEVAL_TOP_K,
-    SCHEMA_EMBEDDING_MODEL,
+    SCHEMA_EMBEDDING_MODEL, QUERY_TEMPLATES_COLLECTION,
 )
 from agent.llm import llm_router
 
@@ -44,7 +44,8 @@ class SchemaRetriever:
         self.catalog = catalog
         self.top_k = max(1, top_k)
         self.max_fields = max(1, max_fields)
-        self.collections = catalog.get("collections", {})
+        self.collections = {name: entry for name, entry in catalog.get("collections", {}).items()
+                            if name != QUERY_TEMPLATES_COLLECTION and not name.split(".")[-1].startswith("_system_")}
 
     def _score(self, question_tokens: set[str], name: str,
                entry: dict[str, Any], query_vector: list[float] | None) -> tuple[float, set[str]]:

@@ -9,6 +9,8 @@ from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
+from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values
+from database.query_template_repository import persist_successful_template
 from services.query_cost_guard import QueryCostGuard
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
@@ -149,14 +151,15 @@ class OrchestratorAgent:
                 question, schema_spec, operation_hint=query_context["operation"],
                 user_preferences=preferences, database_knowledge=applied_knowledge,
             )
-            apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id, question=question)
+            bound_query = stage("QueryParameterBinder", bind_query_parameters, generated_query["template"], generated_query["parameters"])
+            apply_preferences_to_query(bound_query, preferences, self.preference_service.user_id, question=question)
             repairs = 0
 
             validation_errors: list[str] = []
             validated_query: dict[str, Any] | None = None
             for attempt in range(2):
                 try:
-                    validated_query = stage("ValidatorAgent", self.validator.validate, generated_query, schema_spec)
+                    validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
                     break
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
@@ -164,14 +167,16 @@ class OrchestratorAgent:
                         repairs += 1
                         agents_called.append("repair")
                         generated_query = stage("QueryGeneratorAgent", self.query_generator.repair,
-                            question, schema_spec, generated_query, str(exc), preferences,
+                            question, schema_spec, bound_query, str(exc), preferences,
                             database_knowledge=applied_knowledge,
                         )
-                        apply_preferences_to_query(generated_query, preferences, self.preference_service.user_id, question=question)
+                        bound_query = stage("QueryParameterBinder", bind_query_parameters, generated_query["template"], generated_query["parameters"])
+                        apply_preferences_to_query(bound_query, preferences, self.preference_service.user_id, question=question)
                     else:
                         raise
 
             assert validated_query is not None
+            generated_query = parameterize_filter_values(reconcile_template(generated_query, validated_query))
             cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
             if cost["status"] == "heavy":
                 return {"status": "optimization_required", "question": question, "cost_analysis": cost,
@@ -195,10 +200,11 @@ class OrchestratorAgent:
                     preferences,
                     database_knowledge=applied_knowledge,
                 )
-                apply_preferences_to_query(repaired, preferences, self.preference_service.user_id, question=question)
+                bound_query = stage("QueryParameterBinder", bind_query_parameters, repaired["template"], repaired["parameters"])
+                apply_preferences_to_query(bound_query, preferences, self.preference_service.user_id, question=question)
                 try:
-                    validated_query = stage("ValidatorAgent", self.validator.validate, repaired, schema_spec)
-                    generated_query = repaired
+                    validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
+                    generated_query = parameterize_filter_values(reconcile_template(repaired, validated_query))
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
                     if cost["status"] == "heavy":
                         return {"status": "optimization_required", "question": question, "cost_analysis": cost,
@@ -211,6 +217,7 @@ class OrchestratorAgent:
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
 
+            template_id = persist_successful_template(generated_query, current_request_id(), question, schema_spec) if execution.get("ok") else None
             needs_summary = bool(execution.get("ok") and execution.get("row_count") and (
                 query_context["complexity"] == "complex" or validated_query["operation"] == "aggregate"
             ))
@@ -245,6 +252,8 @@ class OrchestratorAgent:
                 "query_plan": None,
                 "generated_query": generated_query,
                 "validated_query": validated_query,
+                "query_template_id": template_id,
+                "query_parameters": generated_query["parameters"],
                 "applied_preferences": applied_preferences_for_query(validated_query, preferences),
                 "applied_knowledge": applied_knowledge,
                 "validation_errors": validation_errors,

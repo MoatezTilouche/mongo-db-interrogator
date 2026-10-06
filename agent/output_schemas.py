@@ -44,6 +44,7 @@ class Query(StrictOutput):
     projection: dict[str, Any] | None = None
     sort: list[list[Any]] = Field(default_factory=list)
     limit: int | None = None
+    skip: int = 0
     pipeline: list[dict[str, Any]] | None = None
     field: str | None = None
     @model_validator(mode="after")
@@ -52,4 +53,24 @@ class Query(StrictOutput):
             raise ValueError("pipeline required")
         if self.operation == "distinct" and not self.field:
             raise ValueError("field required")
+        return self
+
+
+class LimitParameter(StrictOutput):
+    name: Literal["limit"] = Field(alias="$param")
+
+
+class QueryTemplate(Query):
+    limit: int | LimitParameter | None = None
+
+
+class GeneratedQuery(StrictOutput):
+    semantic_intent: str = Field(default="", max_length=600)
+    template: QueryTemplate
+    parameters: dict[str, Any]
+
+    @model_validator(mode="after")
+    def valid_binding(self):
+        from services.query_parameter_binder import bind_query_parameters
+        bind_query_parameters(self.template.model_dump(by_alias=True, exclude_unset=True), self.parameters)
         return self

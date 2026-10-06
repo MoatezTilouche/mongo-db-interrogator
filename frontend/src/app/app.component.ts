@@ -5,7 +5,7 @@ import { Subscription, catchError, firstValueFrom, map, throwError, timeout } fr
 import { ApiService, QueryEvent, QueryResponse, WorkflowEvent } from './services/api.service';
 import { environment } from '../environments/environment';
 
-const agentNames = ['Precheck', 'SchemaRetriever', 'QueryContextAgent', 'QueryGeneratorAgent', 'ValidatorAgent', 'QueryCostGuard', 'OptimizationAdvisor', 'ExecutorAgent', 'ResultsSummaryAgent'];
+const agentNames = ['SemanticTemplateCache', 'TemplateDecision', 'TemplateParameterExtractor', 'QueryParameterBinder', 'Precheck', 'SchemaRetriever', 'QueryContextAgent', 'QueryGeneratorAgent', 'ValidatorAgent', 'QueryCostGuard', 'OptimizationAdvisor', 'ExecutorAgent', 'ResultsSummaryAgent'];
 
 @Component({
   selector: 'app-root',
@@ -21,6 +21,9 @@ export class AppComponent implements OnInit, OnDestroy {
   private destroyed = false;
   private detailTrigger: HTMLElement | null = null;
   private previousBodyOverflow = "";
+  templateSuggestion: QueryResponse | null = null;
+  templateSubmitting = false;
+  templateJson = '';
   optimizationRequired = false;
   costAnalysis: QueryResponse['cost_analysis'];
   optimizationSuggestions: NonNullable<QueryResponse['suggestions']> = [];
@@ -62,7 +65,7 @@ export class AppComponent implements OnInit, OnDestroy {
   queryCollection = '';
   readonly icons = { pending: '○', running: '→', completed: '✓', failed: '×', skipped: '–' };
 
-  get busy(): boolean { return this.loading || this.regenerating || this.feedbackSubmitting || this.optimizationSubmitting; }
+  get busy(): boolean { return this.templateSubmitting || this.loading || this.regenerating || this.feedbackSubmitting || this.optimizationSubmitting; }
 
   ngOnInit(): void { this.checkHealth(); }
   ngOnDestroy(): void {
@@ -135,13 +138,14 @@ export class AppComponent implements OnInit, OnDestroy {
         if (regenerating && priorResult) this.feedbackMessage = 'Your feedback was saved. You can retry regeneration below.';
       },
       complete: () => {
-        this.runStatus = this.optimizationRequired ? 'Optimization required' : this.result?.execution_success ? 'Workflow complete' : 'Workflow failed';
-        if (!this.optimizationRequired) this.finishTrace(); this.workflowExpanded = this.optimizationRequired; this.loading = this.regenerating = false;
+        this.runStatus = this.templateSuggestion ? 'Waiting for your template decision' : this.optimizationRequired ? 'Optimization required' : this.result?.execution_success ? 'Workflow complete' : 'Workflow failed';
+        if (!this.optimizationRequired && !this.templateSuggestion) this.finishTrace(); this.workflowExpanded = this.optimizationRequired || !!this.templateSuggestion; this.loading = this.regenerating = false;
       }
     }));
   }
 
   private clearAnswer(): void {
+    this.templateSuggestion = null; this.templateJson = '';
     this.optimizationRequired = false; this.refining = false; this.refinement = ''; this.pagination = undefined;
     this.result = null; this.requestId = ''; this.results = []; this.columns = []; this.summary = ''; this.scalarResult = null;
     this.queryExpanded = false; this.queryText = ''; this.queryOperation = ''; this.queryCollection = '';
@@ -150,6 +154,14 @@ export class AppComponent implements OnInit, OnDestroy {
   private displayResult(result: QueryResponse): void {
     this.clearAnswer(); this.result = result; this.requestId = result.request_id;
     this.pagination = result.pagination;
+    if (result.status === 'similar_template_detected') {
+      this.templateSuggestion = result;
+      this.templateJson = JSON.stringify(result.template_info?.template, null, 2);
+      this.runStatus = 'Waiting for your template decision';
+      this.executionTrace = this.latestTrace(result.execution_trace || []).filter(step => !['QueryContextAgent', 'QueryGeneratorAgent'].includes(step.agent));
+      this.workflowExpanded = true;
+      return;
+    }
     if (result.status === 'optimization_required') {
       this.optimizationRequired = true; this.pendingRequestId = result.request_id;
       this.costAnalysis = result.cost_analysis; this.optimizationSuggestions = result.suggestions || [];
@@ -179,7 +191,32 @@ export class AppComponent implements OnInit, OnDestroy {
     this.executionTrace = this.executionTrace.map(step => step.status === 'running' ? { ...step, status: 'failed' } :
       step.status === 'pending' ? { ...step, status: 'skipped', message: 'Not reached' } : step);
   }
+  decideTemplate(action: 'reuse' | 'regenerate'): void {
+    const suggestion = this.templateSuggestion;
+    if (!suggestion?.similarity || this.busy) return;
+    this.templateSubmitting = true; this.error = '';
+    this.runStatus = action === 'reuse' ? 'Reusing template...' : 'Regenerating query...';
+    this.subscriptions.add(this.api.templateDecision(suggestion.request_id, suggestion.similarity.template_id, action).subscribe({
+      next: result => { this.displayResult(result); this.returnedTrace(result);
+        this.runStatus = this.optimizationRequired ? 'Optimization required' : result.execution_success ? 'Workflow complete' : 'Workflow failed'; },
+      error: error => { this.error = error instanceof HttpErrorResponse && error.status === 422 ? 'The template could not be reused safely. Choose Regenerate.' : this.message(error); this.templateSubmitting = false; this.runStatus = 'Template decision failed'; },
+      complete: () => { this.templateSubmitting = false; }
+    }));
+  }
+
+  private latestTrace(trace: WorkflowEvent[]): WorkflowEvent[] {
+    return [...new Map(trace.map(step => [step.agent, step])).values()];
+  }
+
   private returnedTrace(result: QueryResponse): void {
+    if (result.status === 'similar_template_detected' || result.semantic_template_cache?.user_decision === 'reuse') {
+      this.executionTrace = this.latestTrace(result.execution_trace || []).filter(step => !['QueryContextAgent', 'QueryGeneratorAgent'].includes(step.agent));
+      return;
+    }
+    if (result.execution_trace?.length) {
+      this.executionTrace = this.latestTrace(result.execution_trace);
+      return;
+    }
     const called = result.execution_path?.agents_called || [];
     const completed = new Set<string>();
     if (result.schema_spec || result.query_context) { completed.add('Precheck'); completed.add('SchemaRetriever'); }

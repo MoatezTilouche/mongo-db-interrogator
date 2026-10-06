@@ -264,3 +264,7 @@ query (or the generated query if validation was unavailable), hidden by default
 and reset for each new answer.
 
 Query cost protection and optimization flow: see [QUERY_PERFORMANCE.md](QUERY_PERFORMANCE.md).
+
+## Run the backend with Docker
+
+Build from the repository root with `docker build -t mongo-db-interrogator-backend:latest .`, then run with `docker run --rm -p 8000:8000 --env-file .env mongo-db-interrogator-backend:latest`. MongoDB and OpenAI settings are supplied at runtime; Angular is served separately. See [DOCKER.md](DOCKER.md) for end-user, publishing, health and persistence instructions.

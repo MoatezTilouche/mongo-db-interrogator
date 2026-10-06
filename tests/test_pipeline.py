@@ -71,7 +71,7 @@ def test_selection_and_prompt_boundaries(monkeypatch):
     assert "PRIVATE_SAMPLE" not in captured[0]
     def generate(role, messages, schema):
         captured.append(messages[0].content)
-        return SimpleNamespace(content='{"operation":"find","collection":"customers"}')
+        return SimpleNamespace(content='{"template":{"operation":"find","collection":"customers"},"parameters":{}}')
     monkeypatch.setattr(query_module.llm_router, "invoke", generate)
     agent = QueryGeneratorAgent()
     agent.generate("Give me 2 customers", selected, plan={"private": "do not forward"}, operation_hint="find")

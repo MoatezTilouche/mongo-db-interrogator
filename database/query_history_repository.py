@@ -20,3 +20,9 @@ class QueryHistoryRepository:
 
     def get_by_request_id(self, request_id: str) -> dict[str, Any] | None:
         return self._collection().find_one({"_id": request_id}, {"_id": 0})
+
+    def update(self, request_id, record):
+        record = safe_record(record)
+        created_at = record.pop("created_at", None)
+        self._collection().update_one({"_id": request_id}, {"$set": record,
+            "$setOnInsert": {"created_at": created_at}}, upsert=True)

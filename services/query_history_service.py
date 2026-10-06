@@ -9,7 +9,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from agent.config import DEFAULT_USER_ID, QUERY_HISTORY_PREVIEW_MAX_BYTES, QUERY_HISTORY_PREVIEW_SIZE
-from agent.telemetry import request_context
+from agent.telemetry import request_context, capture_usage, totals
 from agent.progress import capture_workflow
 from database.query_history_repository import QueryHistoryRepository
 from database.record_safety import safe_record
@@ -25,6 +25,8 @@ class QueryHistoryService:
                  preview_max_bytes: int = QUERY_HISTORY_PREVIEW_MAX_BYTES):
         self.repository = repository if repository is not None else QueryHistoryRepository()
         self.pipeline = pipeline if pipeline is not None else run_request
+        from services.semantic_template_cache import SemanticTemplateCache
+        self.template_cache = SemanticTemplateCache() if pipeline is None else None
         self.preview_size = max(0, preview_size)
         self.preview_max_bytes = max(0, preview_max_bytes)
 
@@ -37,27 +39,55 @@ class QueryHistoryService:
             preview.append(candidate)
         return preview
 
-    def run(self, question: str) -> dict[str, Any]:
-        request_id = f"req_{uuid4().hex}"
+    def run(self, question: str, request_id=None, skip_cache=False, cache_metadata=None) -> dict[str, Any]:
+        continuation = request_id is not None
+        request_id = request_id or f"req_{uuid4().hex}"
         started = time.perf_counter()
         try:
-            with request_context(request_id), capture_workflow() as trace:
-                result = self.pipeline(question)
+            with request_context(request_id), capture_usage() as cache_usage, capture_workflow() as trace:
+                if not (question or "").strip():
+                    raise ValueError("Question is empty")
+                document, metadata = (self.template_cache.lookup(question)
+                    if self.template_cache is not None and not skip_cache else (None, cache_metadata or {"checked": False, "hit": False}))
+                if skip_cache and metadata.get("user_decision") == "regenerate":
+                    from agent.progress import emit
+                    emit("SemanticTemplateCache", "completed", message="User chose regeneration")
+                result = self.template_cache.suggestion(document, metadata) if document else self.pipeline(question)
+                result["semantic_template_cache"] = metadata
+                telemetry = result.setdefault("telemetry", totals(cache_usage) if document else {})
+                if not document:
+                    lookup_usage = totals(cache_usage)
+                    for key in ("embedding_calls", "embedding_input_tokens", "embedding_latency_ms"):
+                        telemetry[key] = telemetry.get(key, 0) + lookup_usage[key]
+                telemetry.update({"semantic_cache_lookup_ms": metadata.get("semantic_cache_lookup_ms", 0),
+                    "semantic_template_cache_checked": metadata.get("checked", False),
+                    "semantic_template_cache_hit": metadata.get("hit", False),
+                    "semantic_template_cache_miss": metadata.get("checked", False) and not metadata.get("hit", False),
+                    "semantic_template_cache_weak_match": metadata.get("weak_match", False),
+                    "semantic_template_cache_user_regenerate": metadata.get("user_decision") == "regenerate"})
                 result["execution_trace"] = trace
         except Exception as exc:
             logger.error("query_pipeline_failed request_id=%s error_type=%s", request_id, type(exc).__name__)
             result = {"execution_success": False, "execution_error": "Query pipeline failed."}
         elapsed = (time.perf_counter() - started) * 1000
         result["request_id"] = request_id
+        if result.get("status") == "similar_template_detected":
+            from services.template_decision_service import TemplateDecisionService
+            TemplateDecisionService().pause(request_id, question, result)
         if result.get("status") == "optimization_required":
             from services.query_optimization_service import QueryOptimizationService
             QueryOptimizationService().pause(result, question)
+        self.save_result(request_id, question, result, elapsed, continuation)
+        return result
+
+    def save_result(self, request_id, question, result, elapsed=0, update_existing=False):
         try:
             rows = result.get("execution_result") or []
             usage = result.get("telemetry") or {}
             route = result.get("route") or {}
             metadata = result.get("execution_metadata") or {}
             record = {
+                "semantic_template_cache": result.get("semantic_template_cache"),
                 "request_id": request_id, "user_id": DEFAULT_USER_ID, "question": question,
                 "status": result.get("status", "completed"), "query_signature": result.get("query_signature"),
                 "cost_guard": result.get("cost_analysis"), "optimization": result.get("optimization"),
@@ -72,6 +102,8 @@ class QueryHistoryService:
                 "repair_used": (result.get("execution_path") or {}).get("repair_used", False),
                 "query_plan": result.get("query_plan"),
                 "generated_query": result.get("generated_query"),
+                "query_template_id": result.get("query_template_id"),
+                "query_parameters": result.get("query_parameters"),
                 "validated_query": result.get("validated_query"),
                 "execution_success": bool(result.get("execution_success")),
                 "execution_error": result.get("execution_error"),
@@ -86,7 +118,10 @@ class QueryHistoryService:
                               "total_latency_ms": usage.get("total_latency_ms", 0)},
                 "created_at": datetime.now(timezone.utc),
             }
-            self.repository.save(safe_record(record))
+            if update_existing:
+                self.repository.update(request_id, safe_record(record))
+            else:
+                self.repository.save(safe_record(record))
             logger.info("query_history_saved request_id=%s", request_id)
         except Exception as exc:
             # Exception messages can contain URIs, credentials or query data.

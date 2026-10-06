@@ -29,13 +29,18 @@ def health():
             "status": "degraded", "database": "down",
             "schema_ready": state["schema_ready"], "schema_source": state["schema_source"],
             "schema_version": state["schema_version"],
-            "schema_error": state["error_type"], "error": str(exc),
+            "schema_error": state["error_type"], "error_type": type(exc).__name__,
         }
 
 
 @router.get("/ready")
 def readiness(response: Response):
     state = schema_bootstrap_service.status()
-    if not state["schema_ready"]:
+    try:
+        database_up = bool(ping_database())
+    except Exception:
+        database_up = False
+    if not state["schema_ready"] or not database_up:
         response.status_code = 503
-    return {key: state.get(key) for key in ("schema_ready", "schema_source", "schema_version", "error_type")}
+    return {"database": "up" if database_up else "down",
+            **{key: state.get(key) for key in ("schema_ready", "schema_source", "schema_version", "error_type")}}
