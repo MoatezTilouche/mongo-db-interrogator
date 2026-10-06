@@ -61,10 +61,10 @@ try {
   await page.goto(`http://127.0.0.1:${port}`);
   await page.getByRole('status').filter({ hasText: 'Preparing database schema...' }).waitFor();
   assert.equal(await page.getByRole('button', { name: /^Ask/ }).isEnabled(), false);
-  assert.equal(await page.getByRole('heading', { name: 'Agent execution' }).count(), 0);
+  assert.equal(await page.getByRole('heading', { name: 'AI execution progress' }).count(), 0);
   assert.equal(await page.locator('#feedback').count(), 0);
   ready = true; await page.reload();
-  await page.getByText('Ready', { exact: true }).waitFor();
+  await page.getByText('Schema ready', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: /^Ask/ }).isEnabled(), false);
   await page.getByLabel('Your question').fill('Show top customers');
   await page.getByLabel('Your question').press('Control+Enter');
@@ -76,6 +76,7 @@ try {
   assert.ok((await page.getByLabel('MongoDB query').textContent()).includes('v2DB.requests'));
   assert.ok((await page.getByLabel('MongoDB query').textContent()).includes('$regex'));
   await page.getByRole('button', { name: 'Hide query', exact: true }).click();
+  await page.locator('#query-inspector').waitFor({ state: 'detached' });
   assert.equal(await page.locator('#query-inspector').count(), 0);
   assert.equal(await page.getByRole('columnheader', { name: 'Extra', exact: true }).count(), 1);
   assert.equal(await page.locator('tbody tr').first().evaluate(row => row.getBoundingClientRect().height < 100), true);
@@ -133,17 +134,60 @@ try {
   assert.equal(await page.locator('.table-wrap').evaluate(element => element.scrollWidth > element.clientWidth), true);
   await page.screenshot({ path: 'test-results/angular-mobile.png', fullPage: true });
   assert.deepEqual(errors, []);
+  const decisions = [], optimizations = [];
+  const conditionalResult = { request_id: 'conditional', execution_success: true, execution_result: [{ stock: 4 }], final_response: 'Conditional result' };
+  await page.route('**/query', route => route.fulfill({ json: {
+    request_id: 'template-request', status: 'similar_template_detected', execution_success: false,
+    similarity: { score: .92, template_id: 'template-1' },
+    template_info: { source_question: 'Product stock', template: { operation: 'find' } },
+    execution_trace: [{ agent: 'SemanticTemplateCache', status: 'completed' }]
+  } }));
+  await page.route('**/template-decision', async route => {
+    decisions.push(route.request().postDataJSON());
+    await route.fulfill({ json: conditionalResult });
+  });
+  for (const action of ['reuse', 'regenerate']) {
+    await page.getByRole('button', { name: /^Ask/ }).click();
+    await page.getByText('92% match', { exact: true }).waitFor();
+    assert.equal(await page.locator('.step').count(), 1);
+    await page.getByRole('button', { name: action === 'reuse' ? 'Reuse template' : 'Generate new query', exact: true }).click();
+    await page.getByText('Conditional result', { exact: true }).waitFor();
+  }
+  assert.deepEqual(decisions, [{ action: 'reuse', template_id: 'template-1' }, { action: 'regenerate', template_id: 'template-1' }]);
+  await page.unroute('**/query');
+  await page.route('**/query', route => route.fulfill({ json: {
+    request_id: 'heavy-request', status: 'optimization_required', execution_success: false,
+    suggestions: [{ id: 'pagination', label: 'Paginate' }, { id: 'refine', label: 'Add filter' }], message: 'Large query fixture'
+  } }));
+  await page.route('**/optimize', async route => {
+    optimizations.push(route.request().postDataJSON());
+    await route.fulfill({ json: { ...conditionalResult, request_id: 'heavy-request', pagination: { page: optimizations.length, page_size: 10, has_previous: optimizations.length > 1, has_next: optimizations.length === 1 } } });
+  });
+  await page.getByRole('button', { name: /^Ask/ }).click();
+  await page.getByRole('button', { name: 'Paginate', exact: true }).click();
+  await page.getByText('Page 1', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByText('Page 2', { exact: true }).waitFor();
+  assert.equal(optimizations[1].page, 2);
+  assert.equal(optimizations[1].value, 10);
+  await page.getByRole('button', { name: /^Ask/ }).click();
+  await page.getByRole('button', { name: 'Add filter', exact: true }).click();
+  await page.getByLabel('Refine your request').fill('Only failed requests');
+  await page.getByRole('button', { name: 'Apply refinement', exact: true }).click();
+  await page.getByText('Conditional result', { exact: true }).waitFor();
+  assert.equal(optimizations[2].refinement, 'Only failed requests');
+  assert.deepEqual(errors, []);
   if (process.env.ANGULAR_DEV_URL) {
     const devPage = await browser.newPage();
     devPage.on('pageerror', error => errors.push(error.message));
     await devPage.route('**/health', route => route.fulfill({ json: { status: 'ok', database: 'up', schema_ready: true } }));
     await devPage.goto(process.env.ANGULAR_DEV_URL);
-    await devPage.getByText('Ready', { exact: true }).waitFor();
+    await devPage.getByText('Schema ready', { exact: true }).waitFor();
     await devPage.getByLabel('Your question').fill('A development question');
     assert.equal(await devPage.getByRole('button', { name: /^Ask/ }).isEnabled(), true);
     assert.deepEqual(errors, []);
     await devPage.close();
     console.log('PASS: Angular development server page and assets load.');
   }
-  console.log('PASS: readiness, live SSE, dynamic results, summary, Yes, required No comment, feedback failure, regeneration failure/retry, original question, request IDs, /query fallback, mobile layout, no browser errors.');
+  console.log('PASS: template reuse/regenerate, heavy-query continuation, pagination, refinement, readiness, live SSE, dynamic results, summary, Yes, required No comment, feedback failure, regeneration failure/retry, original question, request IDs, /query fallback, mobile layout, no browser errors.');
 } finally { await browser?.close(); server.closeAllConnections(); await new Promise(done => server.close(done)); }

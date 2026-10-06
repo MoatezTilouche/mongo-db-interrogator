@@ -48,6 +48,7 @@ export class AppComponent implements OnInit, OnDestroy {
   feedbackComment = '';
   feedbackSaved = false;
   feedbackMessage = '';
+  databaseConnected = false;
   schemaReady = false;
   healthStatus = 'Checking database readiness…';
   error = '';
@@ -65,6 +66,20 @@ export class AppComponent implements OnInit, OnDestroy {
   queryCollection = '';
   readonly icons = { pending: '○', running: '→', completed: '✓', failed: '×', skipped: '–' };
 
+  readonly examples = [
+    { label: 'Failed requests today', question: 'Show failed requests today' },
+    { label: 'Product stock', question: 'Show the stock of all products' },
+    { label: 'Completed orders', question: 'Show completed orders' },
+    { label: 'Request by command ID', question: 'Show requests for command ID ' }
+  ];
+  get visibleTrace(): WorkflowEvent[] {
+    return this.executionTrace.filter(step => step.status !== 'pending' && step.message !== 'Not reached' && (step.message !== 'Returned execution metadata' || step.status === 'completed' || step.status === 'failed'));
+  }
+  stageLabel(agent: string): string {
+    const labels: Record<string, string> = { SemanticTemplateCache: 'Semantic Cache', TemplateDecision: 'Template Decision', TemplateParameterExtractor: 'Parameter Extraction', QueryParameterBinder: 'Parameter Binding', SchemaRetriever: 'Schema Retrieval', QueryContextAgent: 'Context', QueryGeneratorAgent: 'Query Generation', ValidatorAgent: 'Validation', QueryCostGuard: 'Cost Guard', OptimizationAdvisor: 'Optimization', ExecutorAgent: 'Execution', ResultsSummaryAgent: 'Summary' };
+    return labels[agent] || agent;
+  }
+
   get busy(): boolean { return this.templateSubmitting || this.loading || this.regenerating || this.feedbackSubmitting || this.optimizationSubmitting; }
 
   ngOnInit(): void { this.checkHealth(); }
@@ -79,11 +94,13 @@ export class AppComponent implements OnInit, OnDestroy {
   private checkHealth(): void {
     this.subscriptions.add(this.api.health().subscribe({
       next: health => {
+        this.databaseConnected = health.database === 'up';
         this.schemaReady = health.schema_ready && health.database === 'up';
         this.healthStatus = health.database !== 'up' ? 'Database unavailable' : health.schema_ready ? 'Ready' : 'Preparing database schema...';
         this.scheduleHealth();
       },
       error: () => {
+        this.databaseConnected = false;
         this.schemaReady = false;
         this.healthStatus = 'Backend unavailable';
         this.scheduleHealth();
