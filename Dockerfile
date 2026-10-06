@@ -12,13 +12,14 @@ WORKDIR /app
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-# Explicit copies prevent environment files and the Angular app entering layers.
+# Explicit copies keep application sources included and environment files excluded.
 COPY agent/ ./agent/
 COPY agents/ ./agents/
 COPY api/ ./api/
 COPY database/ ./database/
 COPY services/ ./services/
 COPY prompts/ ./prompts/
+COPY frontend/ ./frontend/
 COPY main_api.py orchestrator.py ./
 COPY docker/ ./docker/
 
