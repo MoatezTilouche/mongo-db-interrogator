@@ -1,270 +1,804 @@
-# mongo-db-interrogator
+# Mongo DB Interrogator
 
-A clean **multi-agent, no-LangGraph** natural-language interface for read-only MongoDB interrogation. It was migrated from the reusable parts of Kinetic SQL while removing SQL-specific and duplicate workflow code.
+Ask questions about a MongoDB database in plain language and receive validated, read-only query results with a concise answer. This project combines a FastAPI backend, an Angular interface, PyMongo execution, and a direct multi-agent workflow using OpenAI. It does not use LangGraph.
 
-## Query history and explicit feedback
+The backend discovers collections and fields, retrieves relevant schema metadata, generates a structured query, validates its structure, estimates its cost, and executes it. Feedback can teach preferences or database rules. Successful queries can become reusable templates, with an explicit choice to reuse or regenerate later.
 
-Every accepted `POST /query` receives a server-generated `req_<uuid>` ID. Existing response fields remain available. The history service saves successful and failed executions to `query_history`, including selected field/type metadata, `query_context`, backward-compatible `query_plan: null`, generated/validated queries, agents called, response text, result count/timing and LLM usage totals. A persistence failure is logged and does not turn a successful query into a failure. An ID whose history could not be saved cannot subsequently receive feedback.
+## Contents
 
-Result previews default to at most five rows and 8192 serialized bytes in total; oversized rows are omitted. History never stores full results or environment/configuration snapshots. Credential field names and configured secret values are redacted from history, feedback and analyzer prompts. Logs contain IDs, statuses and exception types rather than raw results, comments or exception messages. History, feedback and user preference collections are excluded from schema inspection and blocked by the query validator, including nested joins.
+- [Features](#features)
+- [Requirements](#requirements)
+- [Local installation](#local-installation)
+- [Docker installation](#docker-installation)
+- [Using the web interface](#using-the-web-interface)
+- [API reference](#api-reference)
+- [Architecture and workflows](#architecture-and-workflows)
+- [Configuration reference](#configuration-reference)
+- [Storage, privacy, and access](#storage-privacy-and-access)
+- [Project structure](#project-structure)
+- [Development and testing](#development-and-testing)
+- [Troubleshooting](#troubleshooting)
+- [Current limitations](#current-limitations)
 
-`POST /feedback` uses the same `X-API-Key` protection as `/query`. Send `request_id`, a strict boolean `liked`, and optionally `comment`. Negative feedback requires a non-empty comment. Responses use 200 for saved feedback, 422 for invalid input, 404 for a missing history ID and 503 if raw feedback cannot be stored. The API has no per-user authentication, so `DEFAULT_USER_ID=default` provides a configurable, single-user preference scope for now.
+## Features
 
-Feedback uses the request ID as MongoDB's unique `_id`. Repeated submissions update one record, preserve its creation time, and replace old analysis. Revision-checked analysis updates prevent an older in-flight analysis from overwriting newer feedback. Raw feedback is saved before any analysis. Positive feedback makes no LLM calls. Negative feedback uses the centralized OpenAI router and a strictly validated `FeedbackAnalysisAgent`, followed by a deterministic `FeedbackLearningRouter`. Reusable `scope=user` analyses are normalized into `user_preferences`; database-scoped rules are stored separately as inactive candidates; one-off corrections remain only in feedback/history. Preferences are deduplicated by user, type and collection, so newer corrections update the active preference. Positive or replaced feedback deactivates preferences sourced from that request.
+| Feature | Behavior |
+| --- | --- |
+| Natural-language interrogation | Convert questions into structured MongoDB query specifications. |
+| Read-only queries | Support find, aggregation, document counts, and distinct values. |
+| Schema discovery | Infer field paths/types, including nested documents and sampled arrays. |
+| Semantic schema retrieval | Rank metadata through embeddings, lexical matches, aliases, and relationship candidates. |
+| Persistent schema cache | Reuse metadata/vectors across restarts and update changed entries incrementally. |
+| Validation and repair | Validate before execution and allow at most one repair for eligible failures. |
+| Parameterized queries | Separate reusable structure from typed parameter values and bind before validation. |
+| Cost guard | Pause potentially expensive queries and offer explicit optimization choices. |
+| Refinement and pagination | Continue retained query context or fetch result pages from the backend. |
+| Performance memory | Record structural statistics and common optimization choices. |
+| Semantic template cache | Suggest compatible successful templates; reuse requires a user decision. |
+| Feedback learning | Classify corrections into user preferences, database knowledge, or one-off feedback. |
+| Knowledge retrieval | Supply active learned business rules separately from technical schema. |
+| Live progress | Stream actual workflow stage transitions through Server-Sent Events (SSE). |
+| Angular UI | Show tables, scalar results, nested record details, queries, summaries, feedback, and continuation controls. |
+| Observability | Return usage/timing/cache metrics and operational traces; optionally export traces and token logs. |
+| Docker | Package backend and frontend folder, run as a non-root user, and check database/schema readiness. |
 
-The analyzer sees only the associated question, selected schema, query context, generated/validated query, response and comment. It does not receive result previews, complete database schemas, telemetry or unrelated requests. Before each query, active preferences are filtered by the mentioned collection, operation intent, confidence and schema-valid fields. Relevant preferences reach QueryContextAgent and QueryGeneratorAgent; explicit fields or sort directions in the current question take precedence. Ambiguous find sorting is also applied deterministically before validation. Applied preferences are recorded in `query_history`.
+Example questions, provided the corresponding collections and fields exist:
 
-Database-knowledge candidates are stored in `_system_database_knowledge`, separate from technical schema metadata and personal preferences. Each candidate records its type, normalized text, verified collection/field references where available, source request IDs, conservative confidence, confirmation count and an OpenAI embedding. Equivalent feedback is deduplicated using type, normalized text and sorted references; evidence IDs are capped at 50. One event remains inactive. After two independent confirmations a candidate is marked `confirmed`; optional automatic activation is disabled by default and requires the configured confirmation count and confidence. Explicit internal approval also checks for a contradictory active rule with the same type and references. The runtime retriever queries only `{status: "active", active: true}`, returns at most `KNOWLEDGE_RETRIEVAL_TOP_K` records, and combines semantic score with text, selected-collection and field overlap. It shares the schema retriever's request embedding. Candidates never enter query prompts. Active knowledge is passed in a separate context section with precedence below the explicit current request and above user preferences; conflicting sorting preferences are suppressed before generation. Compact references are recorded as `applied_knowledge` in query history. No normal MongoDB business documents are embedded.
+- "Show the latest 10 orders."
+- "Count customers from Tunisia."
+- "List the distinct order statuses."
+- "Show the top 5 customers by completed-order revenue."
+- "Give me the orders of command CMD-000009350132."
 
-Reusable preferences are stored in `user_preferences` with a stable identity based on user, preference type and collection. A later correction for the same category and collection updates the existing record. Preference retrieval is bounded by `USER_PREFERENCE_RETRIEVAL_LIMIT` (default 50) and then filtered to the request. Since authentication currently uses one shared API key without a user identity, all requests use the configurable `DEFAULT_USER_ID`; do not use this deployment setting for multiple independent users.
+Use explicit metrics, fields, filters, dates, and ordering when business meaning could be ambiguous. The repository does not provide a business dataset.
 
-Configuration (also listed in `.env.example`):
+## Requirements
 
-```env
-QUERY_HISTORY_COLLECTION=query_history
-QUERY_HISTORY_PREVIEW_SIZE=5
-QUERY_HISTORY_PREVIEW_MAX_BYTES=8192
-FEEDBACK_COLLECTION=feedback
-USER_PREFERENCES_COLLECTION=user_preferences
-DEFAULT_USER_ID=default
-USER_PREFERENCE_RETRIEVAL_LIMIT=50
-DATABASE_KNOWLEDGE_COLLECTION=_system_database_knowledge
-KNOWLEDGE_RETRIEVAL_TOP_K=3
-KNOWLEDGE_AUTO_PROMOTION_ENABLED=false
-KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS=3
-KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE=0.90
-KNOWLEDGE_EMBEDDING_MODEL=text-embedding-3-small  # defaults to SCHEMA_EMBEDDING_MODEL
-```
+For local backend installation:
 
-`KNOWLEDGE_EMBEDDING_MODEL` must match `SCHEMA_EMBEDDING_MODEL`; the request's shared embedding is used for both indexes.
+- Python 3.12 is the recommended baseline and the version used by Docker.
+- An accessible MongoDB database containing your business collections.
+- MongoDB 4.2+ for performance-memory update pipelines; the server must also support the aggregation expressions your queries require.
+- An OpenAI API key and access to the configured chat and embedding models.
+- Network access to MongoDB/model services, and package registries during installation.
 
-Collections are created lazily on the first write; built-in unique `_id` indexes enforce one record per request, preference identity, or normalized knowledge candidate. MongoDB credentials need permission for backend writes to these internal collections, while generated user queries remain read-only. Do not choose business collection names for the internal collections. UTC timestamps are stored as BSON datetimes. `DEFAULT_USER_ID` is a shared deployment scope, not user authentication; use distinct authenticated user IDs before serving multiple independent users.
+For the frontend, use Node.js/npm compatible with the pinned Angular 21.2 packages. Check package engine requirements when selecting Node. You can run the API without building the frontend.
 
-Example `/query` response (abbreviated; remaining existing fields are preserved):
+For Docker, run Docker's Linux container engine. The image does not start MongoDB, install Node.js, or compile Angular. Build Angular on the host before building an image that should serve the UI.
 
-```json
-{"request_id":"req_92e30f","final_response":"Found 2 results.","execution_success":true,"execution_result":[{"name":"Alice"},{"name":"Sara"}],"execution_error":null,"query_plan":null}
-```
+## Local installation
 
-Positive feedback request and response:
+Run backend commands from the repository root.
 
-```json
-{"request_id":"req_92e30f","liked":true}
-```
+### 1. Install Python dependencies
 
-```json
-{"request_id":"req_92e30f","feedback_saved":true,"analysis_created":false,"analysis":null,"analysis_error":null}
-```
+Windows PowerShell:
 
-Negative feedback request and an illustrative response (model classifications can vary):
-
-```json
-{"request_id":"req_92e30f","liked":false,"comment":"I wanted customers ranked by total spending, not number of orders."}
-```
-
-```json
-{"request_id":"req_92e30f","feedback_saved":true,"analysis_created":true,"analysis":{"feedback_type":"wrong_metric","cause":"Customers were ranked by order count.","corrected_meaning":"Rank customers by total spending.","reusable_preference":true,"preference":"Interpret top customers as ranking by total spending.","scope":"user","confidence":0.95},"analysis_error":null}
-```
-
-Tests use in-memory MongoDB interface fakes and mocked LLM responses; `tests/conftest.py` disables external trace export during tests. Run `python -m pytest -q`. Live MongoDB and OpenAI behavior requires integration verification with deployment credentials.
-
-## Architecture
-
-```text
-User -> SchemaInspector -> QueryContextAgent -> QueryGeneratorAgent
-     -> ValidatorAgent -> ExecutorAgent
-     -> RepairAgent after a repairable failure; then revalidate and execute
-     -> ResultsSummaryAgent when useful; deterministic formatting otherwise
-     -> query history; independent feedback endpoint
-```
-
-QueryContextAgent selects relevant collections and fields while classifying the request. At startup the deterministic SchemaInspector refreshes compact field/type metadata, then SchemaBootstrapService reuses or incrementally updates its persistent semantic cache. Each request retrieves a small schema candidate set and active business-knowledge chunks before QueryContextAgent. Simple requests use 2 chat calls (context and generator), plus one shared embedding request for schema and knowledge retrieval. Complex requests use 2, or 3 when a summary adds value. Repairs add one call. `query_plan` remains `null` for response compatibility.
-
-The LLM never generates Mongo shell code for direct execution. It produces a structured JSON query specification that is validated before PyMongo receives it.
-
-## Supported operations
-
-- `find`
-- `aggregate`
-- `count_documents`
-- `distinct`
-
-The validator rejects write operations and dangerous server-side execution stages/operators such as `$out`, `$merge`, `$where`, `$function`, and `$accumulator`.
-
-## Prompts
-
-All LLM prompts live in `prompts/`:
-
-- `query_context.txt`
-- `query_generator.txt`
-- `query_repair.txt`
-- `results_summary.txt`
-
-No agent contains a large hard-coded prompt.
-
-The router, schema selector, planner, and Python artifact classes/prompts remain as deprecated legacy files; they are not imported or called by the active workflow.
-
-## Setup
-
-```bash
+~~~powershell
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+~~~
+
+Linux/macOS:
+
+~~~bash
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.txt
+~~~
 
-pip install -r requirements.txt
-cp .env.example .env
-```
+Using the environment's Python directly on Windows avoids PowerShell activation-script restrictions.
 
-Set at minimum:
+### 2. Create and configure the environment file
 
-```env
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=my_database
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-6.1-sol
-```
+Preserve existing settings. PowerShell:
 
-Then run:
-
-```bash
-uvicorn main_api:app --reload
-```
-
-Open `http://127.0.0.1:8000/docs`.
-
-### Query endpoint
-
-`POST /query`
-
-```json
-{
-  "question": "Show the 10 customers who spent the most this year"
+~~~powershell
+if (-not (Test-Path -LiteralPath .env)) {
+  Copy-Item -LiteralPath .env.example -Destination .env
 }
-```
+~~~
 
-## Schema bootstrap and semantic retrieval
+Linux/macOS:
 
-FastAPI startup runs `SchemaBootstrapService` before the normal query path is enabled. The deterministic `SchemaInspector` samples documents only to infer compact field paths and types; sample documents and values are discarded. A stable SHA-256 fingerprint uses the database name, sorted collection names, field paths, and types.
+~~~bash
+test -f .env || cp .env.example .env
+~~~
 
-The persistent cache and semantic index are stored together in the internal MongoDB collection `_system_schema_cache`, one record per database. The record contains compact schema metadata, descriptions, aliases, relationship candidates, search text, and OpenAI embedding vectors. It never contains sampled documents. On startup, matching fingerprints load the cached index. When the schema changes, unchanged collection entries and embeddings are reused; only changed metadata and any entries affected by relationship changes are enriched or re-embedded. Set `SCHEMA_REBUILD_ON_STARTUP=true` to force a full rebuild. Internal collections beginning with `_system_` are excluded from inspection and blocked by the validator.
+Edit .env and set:
 
-`SchemaEnrichmentAgent` uses the central OpenAI router only during bootstrap or refresh, in batches controlled by `SCHEMA_ENRICHMENT_BATCH_SIZE`. Invalid batches are retried with smaller batches; if one collection still fails, a deterministic name-and-field description is used. Embeddings use the OpenAI `text-embedding-3-small` model through that same central provider layer. Vectors are persisted in MongoDB and searched with cosine similarity, so no local FAISS files or per-request schema index rebuilds are needed.
-
-For each user question, `SchemaRetriever` embeds the question, combines semantic similarity with lexical matches for actual collection/field names and aliases, then expands likely relationships. It normally returns at most `SCHEMA_RETRIEVAL_TOP_K` collections and limits the field catalog to `SCHEMA_RETRIEVAL_MAX_FIELDS`, while retaining fields required by relevant saved preferences. QueryContext sees only those candidate schemas; QueryGenerator sees only QueryContext's selected collections and fields. Embedding calls, retrieval latency, candidate counts, context characters, and QueryContext input-token usage appear in telemetry.
-
-`/ready` reports whether schema bootstrap completed and returns the schema source and version without exposing the schema. `/query` returns HTTP 503 until readiness is true. If refresh fails while an older persistent index exists, startup loads that index and reports `stale_fallback`. `schema_bootstrap_service.refresh()` and `.invalidate()` provide internal refresh/invalidation operations without adding an admin endpoint.
-
-```env
-SCHEMA_CACHE_ENABLED=true
-SCHEMA_CACHE_COLLECTION=_system_schema_cache
-SCHEMA_REBUILD_ON_STARTUP=false
-SCHEMA_ENRICHMENT_MODEL=gpt-6.1-sol
-SCHEMA_ENRICHMENT_BATCH_SIZE=10
+~~~dotenv
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=your_database
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=your-available-chat-model
+SCHEMA_ENRICHMENT_MODEL=your-available-chat-model
 SCHEMA_EMBEDDING_MODEL=text-embedding-3-small
-SCHEMA_RETRIEVAL_TOP_K=5
-SCHEMA_RETRIEVAL_MAX_FIELDS=60
-SCHEMA_RELATIONSHIP_EXPANSION=true
-```
+KNOWLEDGE_EMBEDDING_MODEL=text-embedding-3-small
+~~~
 
-## Routing and request telemetry
+The repository's chat-model default is gpt-6.1-sol. This is a code setting, not a guarantee of access for your account; configure identifiers available to your deployment. Both embedding settings must match. The example explicitly sets the enrichment model, so update that too when changing the chat model.
 
-QueryContextAgent classifies semantic requirements and selects schema fields in one structured OpenAI call over retrieved candidates only. Simple requests normally use two chat calls (context and generation), skipping planning and summary. Multi-collection requests classified as simple are promoted to complex aggregation before generation.
+.env.example uses host.docker.internal for Docker Desktop. Use localhost when backend and MongoDB run directly on the same machine. For remote MongoDB or Atlas, use your connection URI with appropriate authentication/TLS/network settings.
 
-Only field/type metadata reaches QueryContextAgent. QueryGeneratorAgent receives only selected collections and fields, the question, operation hint, and read-only constraints; no sampled documents, unrelated collections, conversation history or execution history are included. Repair sees only question, selected schema, failed query and error, with one repair maximum per request. Authentication and connectivity failures do not trigger repair.
+The database account needs business-data reads, collection discovery, and writes/index creation for internal application collections. A completely read-only account cannot persist schema caches, feedback, history, or learning.
 
-`OPENAI_API_KEY` authenticates requests. `OPENAI_MODEL=gpt-6.1-sol` selects the shared chat model; `SCHEMA_ENRICHMENT_MODEL` may override it for startup-only schema descriptions. `LLM_MAX_RETRIES=1` allows one transient retry against the same model; invalid structured output is not retried. Query responses include cache and retrieval metrics, plus per-agent input/output tokens and latency. `query_context_input_tokens` records provider usage for the context call when supplied. Enable Python DEBUG logging for execution paths; no request credentials are logged.
+Optional API protection:
 
-Run regression tests with `python -m pytest -q`. These tests mock classification and generation; live model routing quality and latency still need measurement against a representative database.
+~~~dotenv
+API_KEY=your-shared-application-key
+ALLOWED_ORIGINS=http://127.0.0.1:4200,http://localhost:4200
+~~~
 
-All agents use OpenAI through the shared router and the single `OPENAI_MODEL` setting. There is no provider or application-level model fallback. The existing telemetry field `fallback_used` is retained for compatibility and is always false. Restart the API after adding `OPENAI_API_KEY` or changing `.env`.
+API_KEY is separate from OPENAI_API_KEY. An empty application key disables shared-key protection. ALLOWED_ORIGINS is a comma-separated CORS list; its default is *.
 
-Structured-output failures report safe field/type validation details and the provider's finish reason without raw output or input values. `finish_reason=length` flags a response that reached the output token limit and may be incomplete; absent metadata is reported as `unknown`. Every telemetry attempt also records the finish reason. These failures are not retried, and the token budget is not automatically increased.
+### 3. Start the backend
 
-The application does not send `max_tokens` or `max_completion_tokens`. The former `LLM_MAX_OUTPUT_TOKENS` setting is no longer used. Generation follows the model's own defaults and limits; the request timeout still applies.
+Windows:
 
-## Angular web interface
+~~~powershell
+.\.venv\Scripts\python.exe -m uvicorn main_api:app --reload
+~~~
 
-The frontend is a small Angular 21 standalone application: one main component,
-Angular forms, and a centralized HttpClient API service. No frontend router or
-state-management library is needed.
+Linux/macOS, with the environment activated:
 
-Start the backend from the repository root:
+~~~bash
+python -m uvicorn main_api:app --reload
+~~~
 
-```powershell
-.venv\Scripts\python.exe -m uvicorn main_api:app --reload
-```
+Regular server process without development reload:
 
-Install and build the frontend:
+~~~bash
+python -m uvicorn main_api:app --host 0.0.0.0 --port 8000
+~~~
 
-```powershell
+Startup inspects MongoDB and loads/builds the schema index before Uvicorn finishes starting. First bootstrap can make enrichment and embedding calls. If bootstrap fails without a usable cached index, diagnostic endpoints remain available but queries are not ready.
+
+| URL | Purpose |
+| --- | --- |
+| http://localhost:8000/ | Built frontend, or JSON with API links if no build exists. |
+| http://localhost:8000/docs | Interactive Swagger documentation. |
+| http://localhost:8000/redoc | Alternative API documentation. |
+| http://localhost:8000/health | Database connectivity and schema status. |
+| http://localhost:8000/ready | Readiness; HTTP 503 when database/schema is unavailable. |
+
+### 4. Install and build Angular
+
+In another terminal:
+
+~~~bash
 cd frontend
-npm.cmd ci
-npm.cmd run build
-```
+npm ci
+npm run build
+~~~
 
-Open http://localhost:8000/. FastAPI serves the compiled Angular page and assets
-from `frontend/dist`. Build before opening that page; without a build the root
-returns a helpful 503. For frontend development, run `npm.cmd start` inside
-`frontend` and open http://127.0.0.1:4200/. Its proxy sends API requests to the
-backend on port 8000. On shells without Windows script restrictions, `npm` works
-in place of `npm.cmd`.
+Use npm.cmd instead of npm on PowerShell installations that block the npm script shim.
 
-Configure `apiBaseUrl` and `useStreaming` in
-`frontend/src/environments/environment.ts`. Empty `apiBaseUrl` uses the current
-origin or development proxy. Live execution uses the existing authenticated
-`POST /query/stream` SSE endpoint through HttpClient download events. If streaming
-is disabled or the endpoint responds with 404/405, the app uses `POST /query` and
-shows only returned operational execution metadata after completion. No agent
-progress is simulated. `GET /health` controls schema readiness and Ask availability.
+The build writes to frontend/dist, with asset URLs under /static/. Start or restart the backend after building so it registers the static-files mount. Open http://localhost:8000/.
 
-There is no authentication screen. If the backend uses a shared API key, set it
-for the browser tab using its developer console, then reload:
+For frontend development, run inside frontend:
 
-```javascript
-sessionStorage.setItem('mongo-api-key', 'your-api-key');
-```
+~~~bash
+npm start
+~~~
 
-The API service sends it in `X-API-Key`; no key is bundled in source/build assets.
-Remove it with `sessionStorage.removeItem('mongo-api-key')` when finished.
+Open http://127.0.0.1:4200/ and keep the backend running separately. The development proxy forwards /query and its subpaths, /feedback, and /health to http://127.0.0.1:8000. Open readiness/docs directly on port 8000.
 
-Feedback uses `POST /feedback` and the displayed answer's `request_id`. Yes sends
-`liked: true` and shows thanks without querying again. No requires a trimmed,
-non-empty comment; after the feedback endpoint responds successfully, Angular
-reruns the **exact original question**. Existing backend feedback learning applies
-any saved preference/knowledge. Each regenerated answer replaces the displayed
-request ID. If regeneration fails, the previous answer remains visible and a
-retry button reruns the question without saving duplicate feedback. Feedback
-analysis errors are shown as a learning limitation, rather than claiming a
-correction was applied. The UI never generates its own summary or exposes raw
-server exceptions or hidden reasoning.
+Frontend configuration is in frontend/src/environments/environment.ts:
 
-Verify the frontend with `npm.cmd run build` followed by `npm.cmd run test:smoke`
-inside `frontend`. The browser smoke check uses a local fixture API, tests live
-SSE, feedback and regeneration failures/retries, dynamic tables, and mobile
-layout; it does not query MongoDB or OpenAI. It uses installed Microsoft Edge on
-Windows. Elsewhere, install Playwright Chromium or set `BROWSER_PATH` to an
-existing Chromium-based browser. Screenshots are written to ignored
-`frontend/test-results/`. Set `ANGULAR_DEV_URL` to a running Angular dev-server URL
-to check that page and its development assets as well.
+~~~typescript
+export const environment = {
+  apiBaseUrl: '',
+  useStreaming: true
+};
+~~~
 
-## Knowledge learning modes
+An empty API URL uses the current origin or development proxy. For a separately hosted UI, set the backend URL, allow that origin in backend CORS, and rebuild Angular. Browser settings are compiled into the build; container environment variables do not change them.
 
-Set `KNOWLEDGE_LEARNING_MODE=immediate` to activate eligible database rules on
-the first feedback, or `confirmations` to wait for
-`KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS` independent request IDs (minimum 1).
-Both require `KNOWLEDGE_AUTO_PROMOTION_ENABLED=true`, meet the configured confidence
-threshold, and retain conflict checks. Immediate mode bypasses only the evidence
-count. Changes require a backend restart; existing candidates are reconsidered
-on their next ingestion, rather than bulk activated.
+## Docker installation
 
-Each answer has a **View query** button. It reveals a formatted validated MongoDB
-query (or the generated query if validation was unavailable), hidden by default
-and reset for each new answer.
+The root Dockerfile uses python:3.12-slim, installs requirements.txt, copies backend code and the frontend folder, and serves port 8000 as UID/GID 10001. It includes an existing frontend/dist build but does not create one.
 
-Query cost protection and optimization flow: see [QUERY_PERFORMANCE.md](QUERY_PERFORMANCE.md).
+### Build and run
 
-## Run the backend with Docker
+To include the UI:
 
-Build from the repository root with `docker build -t mongo-db-interrogator-backend:latest .`, then run with `docker run --rm -p 8000:8000 --env-file .env mongo-db-interrogator-backend:latest`. MongoDB and OpenAI settings are supplied at runtime; Angular is served separately. See [DOCKER.md](DOCKER.md) for end-user, publishing, health and persistence instructions.
+~~~bash
+cd frontend
+npm ci
+npm run build
+cd ..
+docker build -t mongo-db-interrogator:latest .
+~~~
+
+For API-only use, run just docker build from the root. Existing frontend/dist files, if present, are also copied. Frontend source remains in the image; node_modules is excluded.
+
+Create .env using the instructions above. For MongoDB on the Docker Desktop host:
+
+~~~dotenv
+MONGODB_URI=mongodb://host.docker.internal:27017
+MONGODB_DATABASE=your_database
+OPENAI_API_KEY=your-openai-api-key
+~~~
+
+Run:
+
+~~~bash
+docker run --rm --name mongo-db-interrogator -p 8000:8000 --env-file .env mongo-db-interrogator:latest
+~~~
+
+Open http://localhost:8000/ or /docs. A container's localhost points to itself. On Linux Docker Engine, host access by that name may require --add-host=host.docker.internal:host-gateway, and MongoDB must listen on a reachable interface. Alternatively, use a remote URI or a MongoDB container's name on a shared Docker network.
+
+Detached operation:
+
+~~~bash
+docker run -d --name mongo-db-interrogator -p 8000:8000 --env-file .env mongo-db-interrogator:latest
+docker logs -f mongo-db-interrogator
+docker inspect --format '{{.State.Health.Status}}' mongo-db-interrogator
+docker stop mongo-db-interrogator
+~~~
+
+Remove the stopped container with docker rm mongo-db-interrogator before reusing its name. Recreate containers after changing --env-file; restarting the same container does not reload the file. Rebuild for changed source or compiled frontend.
+
+The entrypoint requires non-empty OPENAI_API_KEY, MONGODB_URI, and MONGODB_DATABASE. The healthcheck requires status=ok, database=up, and schema_ready=true. It runs every 30 seconds, with a 10-second timeout, 180-second startup grace period, and three retries. Use a longer --health-start-period such as 10m for lengthy bootstrap. Docker health status alone does not restart a container.
+
+### Persistence and distribution
+
+Application state persists in MongoDB; no volume is needed for normal caches/history/learning. To preserve optional token logs, enable TOKEN_USAGE_LOG_ENABLED and mount /app/data:
+
+~~~bash
+docker run --rm -p 8000:8000 --env-file .env -v mongo_interrogator_logs:/app/data mongo-db-interrogator:latest
+~~~
+
+Existing volumes/bind mounts must allow writes by UID/GID 10001. Credentials are supplied at runtime. .dockerignore excludes .env files, keys, virtual environments, Git metadata, tests, and node_modules. The Dockerfile does not copy runtime .env files into layers.
+
+To publish a built image, replace the namespace/version:
+
+~~~bash
+docker tag mongo-db-interrogator:latest YOUR_NAMESPACE/mongo-db-interrogator:1.0.0
+docker push YOUR_NAMESPACE/mongo-db-interrogator:1.0.0
+~~~
+
+After publication, users can pull/run that image with their own --env-file without installing Python or Node. This repository does not specify a published image. Build Angular before publishing if the image should include a usable UI.
+
+## Using the web interface
+
+1. Wait for the readiness badge to report the database/schema available.
+2. Enter a question and click Ask or press Ctrl/Cmd + Enter.
+3. Follow actual stages/timings in Agent execution.
+4. If a template suggestion appears, choose Reuse template or Regenerate.
+5. If Large request detected appears, choose an offered optimization, provide refinement text, or explicitly Run anyway.
+6. Inspect tables/scalars and the summary. Use View query, structured-cell details, and View record to inspect the answer.
+7. Choose Yes for useful answers. Choose No, enter a correction, and submit feedback to regenerate.
+
+For a protected API, open the frontend browser's developer console, set the application key for that tab, then reload:
+
+~~~javascript
+sessionStorage.setItem('mongo-api-key', 'your-shared-application-key');
+~~~
+
+Remove it with:
+
+~~~javascript
+sessionStorage.removeItem('mongo-api-key');
+~~~
+
+The UI sends X-API-Key. There is no login screen or bundled secret. Never place the OpenAI provider key in browser storage.
+
+Positive feedback does not rerun the query or call feedback analysis. After negative feedback is saved, the UI reruns the exact original question. Its effect depends on classification and whether learning actually succeeded/activated. If regeneration fails, the previous answer remains and retry avoids duplicate feedback. The UI reports analysis errors separately.
+
+## API reference
+
+### Endpoints
+
+| Method | Path | Key required when configured | Purpose |
+| --- | --- | --- | --- |
+| GET | / | No | Frontend or API links. |
+| GET | /health | No | Diagnostics; degraded status can still have HTTP 200. |
+| GET | /ready | No | Readiness, with HTTP 503 when unavailable. |
+| GET | /docs, /redoc, /openapi.json | No | Documentation/specification. |
+| POST | /query | Yes | Ask a non-empty question. |
+| POST | /query/stream | Yes | Ask with SSE progress. |
+| POST | /query/{request_id}/template-decision | Yes | Reuse a template or regenerate. |
+| POST | /query/{request_id}/optimize | Yes | Continue a retained query. |
+| POST | /feedback | Yes | Store feedback and optionally analyze a correction. |
+
+Protected requests use X-API-Key. An execution failure can appear in an HTTP 200 response with execution_success=false; inspect both HTTP status and body.
+
+### Ask a question
+
+PowerShell:
+
+~~~powershell
+$headers = @{ 'X-API-Key' = 'your-shared-application-key' }
+$body = @{ question = 'Show the latest 10 orders' } | ConvertTo-Json
+$answer = Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/query' -Headers $headers -ContentType 'application/json' -Body $body
+$answer
+~~~
+
+Bash:
+
+~~~bash
+curl -X POST http://localhost:8000/query \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-shared-application-key' \
+  -d '{"question":"Show the latest 10 orders"}'
+~~~
+
+Omit the key header if API_KEY is blank. An illustrative, abbreviated response:
+
+~~~json
+{
+  "request_id": "req_example",
+  "status": "completed",
+  "execution_success": true,
+  "execution_result": [{"order_id": "ORD-001", "status": "completed"}],
+  "final_response": "Found 1 results.",
+  "validated_query": {
+    "operation": "find",
+    "collection": "orders",
+    "filter": {},
+    "sort": [["_id", -1]],
+    "limit": 10,
+    "skip": 0
+  },
+  "query_plan": null
+}
+~~~
+
+Real IDs are server-generated req_<uuid> values. Responses can include query_context, schema_spec, generated templates/parameters, validated queries, validation errors, execution metadata/path/trace, applied preferences/knowledge, and telemetry. query_plan and python_artifact normally remain null for compatibility.
+
+| Response status | What to do |
+| --- | --- |
+| completed | Check execution_success and show results/error. |
+| similar_template_detected | Submit a decision using the returned request/template IDs. |
+| optimization_required | Display offered choices and submit a continuation. The business result query is paused. |
+
+### Stream progress
+
+~~~bash
+curl -N -X POST http://localhost:8000/query/stream \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-shared-application-key' \
+  -d '{"question":"Show the latest 10 orders"}'
+~~~
+
+This is POST SSE, not a GET EventSource endpoint. Frames carry JSON:
+
+~~~text
+event: workflow
+data: {"agent":"ValidatorAgent","status":"completed","elapsed_ms":1.2}
+
+event: result
+data: {"request_id":"req_example","status":"completed","execution_success":true}
+
+event: done
+data: {}
+~~~
+
+The example result omits normal response fields. Stage statuses include pending/running/completed/failed/skipped. An error event reports unexpected stream failure. Keep-alive comments are sent while waiting. Disconnecting does not interrupt an in-flight database operation. Reverse proxies must avoid buffering and allow long-lived responses.
+
+### Template decisions
+
+POST /query/{request_id}/template-decision with IDs returned by a suggestion:
+
+~~~json
+{"action":"reuse","template_id":"tpl_returned_id"}
+~~~
+
+Or:
+
+~~~json
+{"action":"regenerate","template_id":"tpl_returned_id"}
+~~~
+
+Reuse extracts new values while keeping query structure, then binds, validates, checks cost, and executes. Deterministic extraction can fall back to a small model call. Regeneration bypasses the suggestion and uses the normal workflow under the same request ID.
+
+Decisions expire after one hour; atomic claims prevent duplicate execution. HTTP 409 indicates unavailable/expired/incompatible/already handled state. HTTP 422 can indicate unsafe extraction or failed validation; choose Regenerate.
+
+### Optimization and pagination
+
+POST /query/{request_id}/optimize using an offered option:
+
+~~~json
+{"optimization":"limit","value":100}
+~~~
+
+Other examples:
+
+~~~json
+{"optimization":"refine","refinement":"Only include orders from the last 7 days"}
+~~~
+
+~~~json
+{"optimization":"paginate_100","value":100,"page":1}
+~~~
+
+~~~json
+{"optimization":"pagination","page":2}
+~~~
+
+~~~json
+{"optimization":"run_anyway"}
+~~~
+
+Available options depend on query structure: latest_100, limit, paginate_100, pagination, summary, narrow_date, refine, optimize_aggregation, run_anyway. Only offered/applicable options are accepted. narrow_date needs refinement text too. Find summary can become a count; aggregation summary may use generation. Safe aggregation optimization can defer output-only joins until after top-N selection.
+
+value accepts 1–50000; page defaults to 1 and accepts 1–10000; refinement accepts up to 4000 characters. Server row caps still apply. Pagination page size is fixed. State expires after one hour. HTTP 409 indicates unavailable/claimed/consumed state; HTTP 422 indicates an invalid choice/refinement.
+
+Normal refinement retains the request ID and context. Explicitly recognized intent-switch language can restart the normal workflow with a new ID. Model-assisted optimization iterations default to three; deterministic options can remain available afterward.
+
+### Feedback
+
+POST /feedback:
+
+~~~json
+{"request_id":"req_returned_id","liked":true}
+~~~
+
+Negative feedback:
+
+~~~json
+{
+  "request_id": "req_returned_id",
+  "liked": false,
+  "comment": "By top customers I mean total spending, not number of orders."
+}
+~~~
+
+liked must be a JSON boolean. Negative feedback needs a non-empty comment; comments accept up to 4000 characters and request IDs up to 128. Results include feedback_saved, analysis_created, analysis/errors, and preference/knowledge outcomes. Saved raw feedback does not guarantee successful learning. Repeated submissions update that request's record.
+
+### HTTP outcomes
+
+| Status | Meaning |
+| --- | --- |
+| 200 | Handled; inspect workflow status/success fields. |
+| 401 | Application key missing or incorrect. |
+| 404 | Feedback history ID not found. |
+| 409 | Continuation/decision expired, unavailable, claimed, consumed, or incompatible. |
+| 422 | Invalid input, extraction, validation, or continuation. |
+| 503 | Schema not ready, readiness dependency unavailable, or feedback persistence failed. |
+
+There are no public routes to list all history, switch databases, administer learned rules, or refresh schema.
+
+## Architecture and workflows
+
+### Normal query path
+
+~~~text
+Question -> request ID + semantic template lookup
+  -> compatible match: pause for Reuse / Regenerate
+  -> miss or regeneration:
+     schema retrieval + relevant preferences + active knowledge
+     -> QueryContextAgent -> QueryGeneratorAgent -> parameter binding
+     -> ValidatorAgent -> QueryCostGuard
+        -> heavy: pause for optimization decision
+        -> safe: ExecutorAgent -> optional ResultsSummaryAgent
+     -> response + history + template/performance persistence
+~~~
+
+QueryContextAgent selects collections/fields and classifies operation/complexity. QueryGeneratorAgent returns a parameterized template and semantic intent. Only bound, validated query specifications reach PyMongo; generated shell code is not executed.
+
+Simple normal queries typically use context and generation chat calls plus deterministic formatting. Complex/aggregation results can add summary; repair adds at most one call. Embeddings, bootstrap, template persistence/migration, feedback, and parameter extraction add calls on relevant paths, so this is not a fixed total API-call guarantee.
+
+Active chat roles share OPENAI_MODEL; enrichment can override it. There is no application-level model/provider fallback. Transient chat failures can retry the same model; invalid structured output is not retried. The code does not send max_tokens or max_completion_tokens; the former LLM_MAX_OUTPUT_TOKENS setting is unused.
+
+### Schema bootstrap and retrieval
+
+Startup infers field/type metadata from bounded document samples, examining up to five members of sampled arrays. Sample document values are discarded after inspection. A fingerprint covers database, collection names, fields, and types.
+
+Persistent records contain descriptions, aliases, relationship candidates, search text, and embeddings. Matching fingerprints reuse the index; changes update entries incrementally. Failed enrichment can use deterministic descriptions. A failed refresh with a usable older index can report stale_fallback.
+
+Request retrieval combines cosine similarity and lexical relevance, with optional relationship expansion and fields needed by rules/preferences. Candidate/field budgets limit ordinary context; required fields can extend it. MongoDB stores vectors and the application ranks them; no FAISS service or Atlas vector-search index is required.
+
+Sparse fields can be missed. Restart to inspect schema changes; force rebuilding with SCHEMA_REBUILD_ON_STARTUP=true. Internal schema_bootstrap_service.refresh() and .invalidate() methods exist, without public admin routes. SCHEMA_CACHE_TTL_SECONDS governs the inspector's process-local cache, not a scheduled semantic-index rebuild.
+
+### Validation, BSON, and execution
+
+Operations: find, aggregate, count_documents, distinct.
+
+Allowed aggregation stages:
+
+~~~text
+$match, $project, $group, $sort, $limit, $skip, $unwind, $lookup,
+$addFields, $set, $unset, $count, $facet, $replaceRoot, $replaceWith,
+$sortByCount, $bucket, $bucketAuto
+~~~
+
+$set/$unset here transform aggregation output; they are not write commands. Validation rejects unsupported operations/top-level stages, forbidden keys such as $where/$function/$accumulator/$out/$merge, and reads of internal collections, including nested join targets.
+
+A small Extended JSON subset supports ObjectIds ({"$oid":"..."}) and ISO dates ({"$date":"..."}). Results are converted to JSON-safe values. Find/aggregate/distinct output is capped by QUERY_MAX_RETURN_ROWS; counts return a scalar row. Aggregation uses allowDiskUse=false. Run anyway still obeys caps, timeouts, and validation.
+
+Eligible structural errors can trigger one repair, followed by validation and cost analysis. Authentication/connectivity errors do not trigger query repair. Output limits do not guarantee that upstream joins/grouping/sorting are cheap.
+
+### Cost guard and performance learning
+
+Cost analysis combines structure, bounded find estimates, optional planner explain, and historical structural profiles. Find counting stops at the heavy threshold plus one with a short timeout; this may be a lower bound. Aggregations are not executed just to estimate cost.
+
+Profiles track executions, latency, returned rows, known examined-document metrics, and optimization choices. Signatures primarily describe structure rather than literal values; detected date-width buckets distinguish narrower windows. Unknown metrics remain unknown. Historical choices can reorder suggestions but never accept them automatically.
+
+Pagination uses backend find limit/skip and an _id tie-breaker. It does not load all data into the browser. A full page permits a next-page probe, which may be empty. Changing data can shift pages; deep skips can be expensive.
+
+### Template cache
+
+Successful validated queries can persist structure, source question, semantic intent, parameter metadata, schema/version, trust state, and embeddings. Lookup checks compatible identical source questions first, then semantic candidates. Default thresholds: below 0.65 ignored; 0.65 to below 0.82 weak match without suggestion; compatible scores at least 0.82 can prompt reuse.
+
+Reuse checks operation, collections, version, parameters, and integrity. Values change while structure stays fixed. It skips normal schema/knowledge/preference retrieval and context/generation, using stored schema for validation. Cost guard and optional summary still apply. Three reuse validation/execution failures can invalidate a template; extraction failure does not invalidate structure. Positive feedback records support without repeatedly counting one request.
+
+Stale embedding representations can be migrated. Lookup scans eligible vectors in process, so cost grows with templates. Changing embedding models can require rebuilding relevant vectors/indexes.
+
+### Feedback learning
+
+Raw feedback is persisted before analysis. Negative feedback uses FeedbackAnalysisAgent, then deterministic FeedbackLearningRouter:
+
+| Scope | Outcome |
+| --- | --- |
+| user | Normalize reusable ranking, sorting, interpretation, result-limit/latest, or related preferences. |
+| database | Save a knowledge candidate separate from technical schema. |
+| one_off | Keep feedback/history without reusable promotion. |
+
+Preferences are scoped to DEFAULT_USER_ID and filtered for relevance/schema validity. Compatible corrections update preference identities. Positive/replaced feedback deactivates preferences sourced from the replaced request. Explicit current instructions take precedence over defaults.
+
+Knowledge candidates are deduplicated. Two independent confirmations can mark a candidate confirmed, but confirmation alone does not activate it. Automatic activation requires KNOWLEDGE_AUTO_PROMOTION_ENABLED=true, sufficient confidence, and the learning-mode threshold:
+
+- confirmations: wait for KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS (default 3).
+- immediate: permit the first eligible feedback, still requiring promotion enabled and sufficient confidence.
+
+Conflicts can block activation. Only active knowledge reaches prompts. Internal approve/reject/supersede methods exist, without public administration routes. Precedence is explicit question, active database knowledge, then compatible preferences; schema constrains valid references.
+
+## Configuration reference
+
+Copy .env.example for editable examples. Defaults below reflect code unless an example/image value is specified. Restart for changes; recreate Docker containers when changing their environment files.
+
+### Database and schema
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| MONGODB_URI | mongodb://localhost:27017 | Connection; example uses Docker Desktop host. |
+| MONGODB_DATABASE | Empty | Required target database. |
+| MONGO_SCHEMA_SAMPLE_SIZE | 20 | Sample documents per collection. |
+| MONGO_MAX_COLLECTIONS | 200 | Maximum discovered collections. |
+| MONGO_QUERY_TIMEOUT_MS | 15000 | Query time budget. |
+| SCHEMA_CACHE_ENABLED | true | Enable schema caching behavior. |
+| SCHEMA_CACHE_TTL_SECONDS | 300 | Inspector in-process cache lifetime. |
+| SCHEMA_CACHE_COLLECTION | _system_schema_cache | Persistent metadata/vectors. |
+| SCHEMA_REBUILD_ON_STARTUP | false | Force full rebuild. |
+| SCHEMA_ENRICHMENT_MODEL | OPENAI_MODEL | Startup description model; example explicitly sets it. |
+| SCHEMA_ENRICHMENT_BATCH_SIZE | 10 | Batch size, bounded to 1–50. |
+| SCHEMA_EMBEDDING_MODEL | text-embedding-3-small | Schema/template embedding model. |
+| SCHEMA_RETRIEVAL_TOP_K | 5 | Ordinary candidate collection budget. |
+| SCHEMA_RETRIEVAL_MAX_FIELDS | 60 | Ordinary field budget. |
+| SCHEMA_RELATIONSHIP_EXPANSION | true | Expand likely relationships. |
+| DEFAULT_LIMIT | 100 | Retained constant; not active universal result cap. |
+| MAX_LIMIT | 500 | Retained constant; not active universal result cap. |
+
+The current validator preserves absent find limits, and the executor caps output using QUERY_MAX_RETURN_ROWS. Do not rely on older DEFAULT_LIMIT/MAX_LIMIT settings to bound all results.
+
+### Models and API
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| OPENAI_API_KEY | Empty | Required server-side provider credential. |
+| OPENAI_MODEL | gpt-6.1-sol | Repository's shared chat-model setting. |
+| LLM_TIMEOUT_SECONDS | 30 | Chat timeout. |
+| LLM_MAX_RETRIES | 1 | Additional transient attempts on the same model. |
+| API_KEY | Empty | Optional query/feedback shared key. |
+| ALLOWED_ORIGINS | * | Comma-separated CORS origins. |
+| PROMPT_VARIANT | default | Look in prompts/<variant>/ before base prompts. |
+
+### History and preferences
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| QUERY_HISTORY_COLLECTION | query_history | Request/execution records. |
+| QUERY_HISTORY_PREVIEW_SIZE | 5 | Maximum preview rows; 0 disables previews. |
+| QUERY_HISTORY_PREVIEW_MAX_BYTES | 8192 | Total preview byte budget; oversized rows omitted. |
+| FEEDBACK_COLLECTION | feedback | Feedback/analysis. |
+| USER_PREFERENCES_COLLECTION | user_preferences | Scoped preferences. |
+| DEFAULT_USER_ID | default | Shared deployment scope, not authentication. |
+| USER_PREFERENCE_RETRIEVAL_LIMIT | 50 | Retrieval bound before filtering. |
+
+### Knowledge
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| DATABASE_KNOWLEDGE_COLLECTION | _system_database_knowledge | Business-rule storage. |
+| KNOWLEDGE_RETRIEVAL_TOP_K | 3 | Maximum active chunks returned. |
+| KNOWLEDGE_EMBEDDING_MODEL | SCHEMA_EMBEDDING_MODEL | Must match for shared request vectors. |
+| KNOWLEDGE_LEARNING_MODE | confirmations | confirmations or immediate. |
+| KNOWLEDGE_AUTO_PROMOTION_ENABLED | false | Permit automatic activation. |
+| KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS | 3 | Evidence threshold in confirmations mode. |
+| KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE | 0.90 | Activation confidence threshold. |
+
+### Cost and performance
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| QUERY_COST_GUARD_ENABLED | true | Enable heavy-query detection. |
+| QUERY_HEAVY_RESULT_THRESHOLD | 5000 | Large-result threshold. |
+| QUERY_HEAVY_EXECUTION_MS_THRESHOLD | 1500 | Historical heavy latency. |
+| QUERY_HEAVY_RISK_THRESHOLD | 0.70 | Pause threshold. |
+| QUERY_PERFORMANCE_COLLECTION | _system_query_performance | Structural profiles. |
+| QUERY_PERFORMANCE_SIMILARITY_THRESHOLD | 0.75 | Profile similarity threshold. |
+| QUERY_DEFAULT_OPTIMIZED_LIMIT | 100 | Suggested limit/page size. |
+| QUERY_MAX_RETURN_ROWS | 50000 | Hard returned-document cap. |
+| QUERY_MAX_OPTIMIZATION_ITERATIONS | 3 | Maximum normal model-assisted refinements. |
+
+### Templates
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| QUERY_TEMPLATES_COLLECTION | _system_query_templates | Reusable templates. |
+| SEMANTIC_TEMPLATE_CACHE_ENABLED | true | Enable lookup/suggestions. |
+| SEMANTIC_TEMPLATE_TOP_K | 3 | Ranked candidates checked. |
+| SEMANTIC_TEMPLATE_MIN_THRESHOLD | 0.65 | Weak-match threshold. |
+| SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD | 0.82 | Suggestion threshold. |
+
+Thresholds must satisfy 0 <= min <= suggest <= 1. Internal collection names must be distinct and must not target business collections. Invalid model pairing, learning mode, collection names, or template thresholds can prevent startup.
+
+### Observability and legacy options
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| TOKEN_USAGE_LOG_ENABLED | false | Optional chat usage JSONL callback. |
+| TOKEN_USAGE_LOG_PATH | data/token_usage.jsonl | Relative paths resolve from root. |
+| LANGSMITH_TRACING | false in example | Optional external tracing. |
+| LANGSMITH_API_KEY | Empty in example | Tracing credential. |
+| LANGSMITH_PROJECT | mongo-db-interrogator in example | Trace project. |
+| ENABLE_PYTHON_ARTIFACTS | false | Deprecated; not active workflow functionality. |
+| PYTHON_ARTIFACT_DIR | artifacts in code | Deprecated path; example/image uses /app/data/artifacts. |
+
+Response telemetry is independent of optional local logs. It reports model attempts, tokens where available, finish reasons, latency, embeddings, and cache/retrieval metrics. Embedding token counts are estimated locally. Compatibility field fallback_used stays false. Structured-output diagnostics omit raw output; finish_reason=length can indicate an incomplete provider response.
+
+## Storage, privacy, and access
+
+State lives in the configured database:
+
+| Default collection | Contents |
+| --- | --- |
+| _system_schema_cache | Compact schema, enrichment, fingerprints, vectors. |
+| query_history | Question, selected metadata, queries, status, summary, timing/usage, bounded preview. |
+| feedback | Current feedback, revision-checked analysis, learning outcomes. |
+| user_preferences | Scoped preferences/source IDs. |
+| _system_database_knowledge | Candidates, confirmations, active rules, references, embeddings. |
+| _system_query_performance | Structural statistics and choices. |
+| _system_query_templates | Structure, parameters, source/semantic text, schema/trust/success metadata, vectors. |
+| _system_pending_queries | Retained optimization/pagination state with one-hour expiry. |
+| _system_template_decisions | Suggestion/decision state with one-hour expiry. |
+
+Collections/indexes are created when needed. Expiring state uses TTL indexes plus explicit expiry checks; physical TTL deletion may be delayed. Long-lived history/learning records have no general configurable automatic retention policy.
+
+Generated business queries are read-only; infrastructure writes are intentional. Use least-privilege permissions supporting both. Internal collection names and _system_ prefixes are excluded from discovery and blocked by validation.
+
+Ordinary business documents are not embedded for schema discovery. Questions/query values reach model services when needed, and ResultsSummaryAgent sends up to ten result sample rows plus row count when summarizing. Parameter extraction can send source/parameter context too.
+
+History stores bounded previews, not full result sets. Safety helpers redact credential-like field names and configured secret values in persisted history/feedback and analyzer context. This is not comprehensive business-data anonymization. Optional LangSmith tracing can capture instrumented inputs/outputs. API responses can include schema, concrete queries, results, and diagnostic errors.
+
+The application has one shared key and configured user scope, without per-person identity, field/collection access policy, or multi-tenant isolation. CORS does not replace authorization. Health and documentation remain public when API_KEY is set.
+
+## Project structure
+
+~~~text
+mongo-db-interrogator/
+  main_api.py              FastAPI entry module
+  orchestrator.py          Active query workflow
+  agent/                   Config, LLM routing, output contracts, prompt loader,
+                           telemetry, tracing, stage events
+  agents/                  Context, generation/repair, validation, execution,
+                           summary, enrichment, feedback analysis
+  api/                     App creation, schemas, shared-key dependency
+    routers/               Query/stream/continuation, feedback, health
+  database/                Mongo client, schema inspector, BSON codec,
+                           record safety, repositories
+  services/                Schema/bootstrap/retrieval, history/feedback,
+                           preferences/knowledge, cost/performance,
+                           optimization, templates, binding/extraction
+  prompts/                 External text prompts
+  frontend/                Angular 21 standalone application
+    src/app/               Main component, styles/template, API service
+    src/environments/      Compiled browser configuration
+    tests/                 Playwright browser fixtures
+    dist/                  Generated build output
+  tests/                   Pytest checks and fakes
+  docker/                  Runtime preflight and health probe
+  Dockerfile               Python image including frontend folder
+  .dockerignore            Build-context exclusions
+  .env.example             Configuration template
+  requirements.txt         Python dependency ranges
+~~~
+
+agent/ contains infrastructure; agents/ contains workflow roles. Legacy router, schema-selector, planner, and Python-artifact classes/prompts remain but are not called by the active workflow. Python artifact execution is not an active feature.
+
+Additional Docker notes are in [DOCKER.md](DOCKER.md). That document includes an earlier implementation report; current setup is described here. Its older statements that the frontend is excluded are superseded by the current Dockerfile.
+
+## Development and testing
+
+### Backend
+
+From the root:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m pytest -q
+~~~
+
+Or with the environment activated:
+
+~~~bash
+python -m pytest -q
+~~~
+
+Tests cover validation, pipeline/routing contracts, prompts, diagnostics, knowledge modes, feedback/preferences, templates, and streaming. They use mocked models/MongoDB fakes. tests/conftest.py disables external trace export. API tests use httpx; if it is absent from your resolved dependencies, install it as a test dependency.
+
+During this documentation update, the backend run produced **163 passed and 17 failed**. Failures included obsolete orchestrator monkeypatch targets, old potential_global feedback expectations, and planner-role tests. This reports the checked workspace, not guaranteed results for every dependency/environment. Documentation changes do not resolve those test failures.
+
+Mocked tests do not establish live MongoDB/model access, interpretation quality, cost, or latency.
+
+### Frontend
+
+Inside frontend:
+
+~~~bash
+npm run build
+npm run test:smoke
+node tests/template-cache.mjs
+~~~
+
+Browser fixtures use a local mock API and test streaming, feedback/regeneration/recovery, dynamic/nested tables, query inspection, template decisions, and mobile layouts. They do not call MongoDB/OpenAI.
+
+Windows defaults to the Edge path configured in the fixtures. Set BROWSER_PATH to an existing Chromium-based browser if needed. On other platforms, install Playwright Chromium if absent:
+
+~~~bash
+npx playwright install chromium
+~~~
+
+Screenshots are written under frontend/test-results/. ANGULAR_DEV_URL can point the smoke fixture at a running Angular dev server. These are runner environment variables, not backend configuration.
+
+### Prompts and dependency management
+
+Active prompts: query_context.txt, query_generator.txt, query_repair.txt, results_summary.txt, schema_enrichment.txt, feedback_analysis.txt. Variants go under prompts/<variant>/; missing files fall back to base prompts. Parameter extraction builds its own strict typed contract.
+
+Restart after changes to cached prompts/config. Keep agent/output_schemas.py, api/schemas.py, parameter binding/validation, and frontend handling consistent when changing response shapes. Run relevant tests and rebuild Angular after browser changes.
+
+Python dependencies use ranges without a pinned lockfile, so fresh installs can resolve different versions. Frontend uses its package lock with npm ci.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| Docker engine unavailable | Start Docker Desktop/daemon with Linux containers. |
+| Container exits naming missing settings | Supply OPENAI_API_KEY, MONGODB_URI, MONGODB_DATABASE via --env-file. |
+| MongoDB connection timeout | Check URI, host/port reachability, credentials/TLS, network allowlist, and server bind address. |
+| Health degraded/readiness 503 | Check database, bootstrap error type, model access, internal writes/index permissions; allow bootstrap to finish. |
+| Query returns 503 | Schema is not ready; inspect /health, /ready, and logs. |
+| Root shows JSON instead of UI | Build frontend/dist then restart backend or rebuild/recreate image. |
+| Static assets return 404 | Verify build exists before startup and the /static mount is registered. |
+| PowerShell blocks npm.ps1 | Use npm.cmd. |
+| API returns 401 | Send correct application key; set browser session key and reload. |
+| Browser cannot reach backend | Check compiled apiBaseUrl, proxy target, port, and CORS origins. |
+| Progress arrives all at once | Disable proxy buffering and allow long-lived POST SSE. |
+| Model request fails | Check key, model identifier/account access, quota/network/timeouts; no automatic model fallback. |
+| Structured output rejected | Inspect safe validation details/finish reason, simplify the question, or adjust prompts. |
+| Valid field reported unknown | Sparse sampling may have missed it; increase samples and rebuild schema. |
+| Run anyway still times out | Narrow filters/dates or simplify joins/grouping/sorting; output caps do not bound upstream work. |
+| Feedback returns 404 | Use actual request ID and verify history persisted in the same database. |
+| Feedback saved without improvement | Inspect analysis/learning outcomes; one-off corrections are not promoted and candidates may be inactive. |
+| Immediate mode does not activate rules | Enable automatic promotion too; confidence/eligibility/conflict checks still apply. |
+| No template suggestion | Check enabled cache, successful/trusted templates, embeddings/version, operation compatibility, and thresholds. |
+| Template reuse returns 422 | Choose Regenerate after unsafe extraction or failed validation. |
+| Decision/continuation returns 409 | State may be expired/claimed/handled; submit a new question when necessary. |
+| Docker token logging fails | Ensure mounted output is writable by UID/GID 10001. |
+| Browser fixture cannot launch | Set BROWSER_PATH or install Playwright Chromium. |
+
+## Current limitations
+
+- One database/user scope per deployment; no login or multi-tenant authorization.
+- Sampled schema/relationship discovery can miss sparse fields and is not a formal complete schema.
+- Generated interpretations can be incorrect; inspect queries/results and clarify business definitions.
+- Summaries use up to ten sample rows, not an independent full-dataset analysis.
+- Validation is a guard, not complete authorization or exhaustive proof of aggregation semantics.
+- Caps/timeouts/disabled disk use can truncate or reject large analyses; Run anyway retains them.
+- No bundled MongoDB/data, Docker Compose stack, Angular compilation stage, or specified public image.
+- No public history browser, schema refresh API, or rule administration interface.
+- In-process vector ranking needs capacity/latency evaluation for large template sets.
+- Backend dependencies are not locked, and live integration verification remains necessary.
+- Legacy files remain; they do not describe active functionality.
