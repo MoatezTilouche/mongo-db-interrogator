@@ -20,7 +20,7 @@ For a local backend setup:
 
 ```bash
 git clone <repository-url>
-cd data_pilot_backend
+cd mongo-db-interrogator
 python -m venv .venv
 ```
 
@@ -53,7 +53,7 @@ Then open:
 
 - `http://localhost:8000/docs` for Swagger
 - `http://localhost:8000/health` for health/schema status
-- `http://localhost:8000/` for the built frontend when available
+- `http://localhost:4200/` for the separately started frontend
 
 For the full setup, frontend build, Docker usage, and configuration details, continue with the sections below.
 
@@ -119,7 +119,7 @@ For the full setup, frontend build, Docker usage, and configuration details, con
 
 \| Observability | Return usage/timing/cache metrics and operational traces; optionally export traces and token logs. |
 
-\| Docker | Package backend and frontend folder, run as a non-root user, and check database/schema readiness. |
+\| Docker | Separate backend and frontend images with Compose, API proxying, and health checks. |
 
 
 
@@ -167,7 +167,7 @@ For the frontend, use Node.js/npm compatible with the pinned Angular 21.2 packag
 
 
 
-For Docker, run Docker's Linux container engine. The image does not start MongoDB, install Node.js, or compile Angular. Build Angular on the host before building an image that should serve the UI.
+For Docker, run Docker's Linux container engine. The separate frontend image compiles Angular; the backend image contains Python. MongoDB is configured externally.
 
 
 
@@ -351,7 +351,7 @@ Startup inspects MongoDB and loads/builds the schema index before Uvicorn finish
 
 \| --- | --- |
 
-\| http\://localhost:8000/ | Built frontend, or JSON with API links if no build exists. |
+\| http\://localhost:8000/ | API service information (the frontend runs separately). |
 
 \| http\://localhost:8000/docs | Interactive Swagger documentation. |
 
@@ -363,204 +363,50 @@ Startup inspects MongoDB and loads/builds the schema index before Uvicorn finish
 
 
 
-### 4. Install and build Angular
+### 4. Run the separate Angular frontend
 
-
-
-In another terminal:
-
-
+The frontend repository is beside this backend, in `../data_pilot_frontend`. Its Angular project is inside `frontend/`:
 
 ```bash
-
-cd frontend
-
+cd ../data_pilot_frontend/frontend
 npm ci
-
-npm run build
-
-```
-
-
-
-Use npm.cmd instead of npm on PowerShell installations that block the npm script shim.
-
-
-
-The build writes to frontend/dist, with asset URLs under /static/. Start or restart the backend after building so it registers the static-files mount. Open http\://localhost:8000/.
-
-
-
-For frontend development, run inside frontend:
-
-
-
-```bash
-
 npm start
-
 ```
 
+Open http://127.0.0.1:4200 and keep the backend running on port 8000. The development proxy forwards query, feedback, and health requests. Use `npm.cmd` on PowerShell if the npm script shim is blocked.
 
+Run `npm run build` to compile production assets. The backend no longer serves Angular or reads a frontend folder. The frontend Docker image builds and serves Angular independently, preserving its `/static/` asset URLs.
 
-Open http\://127.0.0.1:4200/ and keep the backend running separately. The development proxy forwards /query and its subpaths, /feedback, and /health to http\://127.0.0.1:8000. Open readiness/docs directly on port 8000.
-
-
-
-Frontend configuration is in frontend/src/environments/environment.ts:
-
-
-
-```typescript
-
-export const environment = {
-
-  apiBaseUrl: '',
-
-  useStreaming: true
-
-};
-
-```
-
-
-
-An empty API URL uses the current origin or development proxy. For a separately hosted UI, set the backend URL, allow that origin in backend CORS, and rebuild Angular. Browser settings are compiled into the build; container environment variables do not change them.
-
-
+`frontend/src/environments/environment.ts` in the frontend repository uses an empty `apiBaseUrl`: requests use the development proxy locally and Nginx in Docker. No API URL rebuild is needed for Docker. A separately hosted UI without this proxy needs a configured API URL and matching backend CORS settings.
 
 ## Docker installation
 
-
-
-The root Dockerfile uses python:3.12-slim, installs requirements.txt, copies backend code and the frontend folder, and serves port 8000 as UID/GID 10001. It includes an existing frontend/dist build but does not create one.
-
-
-
-### Build and run
-
-
-
-To include the UI:
-
-
+The backend and frontend each have their own Dockerfile and `compose.yaml`. Start the backend first to create the shared `data-pilot` network:
 
 ```bash
+# From mongo-db-interrogator, with .env configured:
+docker compose up -d --build
 
-cd frontend
-
-npm ci
-
-npm run build
-
-cd ..
-
-docker build -t mongo-db-interrogator:latest .
-
+# In a second terminal, from the frontend repository:
+cd ../data_pilot_frontend
+docker compose up -d --build
 ```
 
+Open http://localhost:4200 for Angular and http://localhost:8000/docs for the API. Both published ports bind to the local machine by default. Set `FRONTEND_PORT` or `BACKEND_PORT` in the respective Compose environment to change them.
 
+The backend image contains Python only and runs as UID/GID 10001. The frontend uses a Node build stage and an Nginx runtime, proxies API requests to `http://backend:8000`, and disables buffering for SSE. Nginx resolves the backend through Docker DNS so backend container recreation is supported. `BACKEND_URL` can override the upstream at frontend startup; use a URL without a trailing slash or path prefix. Restart/recreate the frontend after changing it.
 
-For API-only use, run just docker build from the root. Existing frontend/dist files, if present, are also copied. Frontend source remains in the image; node_modules is excluded.
+Configure backend `.env` with `OPENAI_API_KEY`, `MONGODB_DATABASE`, and `MONGODB_URI`. For MongoDB on the host, use `mongodb://host.docker.internal:27017`; Compose includes the host gateway mapping. MongoDB must listen on a reachable interface. No MongoDB server or business dataset is bundled; remote MongoDB/Atlas also works.
 
-
-
-Create .env using the instructions above. For MongoDB on the Docker Desktop host:
-
-
-
-```dotenv
-
-MONGODB_URI=mongodb://host.docker.internal:27017
-
-MONGODB_DATABASE=your_database
-
-OPENAI_API_KEY=your-openai-api-key
-
-```
-
-
-
-Run:
-
-
+Artifacts persist in a named volume at `/app/data/artifacts`. Backend health checks require database connectivity and schema readiness. Frontend health checks test Nginx only; `/health` and `/ready` through the frontend report backend status.
 
 ```bash
-
-docker run --rm --name mongo-db-interrogator -p 8000:8000 --env-file .env mongo-db-interrogator:latest
-
+# Run in either repository:
+docker compose logs -f
+docker compose down
 ```
 
-
-
-Open http\://localhost:8000/ or /docs. A container's localhost points to itself. On Linux Docker Engine, host access by that name may require --add-host=host.docker.internal:host-gateway, and MongoDB must listen on a reachable interface. Alternatively, use a remote URI or a MongoDB container's name on a shared Docker network.
-
-
-
-Detached operation:
-
-
-
-```bash
-
-docker run -d --name mongo-db-interrogator -p 8000:8000 --env-file .env mongo-db-interrogator:latest
-
-docker logs -f mongo-db-interrogator
-
-docker inspect --format '{{.State.Health.Status}}' mongo-db-interrogator
-
-docker stop mongo-db-interrogator
-
-```
-
-
-
-Remove the stopped container with docker rm mongo-db-interrogator before reusing its name. Recreate containers after changing --env-file; restarting the same container does not reload the file. Rebuild for changed source or compiled frontend.
-
-
-
-The entrypoint requires non-empty OPENAI_API_KEY, MONGODB_URI, and MONGODB_DATABASE. The healthcheck requires status=ok, database=up, and schema_ready=true. It runs every 30 seconds, with a 10-second timeout, 180-second startup grace period, and three retries. Use a longer --health-start-period such as 10m for lengthy bootstrap. Docker health status alone does not restart a container.
-
-
-
-### Persistence and distribution
-
-
-
-Application state persists in MongoDB; no volume is needed for normal caches/history/learning. To preserve optional token logs, enable TOKEN_USAGE_LOG_ENABLED and mount /app/data:
-
-
-
-```bash
-
-docker run --rm -p 8000:8000 --env-file .env -v mongo_interrogator_logs\:/app/data mongo-db-interrogator:latest
-
-```
-
-
-
-Existing volumes/bind mounts must allow writes by UID/GID 10001. Credentials are supplied at runtime. .dockerignore excludes .env files, keys, virtual environments, Git metadata, tests, and node_modules. The Dockerfile does not copy runtime .env files into layers.
-
-
-
-To publish a built image, replace the namespace/version:
-
-
-
-```bash
-
-docker tag mongo-db-interrogator:latest YOUR_NAMESPACE/mongo-db-interrogator:1.0.0
-
-docker push YOUR_NAMESPACE/mongo-db-interrogator:1.0.0
-
-```
-
-
-
-After publication, users can pull/run that image with their own --env-file without installing Python or Node. This repository does not specify a published image. Build Angular before publishing if the image should include a usable UI.
-
-
-
+Stop the frontend before stopping the backend because its shared network is external. `down` preserves the artifact volume. See [DOCKER.md](DOCKER.md) and the separate frontend README for build/run details.
 ## Using the web interface
 
 
@@ -1473,7 +1319,7 @@ mongo-db-interrogator/
 
   prompts/                 External text prompts
 
-  frontend/                Angular 21 standalone application
+  ../data_pilot_frontend/frontend/  Separate Angular application
 
     src/app/               Main component, styles/template, API service
 
@@ -1487,7 +1333,7 @@ mongo-db-interrogator/
 
   docker/                  Runtime preflight and health probe
 
-  Dockerfile               Python image including frontend folder
+  Dockerfile               Python backend image
 
   .dockerignore            Build-context exclusions
 
@@ -1503,7 +1349,7 @@ agent/ contains infrastructure; agents/ contains workflow roles. Legacy router, 
 
 
 
-Additional Docker notes are in [DOCKER.md]\(DOCKER.md). That document includes an earlier implementation report; current setup is described here. Its older statements that the frontend is excluded are superseded by the current Dockerfile.
+Additional Docker notes are in [DOCKER.md](DOCKER.md). The frontend is built and deployed independently.
 
 
 
@@ -1557,7 +1403,7 @@ Mocked tests do not establish live MongoDB/model access, interpretation quality,
 
 
 
-Inside frontend:
+Inside ../data_pilot_frontend/frontend:
 
 
 
@@ -1589,7 +1435,7 @@ npx playwright install chromium
 
 
 
-Screenshots are written under frontend/test-results/. ANGULAR_DEV_URL can point the smoke fixture at a running Angular dev server. These are runner environment variables, not backend configuration.
+  Screenshots are written under ../data_pilot_frontend/frontend/test-results/. ANGULAR_DEV_URL can point the smoke fixture at a running Angular dev server. These are runner variables, not backend configuration.
 
 
 
@@ -1660,9 +1506,9 @@ Before opening a merge request, run the relevant backend/frontend tests and rebu
 
 \| Query returns 503 | Schema is not ready; inspect /health, /ready, and logs. |
 
-\| Root shows JSON instead of UI | Build frontend/dist then restart backend or rebuild/recreate image. |
+\| Root shows JSON instead of UI | Start the separate frontend and open port 4200. |
 
-\| Static assets return 404 | Verify build exists before startup and the /static mount is registered. |
+\| Static assets return 404 | Rebuild the frontend image and check Nginx serves /static/ assets. |
 
 \| PowerShell blocks npm.ps1 | Use npm.cmd. |
 
@@ -1714,7 +1560,7 @@ Before opening a merge request, run the relevant backend/frontend tests and rebu
 
 \- Caps/timeouts/disabled disk use can truncate or reject large analyses; Run anyway retains them.
 
-\- No bundled MongoDB/data, Docker Compose stack, Angular compilation stage, or specified public image.
+\- No bundled MongoDB/data or specified public image.
 
 \- No public history browser, schema refresh API, or rule administration interface.
 

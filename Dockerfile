@@ -19,7 +19,6 @@ COPY api/ ./api/
 COPY database/ ./database/
 COPY services/ ./services/
 COPY prompts/ ./prompts/
-COPY frontend/ ./frontend/
 COPY main_api.py orchestrator.py ./
 COPY docker/ ./docker/
 

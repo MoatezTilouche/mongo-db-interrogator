@@ -1,5 +1,4 @@
 import json
-import re
 from types import SimpleNamespace
 
 import pytest
@@ -33,12 +32,10 @@ def test_stream_delivers_real_progress_and_result(monkeypatch):
 
     app.dependency_overrides[get_query_history_service] = lambda: SimpleNamespace(run=run)
     with TestClient(app) as client:
-        page = client.get("/")
-        assert page.status_code == 200
-        assert "<app-root>" in page.text
-        script = re.search(r'src="(/static/[^\"]+\.js)"', page.text)
-        assert script is not None
-        assert client.get(script.group(1)).status_code == 200
+        root = client.get("/")
+        assert root.status_code == 200
+        assert root.json()["service"] == "mongo-db-interrogator"
+        assert client.get("/static/index.html").status_code == 404
         response = client.post("/query/stream", json={"question": "Count customers"})
         assert response.status_code == 200
         frames = [frame for frame in response.text.split("\n\n") if frame]

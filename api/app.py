@@ -4,9 +4,6 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pathlib import Path
 
 from api.routers.health import router as health_router
 from api.routers.query import router as query_router
@@ -45,18 +42,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    frontend = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-    if frontend.is_dir():
-        app.mount("/static", StaticFiles(directory=frontend), name="frontend")
-
-    @app.get("/", include_in_schema=False)
-    def home():
-        if not (frontend / "index.html").is_file():
-            return {"service": "mongo-db-interrogator", "docs": "/docs",
-                    "health": "/health", "ready": "/ready", "frontend": "served separately"}
-        return FileResponse(frontend / "index.html")
-
-    # Register the page before the legacy health router's JSON root route.
     app.include_router(health_router)
     app.include_router(query_router)
     app.include_router(feedback_router)
