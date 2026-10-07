@@ -21,6 +21,7 @@ from services.aggregation_validation import normalize_lookups, normalization_con
 from agents.results_summary_agent import ResultsSummaryAgent
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
+from services.optimization_intent import effective_question
 logger = logging.getLogger(__name__)
 
 def is_new_intent(refinement):
@@ -32,7 +33,8 @@ class QueryOptimizationService:
         try:
             fields = {key: result.get(key) for key in ("status", "query_signature", "cost_analysis", "optimization",
                 "optimization_iteration", "optimization_history", "validated_query", "generated_query", "query_template_id", "query_parameters", "execution_success", "execution_error",
-                "execution_error_code", "execution_metadata", "final_response", "execution_trace")}
+                "execution_error_code", "execution_metadata", "final_response", "execution_trace",
+                "original_question", "effective_question", "scope_refined", "learned_optimization")}
             fields["cost_guard"] = result.get("cost_analysis")
             fields["execution_metrics"] = result.get("execution_metadata")
             if result.get("execution_metadata") is not None:
@@ -80,6 +82,7 @@ class QueryOptimizationService:
             logger.info("query_optimization_context_loaded request_id=%s", request_id)
             previous = deepcopy(result["validated_query"])
             previous_cost = result["cost_analysis"]
+            prior_question = result.get("effective_question") or pending["question"]
             iteration = pending.get("optimization_iteration", 0)
             history = pending.get("optimization_history", [])
             natural = choice in {"refine", "narrow_date"} or (choice == "summary" and previous["operation"] != "find")
@@ -107,7 +110,7 @@ class QueryOptimizationService:
                     logger.info("query_optimization_generator_started request_id=%s", request_id)
                     emit("QueryGeneratorAgent", "running", message="Refining existing query; context reused")
                     generated = stage("QueryGeneratorAgent", QueryGeneratorAgent().optimize,
-                        pending["question"], result.get("query_context"), result["schema_spec"], previous,
+                        prior_question, result.get("query_context"), result["schema_spec"], previous,
                         intent, result.get("applied_preferences"), result.get("applied_knowledge"))
                     query = stage("QueryParameterBinder", bind_query_parameters, generated["template"], generated["parameters"])
                     saved_preferences = result.get("applied_preferences") or []
@@ -173,6 +176,7 @@ class QueryOptimizationService:
                     query = repair_candidate(query, str(exc))
                 logger.info("query_optimization_validation_completed request_id=%s", request_id)
                 generated = parameterize_filter_values(reconcile_template(generated, query))
+                scoped_question = effective_question(prior_question, choice, query, intent if natural else None, payload.page)
                 cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                 cost["previous_estimated_rows"] = previous_cost.get("estimated_rows")
                 emit("QueryCostGuard", "completed", message=f"{cost['status']}; estimated rows: {cost.get('estimated_rows', 'unknown')}")
@@ -183,12 +187,15 @@ class QueryOptimizationService:
                     "previous_estimated_rows": previous_cost.get("estimated_rows"), "new_estimated_rows": cost.get("estimated_rows")}
                 if pending["state"] != "paged": history = history + [deepcopy(optimization)]
                 result.update({"query_signature": cost["query_signature"], "cost_analysis": cost,
+                    "original_question": result.get("original_question") or pending["question"],
+                    "effective_question": scoped_question,
+                    "scope_refined": result.get("scope_refined", False) or scoped_question != prior_question,
                     "generated_query": generated, "query_parameters": generated["parameters"], "query_template_id": None, "validated_query": query, "optimization": optimization,
                     "optimization_iteration": iteration, "optimization_history": history,
                     "execution_trace": trace})
                 if cost["status"] == "heavy" and choice != "run_anyway":
                     logger.info("query_optimization_still_heavy request_id=%s", request_id)
-                    result.update(stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost))
+                    result.update(stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost, result["schema_spec"]))
                     if iteration >= QUERY_MAX_OPTIMIZATION_ITERATIONS:
                         result["suggestions"] = [item for item in result["suggestions"] if item["id"] not in {"refine", "narrow_date", "summary"}]
                         result["message"] = "This request is still large. Choose pagination, a result limit, run anyway, or submit a more specific new question."
@@ -212,7 +219,7 @@ class QueryOptimizationService:
                     result.update({"generated_query": generated, "query_parameters": generated["parameters"],
                                    "validated_query": query, "cost_analysis": cost, "query_signature": cost["query_signature"]})
                     if cost["status"] == "heavy" and choice != "run_anyway":
-                        result.update(stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost))
+                        result.update(stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost, result["schema_spec"]))
                         result.update({"status": "optimization_required", "execution_success": False})
                         c.update_one({"_id": request_id, "claim": claim}, {"$set": encode_record({
                             "state": "pending", "result": result, "optimization_iteration": iteration, "optimization_history": history})})
@@ -221,13 +228,15 @@ class QueryOptimizationService:
                     execution = stage("ExecutorAgent", ExecutorAgent().execute, query)
                     PerformanceLogger().record(query, cost, execution, optimization)
                 if execution.get("ok") and query["operation"] == "aggregate" and execution.get("row_count"):
-                    summary = stage("ResultsSummaryAgent", ResultsSummaryAgent().summarize, pending["question"], execution)
+                    summary = stage("ResultsSummaryAgent", ResultsSummaryAgent().summarize, scoped_question, execution)
                 else:
                     rows = execution.get("all_rows", [])
                     summary = {"summary_text": f"Count: {rows[0]['count']}." if query["operation"] == "count_documents" and rows else f"Found {len(rows)} results."}
                     emit("ResultsSummaryAgent", "skipped", message="Deterministic summary used")
             if not execution.get("ok"):
                 summary = {"summary_text": execution.get("error") if execution.get("error_code") == "query_timeout" else "The query could not be executed. Refine the request and try again."}
+            if pending["state"] != "paged":
+                PerformanceLogger().record_optimization(previous, query, previous_cost, cost, execution, optimization)
             result.update({"status": "completed", "execution_success": execution["ok"],
                 "execution_result": execution["all_rows"], "execution_error": execution.get("error"),
                 "execution_error_code": execution.get("error_code"),

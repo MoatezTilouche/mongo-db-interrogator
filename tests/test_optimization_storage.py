@@ -74,6 +74,7 @@ def setup_service(monkeypatch, still_heavy=False):
     monkeypatch.setattr(module.QueryCostGuard, "analyze", Mock(return_value={
         "status": "heavy" if still_heavy else "safe", "query_signature": "sig", "estimated_rows": 1000}))
     monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
+    monkeypatch.setattr(module.PerformanceLogger, "record_optimization", Mock())
     return service, pending, history, result, executor
 
 
@@ -218,3 +219,16 @@ def test_optimized_execution_repair_is_revalidated_and_cost_checked(monkeypatch)
     assert result["execution_success"]
     assert executor.call_count == 2 and module.QueryCostGuard.analyze.call_count == 2
     repair.assert_called_once()
+
+
+def test_refinement_history_preserves_both_intents_and_source_learning_query(monkeypatch):
+    service, _, history, original, _ = setup_service(monkeypatch)
+    result = service.continue_query("req_test", payload("refine"))
+    assert result["original_question"] == "Show available inventory"
+    assert "Refinement: Only available inventory" in result["effective_question"]
+    saved = decode_record(history.records["req_test"])
+    assert saved["effective_question"] == result["effective_question"]
+    assert saved["scope_refined"]
+    learning = module.PerformanceLogger.record_optimization.call_args.args
+    assert learning[0] == original["validated_query"]
+    assert learning[1] == result["validated_query"]

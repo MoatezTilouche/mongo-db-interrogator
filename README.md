@@ -1576,7 +1576,35 @@ Before opening a merge request, run the relevant backend/frontend tests and rebu
 
 \- Legacy files remain; they do not describe active functionality.
 
-## Maintainers
+## Optimization learning
+
+Optimization learning records outcome counters under the original query pattern,
+including the optimized signature, successful/failed executions and scope-preserving
+successes. When an exact original-pattern execution baseline exists, it records
+the observed time change against that historical average; without a baseline it
+does not claim a measured speedup. Suggestions rank successful outcomes ahead of
+frequently chosen failures and explain expected impact and result-scope changes.
+Planner-only explain supplies index/collection-scan evidence when available;
+missing explain permission does not block normal execution.
+
+`QUERY_LEARNED_OPTIMIZATION_ENABLED=true` enables automatic output-only lookup
+deferral after an existing top-N. `QUERY_LEARNED_OPTIMIZATION_MIN_SUCCESSES=2`
+requires two scope-preserving successful executions, with no recorded failures
+or measured regression. The transformation is recomputed for the current query,
+normalized, validated and cost-checked; previous filter values are never replayed.
+Computed-stage dependencies, unwinds, dependent sorts/filters, dotted aliases and
+unsupported join forms prevent the rewrite. Limits, summaries and date/filter
+refinements require the user's current choice. Existing frequency counters alone
+cannot enable automatic optimization; fresh outcome evidence is required.
+
+Optimization history now keeps `original_question` and `effective_question`.
+Positive feedback saves the optimized template against its effective intent.
+Scope-changing refinements use a separate template identity and a strict scope
+compatibility check: normalized refined wording must match, with identifier/date/
+number substitutions allowed. They cannot be reused for broader or differently
+worded requests merely because embeddings are similar. Existing templates are
+not retroactively relabeled; inaccurate legacy templates should be retired and
+saved again from a correctly scoped result.
 
 Aggregation compatibility uses `MONGO_SUPPORTS_LOOKUP_PIPELINE_WITH_LOCAL_FOREIGN=false`
 by default. Enable it only after confirming support in the deployment, including
@@ -1597,6 +1625,8 @@ Nonempty foreign pipelines go to repair: sampled schema types cannot prove that
 an `$expr: {$eq: ...}` rewrite preserves array-element and missing-key semantics.
 Structural validation does not prove that every expression or business meaning
 is correct; deployment integration testing remains necessary.
+
+## Maintainers
 
 **Data Pilot team**
 

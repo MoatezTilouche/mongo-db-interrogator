@@ -442,3 +442,25 @@ def test_repeated_failures_invalidate_template():
     collection.find_one_and_update.return_value = {"reuse_failure_count": 3}
     QueryTemplateRepository({QUERY_TEMPLATES_COLLECTION: collection}).record_failure("tpl_test")
     assert collection.update_one.call_args.args[1]["$set"]["status"] == "invalid"
+
+
+def test_refined_template_rejects_broader_request_and_accepts_changed_parameter():
+    doc = document()
+    doc.update(scope_refined=True, source_question=SOURCE + "\nRefinement: Only active records")
+    assert SemanticTemplateCache.compatibility_reason(doc, SOURCE, {"orders"}) == "refined_scope_mismatch"
+    assert SemanticTemplateCache.compatible(doc, NEW + "\nRefinement: Only active records", {"orders"})
+
+
+def test_refined_template_identity_is_separate_from_broad_query_with_same_structure(monkeypatch):
+    collection = Mock()
+    repository = QueryTemplateRepository({QUERY_TEMPLATES_COLLECTION: collection})
+    monkeypatch.setattr(repository, "ensure_embedding", Mock())
+    doc = document()
+    generated = {"template": doc["template"], "parameters": {"filter_commandId": "CMD-000009350132"}}
+    broad_id = repository.record_success(generated, "req_broad", SOURCE, doc["schema_spec"])
+    refined_id = repository.record_success(generated, "req_refined", SOURCE + "\nRefinement: Only active records",
+                                           doc["schema_spec"], scope_refined=True)
+    assert broad_id != refined_id
+    changed = {"template": doc["template"], "parameters": {"filter_commandId": "CMD-000009999999"}}
+    assert repository.record_success(changed, "req_other", NEW + "\nRefinement: Only active records",
+                                     doc["schema_spec"], scope_refined=True) == refined_id

@@ -43,6 +43,7 @@ def operation_compatible(document, question):
     source = document.get("source_question")
     if isinstance(source, str) and source.strip() and (
         " ".join(source.casefold().split()) == " ".join(question.casefold().split())
+        or document.get("scope_refined") and normalized_question(source) == normalized_question(question)
     ):
         # A keyword hint describes wording, not the MongoDB implementation.
         # The successfully executed, approved template for this exact question
@@ -159,6 +160,10 @@ class SemanticTemplateCache:
             if document.get("trusted") is False: return "untrusted_template"
             if document.get("success_count", 0) < 1: return "no_successful_execution"
             if document.get("positive_feedback_count", 0) < 1: return "no_positive_feedback"
+            # A saved refinement is explicit user scope, not a general preference.
+            # Parameter changes are allowed; omitted refinement requirements aren't.
+            if document.get("scope_refined") and normalized_question(question) != normalized_question(document.get("source_question", "")):
+                return "refined_scope_mismatch"
             if not operation_compatible(document, question): return "operation_mismatch"
             if not document.get("source_question") or not document.get("semantic_text"): return "missing_semantic_metadata"
             if not document.get("collections") or not set(document["collections"]) <= collections: return "collection_missing"

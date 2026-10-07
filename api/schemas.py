@@ -23,6 +23,10 @@ class QueryResponse(BaseModel):
     query_template_id: str | None = None
     query_parameters: dict[str, Any] | None = None
     question: str | None = None
+    original_question: str | None = None
+    effective_question: str | None = None
+    scope_refined: bool = False
+    learned_optimization: dict[str, Any] | None = None
     message: str | None = None
     cost_analysis: dict[str, Any] | None = None
     query_signature: str | None = None

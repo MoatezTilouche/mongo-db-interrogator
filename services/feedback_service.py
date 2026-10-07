@@ -82,7 +82,9 @@ class FeedbackService:
                 schema = {"collections": history.get("selected_schema") or {},
                     "schema_version": history.get("schema_version")}
                 template_id = self.template_repository.record_success(
-                    history["generated_query"], request_id, history.get("question"), schema)
+                    history["generated_query"], request_id,
+                    history.get("effective_question") or history.get("question"), schema,
+                    **({"scope_refined": True} if history.get("scope_refined") else {}))
                 if template_id:
                     self.template_repository.set_feedback(template_id, request_id, user_id, True)
                     self.history_repository.update(request_id, {"query_template_id": template_id})

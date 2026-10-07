@@ -9,11 +9,12 @@ from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
-from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values
+from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values, template_from_concrete
 from services.query_cost_guard import QueryCostGuard
 from services.aggregation_validation import normalize_lookups, normalization_context
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
+from services.learned_optimization_service import LearnedOptimizationService
 
 _knowledge_retriever = KnowledgeRetriever()
 
@@ -85,6 +86,8 @@ class OrchestratorAgent:
         execution_time_ms = 0.0
         validation_errors: list[dict[str, Any]] = []
         agents_called: list[str] = []
+        learned_optimization = None
+        learning_original = learning_cost = None
         try:
             catalog = stage("Precheck", schema_bootstrap_service.get_catalog)
             state = schema_bootstrap_service.status()
@@ -180,9 +183,19 @@ class OrchestratorAgent:
             assert validated_query is not None
             generated_query = parameterize_filter_values(reconcile_template(generated_query, validated_query))
             cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
+            learning_original, learning_cost = validated_query, cost
+            validated_query, learned_optimization = stage("LearnedOptimization", LearnedOptimizationService().apply,
+                validated_query, cost, schema_spec, self.validator)
+            if learned_optimization:
+                intent = generated_query.get("semantic_intent")
+                generated_query = template_from_concrete(validated_query, "limit" in generated_query["parameters"])
+                if intent:
+                    generated_query["semantic_intent"] = intent
+                cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
             if cost["status"] == "heavy":
                 return {"status": "optimization_required", "question": question, "cost_analysis": cost,
-                        "query_signature": cost["query_signature"], **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, validated_query, cost),
+                        "learned_optimization": learned_optimization,
+                        "query_signature": cost["query_signature"], **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, validated_query, cost, schema_spec),
                         "schema_spec": schema_spec, "query_context": query_context, "generated_query": generated_query,
                         "validated_query": validated_query, "applied_preferences": preferences, "applied_knowledge": applied_knowledge}
             execution = stage("ExecutorAgent", self.executor.execute, validated_query)
@@ -212,7 +225,7 @@ class OrchestratorAgent:
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
                     if cost["status"] == "heavy":
                         return {"status": "optimization_required", "question": question, "cost_analysis": cost,
-                                "query_signature": cost["query_signature"], **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, validated_query, cost),
+                                "query_signature": cost["query_signature"], **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, validated_query, cost, schema_spec),
                                 "validated_query": validated_query, "generated_query": generated_query, "schema_spec": schema_spec,
                                 "query_context": query_context, "applied_preferences": preferences, "applied_knowledge": applied_knowledge}
                     execution = stage("ExecutorAgent", self.executor.execute, validated_query)
@@ -222,6 +235,9 @@ class OrchestratorAgent:
                     validation_errors.append(exc.to_dict())
                     raise
 
+            if learned_optimization:
+                PerformanceLogger().record_optimization(learning_original, validated_query, learning_cost,
+                                                        cost, execution, learned_optimization)
             template_id = None  # Reusable templates require explicit positive feedback.
             needs_summary = bool(execution.get("ok") and execution.get("row_count") and (
                 query_context["complexity"] == "complex" or validated_query["operation"] == "aggregate"
@@ -244,6 +260,7 @@ class OrchestratorAgent:
             logging.getLogger(__name__).debug("execution_path=%s", path)
             return {
                 "status": "completed", "cost_analysis": cost, "query_signature": cost["query_signature"],
+                "learned_optimization": learned_optimization,
                 "route": route,
                 "query_context": query_context,
                 "execution_path": path,

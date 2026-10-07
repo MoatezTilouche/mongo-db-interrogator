@@ -39,7 +39,7 @@ class QueryTemplateRepository:
     def __init__(self, database=None):
         self.database = database
 
-    def record_success(self, generated, request_id, question=None, schema_spec=None):
+    def record_success(self, generated, request_id, question=None, schema_spec=None, *, scope_refined=False):
         bind_query_parameters(generated["template"], generated["parameters"])
         template = generated["template"]
         # Never persist altered/redacted templates as if they were reusable.
@@ -75,12 +75,20 @@ class QueryTemplateRepository:
             search_text = normalized_question(question)
             if safe_record(intent) == intent and safe_record(schema) == schema:
                 metadata = {"source_question": question, "semantic_text": intent, "semantic_intent": intent,
+                    "scope_refined": scope_refined,
                     "semantic_search_text": search_text,
                     "user_id": DEFAULT_USER_ID, "status": "active", "trusted": True,
                     "schema_spec": schema, "schema_version": (schema_spec or {}).get("schema_version"),
                     "parameter_schema": describe_parameters(template, generated["parameters"], question)}
         if metadata and safe_record(metadata) != metadata:
             return None
+        if scope_refined:
+            if not metadata:
+                return None
+            # Parameterized query structure alone cannot distinguish a broader
+            # request from an explicitly narrowed scope using the same fields.
+            scoped_identity = signature + "\n" + normalized_question(question)
+            template_id = "tpl_" + hashlib.sha256(scoped_identity.encode("utf-8")).hexdigest()
         if metadata and not metadata.get("schema_version"):
             from services.schema_bootstrap_service import schema_bootstrap_service
             metadata["schema_version"] = schema_bootstrap_service.status().get("schema_version")
