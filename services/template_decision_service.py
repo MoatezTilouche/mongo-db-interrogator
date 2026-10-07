@@ -79,6 +79,16 @@ class TemplateDecisionService:
                     query = stage("QueryParameterBinder", bind_query_parameters, document["template"], parameters)
                     try:
                         schema_spec = template_validation_schema(document["schema_spec"])
+                        from services.user_preference_service import UserPreferenceService, apply_preferences_to_query
+                        preference_service = UserPreferenceService(user_id=DEFAULT_USER_ID)
+                        preference_catalog = {"collections": schema_spec.get("collections", {})}
+                        preferences = preference_service.retrieve_for_query(
+                            pending["question"], preference_catalog, request_id,
+                            selected_collections={query.get("collection")} if query.get("collection") else None,
+                        )
+                        applied_preferences = apply_preferences_to_query(
+                            query, preferences, DEFAULT_USER_ID, pending["question"],
+                        )
                         query = stage("ValidatorAgent", ValidatorAgent().validate, query, schema_spec)
                     except QueryValidationError:
                         cache["template_reuse_validation_failed"] = True
@@ -86,20 +96,35 @@ class TemplateDecisionService:
                         repository.record_failure(payload.template_id)
                         raise HTTPException(422, "Template failed validation. Choose Regenerate.") from None
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
+                    from services.learned_optimization_service import LearnedOptimizationService
+                    from services.query_parameter_binder import template_from_concrete
+                    learning_original, learning_cost = query, cost
+                    query, learned = stage("LearnedOptimization", LearnedOptimizationService().apply, query, cost, schema_spec)
+                    if learned:
+                        intent = generated.get("semantic_intent")
+                        generated = template_from_concrete(query, "limit" in generated["parameters"])
+                        if intent:
+                            generated["semantic_intent"] = intent
+                        parameters = generated["parameters"]
+                        cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                     result = {"request_id": request_id, "question": pending["question"],
+                        "effective_question": pending["question"], "scope_refined": document.get("scope_refined", False),
+                        "learned_optimization": learned,
                         "semantic_template_cache": cache, "generated_query": generated, "validated_query": query,
                         "schema_spec": schema_spec, "query_parameters": parameters,
-                        "query_template_id": payload.template_id, "cost_analysis": cost, "query_signature": cost["query_signature"],
-                        "applied_preferences": [], "applied_knowledge": [],
+                        "query_template_id": None if learned else payload.template_id, "cost_analysis": cost, "query_signature": cost["query_signature"],
+                        "applied_preferences": applied_preferences, "applied_knowledge": [],
                         "execution_path": {"route": "template_reuse", "agents_called": [], "summary_skipped": True, "repair_used": False}}
                     if cost["status"] == "heavy":
-                        result.update({"status": "optimization_required", **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost)})
+                        result.update({"status": "optimization_required", **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost, schema_spec)})
                         from services.query_optimization_service import QueryOptimizationService
                         QueryOptimizationService().pause(result, pending["question"])
                     else:
                         attempted_execution = True
                         execution = stage("ExecutorAgent", ExecutorAgent().execute, query)
                         PerformanceLogger().record(query, cost, execution)
+                        if learned:
+                            PerformanceLogger().record_optimization(learning_original, query, learning_cost, cost, execution, learned)
                         result.update({"status": "completed", "execution_success": execution["ok"],
                             "execution_result": execution.get("all_rows", []), "execution_error": execution.get("error"),
                             "execution_error_code": execution.get("error_code"), "execution_metadata": {
@@ -117,7 +142,8 @@ class TemplateDecisionService:
                             result["results_summary_agent_output"] = summary
                             result["final_response"] = summary.get("summary_text")
                         else:
-                            repository.record_failure(payload.template_id)
+                            if not learned:
+                                repository.record_failure(payload.template_id)
                     result["telemetry"] = {**totals(usage), "parameter_extraction_ms": extraction_ms,
                         "semantic_cache_lookup_ms": cache.get("semantic_cache_lookup_ms", 0), "parameter_extraction_method": method,
                         "semantic_template_cache_user_reuse": True,

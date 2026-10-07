@@ -32,7 +32,7 @@ class UserPreferenceRepository:
     def list_active(self, user_id: str, limit: int) -> list[dict[str, Any]]:
         cursor = self._collection().find(
             {"user_id": user_id, "scope": "user", "active": True},
-            {"_id": 0},
+            {},
         ).sort("updated_at", -1).limit(limit)
         return [safe_record(record) for record in cursor]
 

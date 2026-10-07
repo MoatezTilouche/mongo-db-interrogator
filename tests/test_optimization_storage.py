@@ -7,7 +7,7 @@ import pytest
 from pymongo.errors import WriteError
 
 from agent.config import QUERY_HISTORY_COLLECTION
-from database.storage_codec import decode_record
+from database.storage_codec import decode_record, encode_record
 from services.query_parameter_binder import template_from_concrete, parameterize_filter_values
 import services.query_optimization_service as module
 
@@ -74,6 +74,7 @@ def setup_service(monkeypatch, still_heavy=False):
     monkeypatch.setattr(module.QueryCostGuard, "analyze", Mock(return_value={
         "status": "heavy" if still_heavy else "safe", "query_signature": "sig", "estimated_rows": 1000}))
     monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
+    monkeypatch.setattr(module.PerformanceLogger, "record_optimization", Mock())
     return service, pending, history, result, executor
 
 
@@ -135,3 +136,99 @@ def test_aggregation_pause_preserves_stages_and_dotted_schema(monkeypatch):
         "generated_query": parameterize_filter_values(template_from_concrete(query))}
     service.pause(result, "Count inventory by status")
     assert decode_record(pending.records["req_aggregate"])["result"] == result
+
+
+def aggregation_service(monkeypatch, foreign_pipeline):
+    service, pending, history, original, executor = setup_service(monkeypatch)
+    monkeypatch.setattr(module.ResultsSummaryAgent, "summarize", Mock(return_value={"summary_text": "Joined records"}))
+    simple = {"from": "inventory_items", "localField": "parent", "foreignField": "_id", "as": "related"}
+    previous = {"operation": "aggregate", "collection": "inventory_items", "pipeline": [{"$lookup": simple}]}
+    original.update(validated_query=previous, generated_query=template_from_concrete(previous))
+    stored = decode_record(pending.records["req_test"])
+    stored["result"] = original
+    pending.records["req_test"] = encode_record(stored)
+    mixed = deepcopy(previous)
+    mixed["pipeline"][0]["$lookup"]["pipeline"] = foreign_pipeline
+    monkeypatch.setattr(module.QueryGeneratorAgent, "optimize", Mock(return_value=template_from_concrete(mixed)))
+    return service, executor, mixed
+
+
+def test_optimized_mixed_empty_lookup_is_normalized_before_execution(monkeypatch):
+    service, executor, _ = aggregation_service(monkeypatch, [])
+    repair = Mock()
+    monkeypatch.setattr(module.QueryGeneratorAgent, "repair", repair)
+    result = service.continue_query("req_test", payload("refine"))
+    lookup = result["validated_query"]["pipeline"][0]["$lookup"]
+    assert "pipeline" not in lookup
+    module.ValidatorAgent().validate(result["validated_query"], result["schema_spec"])
+    from services.query_parameter_binder import bind_query_parameters
+    assert bind_query_parameters(result["generated_query"]["template"], result["generated_query"]["parameters"]) == result["validated_query"]
+    repair.assert_not_called()
+    executor.assert_called_once_with(result["validated_query"])
+
+
+def test_optimized_lookup_repair_preserves_foreign_stages(monkeypatch):
+    foreign = [{"$match": {"active": True}}, {"$group": {"_id": "$category", "n": {"$sum": 1}}},
+               {"$sort": {"n": -1}}, {"$project": {"n": 1}}, {"$limit": 4}]
+    service, executor, mixed = aggregation_service(monkeypatch, foreign)
+    repaired = deepcopy(mixed)
+    lookup = repaired["pipeline"][0]["$lookup"]
+    del lookup["localField"], lookup["foreignField"]
+    lookup["let"] = {"parent_key": "$parent"}
+    lookup["pipeline"].insert(0, {"$match": {"$expr": {"$eq": ["$_id", "$$parent_key"]}}})
+    # This mocked model response asserts orchestration/contract preservation, not Mongo scalar semantics.
+    repair = Mock(return_value=template_from_concrete(repaired))
+    monkeypatch.setattr(module.QueryGeneratorAgent, "repair", repair)
+    order = []
+    cost_result = {"status": "safe", "query_signature": "sig", "estimated_rows": 1}
+    monkeypatch.setattr(module.QueryCostGuard, "analyze", lambda self, query: order.append("cost") or cost_result)
+    execute_result = executor.return_value
+    executor.side_effect = lambda query: order.append("execute") or execute_result
+    result = service.continue_query("req_test", payload("refine"))
+    final = result["validated_query"]["pipeline"][0]["$lookup"]
+    assert final["pipeline"][1:] == foreign and final["as"] == "related"
+    repair.assert_called_once()
+    assert order == ["cost", "execute"]
+    module.ValidatorAgent().validate(result["validated_query"], result["schema_spec"])
+
+
+@pytest.mark.parametrize("raw", [False, True])
+def test_invalid_optimization_repair_is_bounded_and_never_executed(monkeypatch, raw):
+    service, executor, mixed = aggregation_service(monkeypatch, [{"$match": {"active": True}}])
+    repair = Mock(return_value=mixed if raw else template_from_concrete(mixed))
+    monkeypatch.setattr(module.QueryGeneratorAgent, "repair", repair)
+    cost = Mock()
+    monkeypatch.setattr(module.QueryCostGuard, "analyze", cost)
+    with pytest.raises(module.QueryValidationError) as caught:
+        service.continue_query("req_test", payload("refine"))
+    assert caught.value.to_dict()["code"] == ("invalid_repair_output" if raw else "invalid_lookup_shape")
+    repair.assert_called_once()
+    executor.assert_not_called()
+    cost.assert_not_called()
+
+
+def test_optimized_execution_repair_is_revalidated_and_cost_checked(monkeypatch):
+    service, executor, mixed = aggregation_service(monkeypatch, [])
+    simple = deepcopy(mixed)
+    del simple["pipeline"][0]["$lookup"]["pipeline"]
+    repair = Mock(return_value=template_from_concrete(simple))
+    monkeypatch.setattr(module.QueryGeneratorAgent, "repair", repair)
+    success = executor.return_value
+    executor.side_effect = [{**success, "ok": False, "error": "Structural failure", "repairable": True}, success]
+    result = service.continue_query("req_test", payload("refine"))
+    assert result["execution_success"]
+    assert executor.call_count == 2 and module.QueryCostGuard.analyze.call_count == 2
+    repair.assert_called_once()
+
+
+def test_refinement_history_preserves_both_intents_and_source_learning_query(monkeypatch):
+    service, _, history, original, _ = setup_service(monkeypatch)
+    result = service.continue_query("req_test", payload("refine"))
+    assert result["original_question"] == "Show available inventory"
+    assert "Refinement: Only available inventory" in result["effective_question"]
+    saved = decode_record(history.records["req_test"])
+    assert saved["effective_question"] == result["effective_question"]
+    assert saved["scope_refined"]
+    learning = module.PerformanceLogger.record_optimization.call_args.args
+    assert learning[0] == original["validated_query"]
+    assert learning[1] == result["validated_query"]

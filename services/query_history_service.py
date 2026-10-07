@@ -89,6 +89,10 @@ class QueryHistoryService:
             record = {
                 "semantic_template_cache": result.get("semantic_template_cache"),
                 "request_id": request_id, "user_id": DEFAULT_USER_ID, "question": question,
+                "original_question": result.get("original_question") or question,
+                "effective_question": result.get("effective_question") or question,
+                "scope_refined": result.get("scope_refined", False),
+                "learned_optimization": result.get("learned_optimization"),
                 "status": result.get("status", "completed"), "query_signature": result.get("query_signature"),
                 "cost_guard": result.get("cost_analysis"), "optimization": result.get("optimization"),
                 "execution_metrics": result.get("execution_metadata"),

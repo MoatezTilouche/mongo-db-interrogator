@@ -60,9 +60,10 @@ def template_from_concrete(query, parameterize_limit=False):
             template["limit"] = {"$param": "limit"}
         elif template.get("operation") == "aggregate":
             stages = template.get("pipeline", [])
-            if stages and type(stages[-1].get("$limit")) is int:
-                parameters["limit"] = stages[-1]["$limit"]
-                stages[-1]["$limit"] = {"$param": "limit"}
+            limits = [stage for stage in stages if "$limit" in stage]
+            if limits and type(limits[-1]["$limit"]) is int:
+                parameters["limit"] = limits[-1]["$limit"]
+                limits[-1]["$limit"] = {"$param": "limit"}
     return parameterize_filter_values({"template": template, "parameters": parameters})
 
 

@@ -143,6 +143,53 @@ def test_exact_aggregate_question_is_detected_without_embedding(monkeypatch):
     embed.assert_not_called()
 
 
+@pytest.mark.parametrize("stage", [
+    {"$group": {"_id": "$commandId", "related": {"$push": "$related"}}},
+    {"$facet": {"rows": [{"$limit": 10}]}},
+])
+def test_exact_aggregate_with_non_row_stages_overrides_find_hint(monkeypatch, stage):
+    import services.semantic_template_cache as module
+    doc = retrieval_aggregate_document()
+    doc["template"]["pipeline"].append(stage)
+    doc["template_signature"] = template_signature(doc["template"])
+    collection = Mock()
+    collection.find.return_value = [doc]
+    db = Mock()
+    db.__getitem__ = Mock(return_value=collection)
+    db.list_collection_names.return_value = ["orders"]
+    monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
+    from services.schema_bootstrap_service import schema_bootstrap_service
+    monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
+    embed = Mock(side_effect=AssertionError("Exact saved question must not need embedding"))
+    monkeypatch.setattr(module.llm_router, "embed_query", embed)
+    question = "  " + SOURCE.upper().replace(" ", "   ") + "  "
+    assert module.operation_hint(question) == "find"
+    candidate, metadata = SemanticTemplateCache(db).lookup(question)
+    assert candidate == doc and metadata["hit"]
+    assert metadata["match_type"] == "exact_question"
+    embed.assert_not_called()
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("schema", "schema_version_mismatch"),
+    ("collection", "collection_missing"),
+    ("signature", "template_signature_mismatch"),
+    ("trust", "untrusted_template"),
+    ("binding", "malformed_template_or_binding"),
+])
+def test_exact_question_operation_override_preserves_other_checks(change, reason):
+    doc = retrieval_aggregate_document()
+    doc["template"]["pipeline"].append({"$group": {"_id": "$commandId"}})
+    doc["template_signature"] = template_signature(doc["template"])
+    collections, version = {"orders"}, None
+    if change == "schema": version = "changed"
+    elif change == "collection": collections = set()
+    elif change == "signature": doc["template_signature"] = "wrong"
+    elif change == "trust": doc["trusted"] = False
+    elif change == "binding": doc["parameter_schema"] = {}
+    assert SemanticTemplateCache.compatibility_reason(doc, SOURCE, collections, version) == reason
+
+
 def test_same_question_uses_the_same_embedding_representation_at_save_and_lookup(monkeypatch):
     """The invariant is representation equality; equal vectors must yield cosine 1.0."""
     import services.semantic_template_cache as cache_module
@@ -395,3 +442,25 @@ def test_repeated_failures_invalidate_template():
     collection.find_one_and_update.return_value = {"reuse_failure_count": 3}
     QueryTemplateRepository({QUERY_TEMPLATES_COLLECTION: collection}).record_failure("tpl_test")
     assert collection.update_one.call_args.args[1]["$set"]["status"] == "invalid"
+
+
+def test_refined_template_rejects_broader_request_and_accepts_changed_parameter():
+    doc = document()
+    doc.update(scope_refined=True, source_question=SOURCE + "\nRefinement: Only active records")
+    assert SemanticTemplateCache.compatibility_reason(doc, SOURCE, {"orders"}) == "refined_scope_mismatch"
+    assert SemanticTemplateCache.compatible(doc, NEW + "\nRefinement: Only active records", {"orders"})
+
+
+def test_refined_template_identity_is_separate_from_broad_query_with_same_structure(monkeypatch):
+    collection = Mock()
+    repository = QueryTemplateRepository({QUERY_TEMPLATES_COLLECTION: collection})
+    monkeypatch.setattr(repository, "ensure_embedding", Mock())
+    doc = document()
+    generated = {"template": doc["template"], "parameters": {"filter_commandId": "CMD-000009350132"}}
+    broad_id = repository.record_success(generated, "req_broad", SOURCE, doc["schema_spec"])
+    refined_id = repository.record_success(generated, "req_refined", SOURCE + "\nRefinement: Only active records",
+                                           doc["schema_spec"], scope_refined=True)
+    assert broad_id != refined_id
+    changed = {"template": doc["template"], "parameters": {"filter_commandId": "CMD-000009999999"}}
+    assert repository.record_success(changed, "req_other", NEW + "\nRefinement: Only active records",
+                                     doc["schema_spec"], scope_refined=True) == refined_id

@@ -45,7 +45,13 @@ class Query(StrictOutput):
     sort: list[list[Any]] = Field(default_factory=list)
     limit: int | None = None
     skip: int = 0
-    pipeline: list[dict[str, Any]] | None = None
+    pipeline: list[dict[str, Any]] | None = Field(default=None, description=(
+        "Read-only one-key aggregation stages. $lookup: from/as nonempty strings; "
+        "either paired localField/foreignField, or pipeline array with optional let object. "
+        "Mix forms only when the deployment capability in the prompt permits it. "
+        "Nested lookup and facet pipelines obey the same rules. "
+        "Deterministic structural validation runs after parameter binding."
+    ))
     field: str | None = None
     @model_validator(mode="after")
     def arguments(self):

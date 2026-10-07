@@ -78,8 +78,8 @@ def optimize_query(request_id: str, payload: OptimizationRequest):
     from agents.validator_agent import QueryValidationError
     try:
         result = QueryOptimizationService().continue_query(request_id, payload)
-    except QueryValidationError:
-        raise HTTPException(status_code=422, detail="The optimized query failed validation. Refine the request and try again.") from None
+    except QueryValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_dict()) from None
     return public_response(result)
 
 

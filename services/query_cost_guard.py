@@ -7,7 +7,7 @@ from agent.config import (QUERY_COST_GUARD_ENABLED, QUERY_HEAVY_RESULT_THRESHOLD
 from database.mongo_client import get_database
 from database.value_codec import decode_special_values
 from services.query_signature import query_signature
-from services.query_performance_memory import QueryPerformanceMemory
+from services.query_performance_memory import QueryPerformanceMemory, optimization_evidence
 logger = logging.getLogger(__name__)
 
 class QueryCostGuard:
@@ -19,6 +19,7 @@ class QueryCostGuard:
         try: profile, similarity = QueryPerformanceMemory().match(signature, structure)
         except Exception as exc: logger.warning("query_performance_lookup_failed error_type=%s", type(exc).__name__)
         signals, risk, estimated = [], 0., None
+        plan_evidence = {"available": False, "collection_scan": False, "index_names": []}
         def signal(name, weight):
             nonlocal risk
             signals.append(name); risk += weight
@@ -38,18 +39,36 @@ class QueryCostGuard:
                 signal("estimation_unavailable", .45)
             logger.info("query_cost_estimation_completed signature=%s estimated_rows=%s", signature, estimated)
         # Planner-only explain inspects index use without executing the query.
-        if QUERY_COST_GUARD_ENABLED and query["operation"] == "find":
+        if QUERY_COST_GUARD_ENABLED and query["operation"] in {"find", "aggregate"}:
             try:
-                command = {"find": query["collection"], "filter": decode_special_values(query.get("filter", {}))}
-                if query.get("sort"): command["sort"] = dict(query["sort"])
+                if query["operation"] == "find":
+                    command = {"find": query["collection"], "filter": decode_special_values(query.get("filter", {}))}
+                    if query.get("sort"): command["sort"] = dict(query["sort"])
+                else:
+                    command = {"aggregate": query["collection"], "pipeline": decode_special_values(query.get("pipeline", [])),
+                               "cursor": {}, "allowDiskUse": False}
                 plan = get_database().command({"explain": command, "verbosity": "queryPlanner", "maxTimeMS": min(1000, MONGO_QUERY_TIMEOUT_MS)})
-                def plan_stages(v):
+                stages_found, indexes = set(), set()
+                def winning_plans(v):
                     if isinstance(v, dict):
-                        yield v.get("stage")
-                        for child in v.values(): yield from plan_stages(child)
+                        if "winningPlan" in v:
+                            inspect_plan(v["winningPlan"])
+                        for key, child in v.items():
+                            if key not in {"winningPlan", "rejectedPlans", "command"}:
+                                winning_plans(child)
                     elif isinstance(v, list):
-                        for child in v: yield from plan_stages(child)
-                if "COLLSCAN" in set(plan_stages(plan.get("queryPlanner", {}).get("winningPlan", {}))):
+                        for child in v: winning_plans(child)
+                def inspect_plan(v):
+                    if isinstance(v, dict):
+                        if isinstance(v.get("stage"), str): stages_found.add(v["stage"])
+                        if isinstance(v.get("indexName"), str): indexes.add(v["indexName"])
+                        for child in v.values(): inspect_plan(child)
+                    elif isinstance(v, list):
+                        for child in v: inspect_plan(child)
+                winning_plans(plan)
+                plan_evidence = {"available": bool(stages_found), "collection_scan": "COLLSCAN" in stages_found,
+                                 "index_names": sorted(indexes)[:10]}
+                if plan_evidence["collection_scan"]:
                     if estimated is None or estimated > QUERY_HEAVY_RESULT_THRESHOLD:
                         signal("collection_scan", .45)
             except Exception:
@@ -94,5 +113,7 @@ class QueryCostGuard:
                 "reason": signals[-1] if signals else None, "estimated_rows": estimated,
                 "estimate_is_lower_bound": estimated == QUERY_HEAVY_RESULT_THRESHOLD+1,
                 "historical_avg_rows": profile.get("avg_returned_rows"), "historical_heavy_rate": profile.get("heavy_rate"),
+                "historical_avg_execution_ms": profile.get("avg_execution_ms"),
+                "plan_evidence": plan_evidence, "optimization_evidence": optimization_evidence(profile),
                 "matched_historical_signature": profile.get("signature"), "similarity_score": similarity,
                 "common_optimization": max(profile.get("choices", {}), key=profile.get("choices", {}).get) if profile.get("choices") else None}

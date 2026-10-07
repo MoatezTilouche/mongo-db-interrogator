@@ -88,3 +88,12 @@ def test_approval_is_idempotent_and_other_requests_remain_approved():
 def test_legacy_templates_without_likes_are_ineligible():
     document = {"status": "active", "trusted": True, "success_count": 10}
     assert SemanticTemplateCache.compatibility_reason(document, "Show orders", {"orders"}) == "no_positive_feedback"
+
+
+def test_liking_refined_result_saves_effective_question_and_scope_marker():
+    service, history, templates = setup_service()
+    refined = "Show orders\nRefinement: Only orders during March"
+    history.get_by_request_id.return_value.update(effective_question=refined, scope_refined=True)
+    service.submit("req_test", True)
+    assert templates.record_success.call_args.args[2] == refined
+    assert templates.record_success.call_args.kwargs == {"scope_refined": True}

@@ -10,6 +10,11 @@ from database.mongo_client import get_database
 from database.value_codec import decode_special_values, to_json_safe
 
 
+def is_repairable_execution_error(exc):
+    # BadValue includes unsupported mixed lookup syntax. Some deployments use 4570.
+    return getattr(exc, "code", None) in {2, 9, 14, 15999, 168, 40324, 4570}
+
+
 class ExecutorAgent:
     @traceable(name="executor.execute")
     def execute(self, query: dict[str, Any]) -> dict[str, Any]:
@@ -79,5 +84,5 @@ class ExecutorAgent:
                     if timed_out else str(exc)
                 ),
                 "error_code": "query_timeout" if timed_out else "execution_failed",
-                "repairable": getattr(exc, "code", None) in {2, 9, 14, 15999, 168, 40324},
+                "repairable": is_repairable_execution_error(exc),
             }

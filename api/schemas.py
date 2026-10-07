@@ -23,6 +23,10 @@ class QueryResponse(BaseModel):
     query_template_id: str | None = None
     query_parameters: dict[str, Any] | None = None
     question: str | None = None
+    original_question: str | None = None
+    effective_question: str | None = None
+    scope_refined: bool = False
+    learned_optimization: dict[str, Any] | None = None
     message: str | None = None
     cost_analysis: dict[str, Any] | None = None
     query_signature: str | None = None
@@ -48,7 +52,7 @@ class QueryResponse(BaseModel):
     query_plan: dict[str, Any] | None = None
     generated_query: dict[str, Any] | None = None
     validated_query: dict[str, Any] | None = None
-    validation_errors: list[str] = []
+    validation_errors: list[dict[str, Any] | str] = Field(default_factory=list)
     python_artifact: dict[str, Any] | None = None
     results_summary_agent_output: dict[str, Any] | None = None
 
