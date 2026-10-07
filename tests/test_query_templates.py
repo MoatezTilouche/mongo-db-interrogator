@@ -170,7 +170,7 @@ def test_pipeline_concrete_boundaries(monkeypatch):
     bootstrap.retrieve.return_value = {"catalog": schema, "telemetry": {}}
     monkeypatch.setattr(module, "schema_bootstrap_service", bootstrap)
     persist = Mock(return_value="tpl_test")
-    monkeypatch.setattr(module, "persist_successful_template", persist)
+    monkeypatch.setattr(module, "persist_successful_template", persist, raising=False)
     monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
     app = module.OrchestratorAgent()
     app.preference_service.retrieve_for_query = Mock(return_value=[])
@@ -187,12 +187,12 @@ def test_pipeline_concrete_boundaries(monkeypatch):
     assert result["execution_success"]
     assert len(seen) == 3
     assert all(query["limit"] == 3 and "$param" not in json.dumps(query) for query in seen)
-    assert result["query_template_id"] == "tpl_test"
+    assert result["query_template_id"] is None
     assert result["query_parameters"] == {"limit": 3, "filter_status": "Failed"}
-    persist.assert_called_once()
+    persist.assert_not_called()
     app.executor.execute = lambda query: {"ok": False, "all_rows": [], "row_count": 0}
     app.run("Give me the latest 3 failed order descriptions")
-    persist.assert_called_once()
+    persist.assert_not_called()
 
 
 def test_default_and_reconciliation():
@@ -239,12 +239,12 @@ def test_optimization_reuses_context_and_binds(monkeypatch, natural):
     monkeypatch.setattr(module.ExecutorAgent, "execute", executor)
     monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
     persist = Mock(return_value="tpl_reused")
-    monkeypatch.setattr(module, "persist_successful_template", persist)
+    monkeypatch.setattr(module, "persist_successful_template", persist, raising=False)
     result = service.continue_query("req_test", SimpleNamespace(optimization="refine" if natural else "latest_100", value=20, page=1, refinement="Latest 20"))
     assert result["execution_success"]
     assert result["generated_query"]["template"]["limit"] == {"$param": "limit"}
     assert result["query_parameters"] == {"limit": 20, "filter_status": "Failed"}
-    assert result["query_template_id"] == "tpl_reused"
+    assert result["query_template_id"] is None
     assert cost.call_args.args[-1]["limit"] == 20
     assert executor.call_args.args[-1]["limit"] == 20
     assert "$param" not in json.dumps(executor.call_args.args[-1])
@@ -252,7 +252,7 @@ def test_optimization_reuses_context_and_binds(monkeypatch, natural):
     if natural:
         assert optimize.call_args.args[2] == schema
         assert optimize.call_args.args[1] == pending["result"]["query_context"]
-    persist.assert_called_once()
+    persist.assert_not_called()
 
 
 def test_generator_modes_return_templates(monkeypatch):

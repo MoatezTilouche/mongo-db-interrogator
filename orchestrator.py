@@ -10,7 +10,6 @@ from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
 from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values
-from database.query_template_repository import persist_successful_template
 from services.query_cost_guard import QueryCostGuard
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
@@ -217,7 +216,7 @@ class OrchestratorAgent:
                 except QueryValidationError as exc:
                     validation_errors.append(str(exc))
 
-            template_id = persist_successful_template(generated_query, current_request_id(), question, schema_spec) if execution.get("ok") else None
+            template_id = None  # Reusable templates require explicit positive feedback.
             needs_summary = bool(execution.get("ok") and execution.get("row_count") and (
                 query_context["complexity"] == "complex" or validated_query["operation"] == "aggregate"
             ))

@@ -11,6 +11,7 @@ from agents.feedback_analysis_agent import FeedbackAnalysis, FeedbackAnalysisAge
 from agent.telemetry import request_context
 from database.feedback_repository import FeedbackRepository
 from database.query_history_repository import QueryHistoryRepository
+from database.query_template_repository import QueryTemplateRepository
 from database.record_safety import safe_record
 from database.user_preference_repository import UserPreferenceRepository
 from services.user_preference_service import UserPreferenceService
@@ -31,10 +32,12 @@ class FeedbackPersistenceError(RuntimeError):
 
 class FeedbackService:
     def __init__(self, history_repository=None, feedback_repository=None, analyzer=None,
-                 preference_repository=None, learning_router=None, knowledge_repository=None):
+                 preference_repository=None, learning_router=None, knowledge_repository=None, template_repository=None):
         self.history_repository = history_repository if history_repository is not None else QueryHistoryRepository()
         self.feedback_repository = feedback_repository if feedback_repository is not None else FeedbackRepository()
         self.analyzer = analyzer if analyzer is not None else FeedbackAnalysisAgent()
+        self.template_repository = template_repository if template_repository is not None else QueryTemplateRepository(
+            getattr(self.history_repository, "database", None))
         if preference_repository is None:
             preference_repository = UserPreferenceRepository(getattr(self.feedback_repository, "database", None))
         self.preference_service = UserPreferenceService(preference_repository, DEFAULT_USER_ID)
@@ -74,15 +77,20 @@ class FeedbackService:
                     "preference_saved": False, "preference_action": None, "preference_error": None,
                     "knowledge_saved": False, "knowledge_action": None,
                     "knowledge_id": None, "knowledge_status": None, "knowledge_error": None}
-        if liked and history.get("query_template_id") and history.get("execution_success"):
+        if liked and history.get("execution_success") and history.get("generated_query"):
             try:
-                from agent.config import QUERY_TEMPLATES_COLLECTION
-                from database.mongo_client import get_database
-                get_database()[QUERY_TEMPLATES_COLLECTION].update_one(
-                    {"_id": history["query_template_id"], "user_id": user_id,
-                        "positive_feedback_request_ids": {"$ne": request_id}},
-                    {"$addToSet": {"positive_feedback_request_ids": request_id},
-                        "$inc": {"positive_feedback_count": 1}})
+                schema = {"collections": history.get("selected_schema") or {},
+                    "schema_version": history.get("schema_version")}
+                template_id = self.template_repository.record_success(
+                    history["generated_query"], request_id, history.get("question"), schema)
+                if template_id:
+                    self.template_repository.set_feedback(template_id, request_id, user_id, True)
+                    self.history_repository.update(request_id, {"query_template_id": template_id})
+            except Exception as exc:
+                logger.warning("template_feedback_update_failed error_type=%s", type(exc).__name__)
+        elif not liked and history.get("query_template_id"):
+            try:
+                self.template_repository.set_feedback(history["query_template_id"], request_id, user_id, False)
             except Exception as exc:
                 logger.warning("template_feedback_update_failed error_type=%s", type(exc).__name__)
         if liked:

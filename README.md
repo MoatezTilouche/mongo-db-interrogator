@@ -4,7 +4,7 @@ Ask questions about a MongoDB database in plain language and receive validated, 
 
 
 
-The backend discovers collections and fields, retrieves relevant schema metadata, generates a structured query, validates its structure, estimates its cost, and executes it. Feedback can teach preferences or database rules. Successful queries can become reusable templates, with an explicit choice to reuse or regenerate later.
+The backend discovers collections and fields, retrieves relevant schema metadata, generates a structured query, validates its structure, estimates its cost, and executes it. Feedback can teach preferences or database rules. Successful queries become reusable templates only after explicit positive feedback, with an explicit choice to reuse or regenerate later.
 
 
 
@@ -57,7 +57,9 @@ Then open:
 
 Swagger (`/docs`), ReDoc (`/redoc`), and `/openapi.json` require browser HTTP Basic login for testing: username `billcom`, password `billcom`. This documentation login is separate from the existing API key protection for query/feedback endpoints.
 
-MongoDB 4.4 compatibility: template, query-history, and schema-cache payloads containing dollar-prefixed or dotted keys are stored in a reversible Extended JSON envelope. Searchable metadata remains native, and repository reads restore the original query/schema structures. Older native records remain readable; failed template saves are recreated by subsequent successful queries.
+MongoDB 4.4 compatibility: template, query-history, schema-cache, and pending optimization payloads containing dollar-prefixed or dotted keys are stored in a reversible Extended JSON envelope. Searchable metadata remains native, and repository reads restore the original query/schema structures. Older native records remain readable; failed template saves can be recreated by liking a subsequent successful query. Optimization and pagination restore their stored queries before execution; this applies to both legacy native records and encoded records.
+
+Active database knowledge restores its referenced collections and fields from the full schema catalog before collection selection, even if schema retrieval omitted them. A saved correction can therefore select its verified source collection instead of being restricted to an incorrect history/log candidate. Restart after prompt changes because prompts are cached in process.
 
 For the full setup, frontend build, Docker usage, and configuration details, continue with the sections below.
 
@@ -111,7 +113,7 @@ For the full setup, frontend build, Docker usage, and configuration details, con
 
 \| Performance memory | Record structural statistics and common optimization choices. |
 
-\| Semantic template cache | Suggest compatible successful templates; reuse requires a user decision. |
+\| Semantic template cache | Suggest compatible successful templates with positive feedback; reuse requires a user decision. |
 
 \| Feedback learning | Classify corrections into user preferences, database knowledge, or one-off feedback. |
 
@@ -961,11 +963,11 @@ Pagination uses backend find limit/skip and an \_id tie-breaker. It does not loa
 
 
 
-Successful validated queries can persist structure, source question, semantic intent, parameter metadata, schema/version, trust state, and embeddings. Lookup checks compatible identical source questions first, then semantic candidates. Default thresholds: below 0.65 ignored; 0.65 to below 0.82 weak match without suggestion; compatible scores at least 0.82 can prompt reuse.
+Only successful validated queries explicitly liked by the user persist reusable structure, source question, semantic intent, parameter metadata, schema/version, trust state, and embeddings. Execution alone, including reuse or optimization, does not save a template. Queries without feedback or with negative feedback remain in query history but do not create templates. Existing templates without recorded positive feedback are excluded from lookup and reuse. Lookup checks compatible identical source questions first, then semantic candidates. Default thresholds: below 0.65 ignored; 0.65 to below 0.82 weak match without suggestion; compatible scores at least 0.82 can prompt reuse.
 
 
 
-Reuse checks operation, collections, version, parameters, and integrity. Values change while structure stays fixed. It skips normal schema/knowledge/preference retrieval and context/generation, using stored schema for validation. Cost guard and optional summary still apply. Three reuse validation/execution failures can invalidate a template; extraction failure does not invalidate structure. Positive feedback records support without repeatedly counting one request.
+Reuse checks operation, collections, version, parameters, and integrity. Values change while structure stays fixed. It skips normal schema/knowledge/preference retrieval and context/generation, using stored schema for validation. Cost guard and optional summary still apply. Three reuse validation/execution failures can invalidate a template; extraction failure does not invalidate structure. Positive feedback records support without repeatedly counting one request. Changing that request to negative feedback retracts its approval; the template becomes ineligible when no approvals remain. Other requests' approvals are preserved.
 
 
 

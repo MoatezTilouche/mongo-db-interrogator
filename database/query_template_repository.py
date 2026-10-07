@@ -136,6 +136,7 @@ class QueryTemplateRepository:
         """Migrate legacy vectors before they are eligible for a cache lookup."""
         db = self.database if self.database is not None else get_database()
         documents = db[COLLECTION].find({"status": "active", "trusted": {"$ne": False},
+            "positive_feedback_count": {"$gt": 0},
             "user_id": DEFAULT_USER_ID, "success_count": {"$gt": 0}, "source_question": {"$exists": True},
             "embedding_representation_version": {"$ne": EMBEDDING_REPRESENTATION_VERSION}}, {"_id": 1})
         if hasattr(documents, "limit"):
@@ -148,7 +149,17 @@ class QueryTemplateRepository:
 
     def get(self, template_id):
         db = self.database if self.database is not None else get_database()
-        return decode_record(db[COLLECTION].find_one({"_id": template_id, "user_id": DEFAULT_USER_ID, "status": "active"}))
+        return decode_record(db[COLLECTION].find_one({"_id": template_id, "user_id": DEFAULT_USER_ID,
+            "status": "active", "positive_feedback_count": {"$gt": 0}}))
+
+    def set_feedback(self, template_id, request_id, user_id, liked):
+        """Count each approval once; retract only this request's approval."""
+        db = self.database if self.database is not None else get_database()
+        query = {"_id": template_id, "user_id": user_id,
+            "positive_feedback_request_ids": {"$ne": request_id} if liked else request_id}
+        db[COLLECTION].update_one(query, {
+            "$addToSet" if liked else "$pull": {"positive_feedback_request_ids": request_id},
+            "$inc": {"positive_feedback_count": 1 if liked else -1}})
 
     def record_failure(self, template_id):
         db = self.database if self.database is not None else get_database()

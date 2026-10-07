@@ -25,7 +25,7 @@ def document():
         "source_question": SOURCE, "semantic_text": "Retrieve orders for a specific command identifier",
         "semantic_search_text": normalized_question(SOURCE), "embedding_representation_version": 2,
         "parameter_schema": describe_parameters(generated["template"], generated["parameters"], SOURCE),
-        "status": "active", "trusted": True, "success_count": 1, "schema_version": None,
+        "status": "active", "trusted": True, "success_count": 1, "positive_feedback_count": 1, "schema_version": None,
         "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": SCHEMA_EMBEDDING_MODEL,
         "schema_spec": {"collections": {"orders": {"fields": {"commandId": ["string"]}}}}}
 
@@ -246,7 +246,7 @@ def test_reuse_binds_new_id_and_skips_query_agents(monkeypatch):
     monkeypatch.setattr(module.ExecutorAgent, "execute", executor)
     monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
     persist = Mock()
-    monkeypatch.setattr(module, "persist_successful_template", persist)
+    monkeypatch.setattr(module, "persist_successful_template", persist, raising=False)
     payload = SimpleNamespace(action="reuse", template_id=doc["template_id"])
     result = service.decide("req_test", payload)
     assert result["execution_success"]
@@ -257,7 +257,7 @@ def test_reuse_binds_new_id_and_skips_query_agents(monkeypatch):
     assert "QueryContextAgent" not in names and "QueryGeneratorAgent" not in names
     assert {"TemplateParameterExtractor", "QueryParameterBinder", "ValidatorAgent", "QueryCostGuard", "ExecutorAgent"} <= names
     save.assert_called_once()
-    persist.assert_called_once()
+    persist.assert_not_called()
     with pytest.raises(HTTPException) as failure: service.decide("req_test", payload)
     assert failure.value.status_code == 409
     executor.assert_called_once()
@@ -272,11 +272,11 @@ def test_legacy_flat_schema_reuse_is_validated_without_generation(monkeypatch):
     monkeypatch.setattr(module.ExecutorAgent, "execute", executor)
     monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
     persist = Mock()
-    monkeypatch.setattr(module, "persist_successful_template", persist)
+    monkeypatch.setattr(module, "persist_successful_template", persist, raising=False)
     result = service.decide("req_test", SimpleNamespace(action="reuse", template_id=doc["template_id"]))
     assert result["execution_success"]
     assert result["schema_spec"] == {"collections": doc["schema_spec"]}
-    assert persist.call_args.args[-1] == result["schema_spec"]
+    persist.assert_not_called()
     executor.assert_called_once()
 
 

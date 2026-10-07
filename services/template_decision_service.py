@@ -8,7 +8,7 @@ from agent.config import DEFAULT_USER_ID
 from agent.progress import capture_workflow, emit, stage
 from agent.telemetry import request_context, capture_usage, totals
 from database.mongo_client import get_database
-from database.query_template_repository import QueryTemplateRepository, persist_successful_template, template_validation_schema
+from database.query_template_repository import QueryTemplateRepository, template_validation_schema
 from services.semantic_template_cache import SemanticTemplateCache
 from services.template_parameter_extractor import extract_parameters
 from services.query_parameter_binder import bind_query_parameters
@@ -105,7 +105,6 @@ class TemplateDecisionService:
                             "execution_error_code": execution.get("error_code"), "execution_metadata": {
                                 "row_count": execution.get("row_count", 0), "execution_time_ms": execution.get("execution_time_ms", 0)}})
                         if execution["ok"]:
-                            persist_successful_template(generated, request_id, pending["question"], schema_spec)
                             logger.info("template_reuse_execution_success request_id=%s", request_id)
                             if query["operation"] == "aggregate" and execution.get("row_count"):
                                 summary = stage("ResultsSummaryAgent", ResultsSummaryAgent().summarize, pending["question"], execution)

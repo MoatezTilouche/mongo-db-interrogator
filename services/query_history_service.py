@@ -94,6 +94,7 @@ class QueryHistoryService:
                 "execution_metrics": result.get("execution_metadata"),
                 "route": route.get("complexity") if isinstance(route, dict) else route,
                 "selected_schema": compact_schema(result.get("schema_spec") or {}),
+                "schema_version": (result.get("schema_spec") or {}).get("schema_version"),
                 "query_context": result.get("query_context"),
                 "applied_preferences": result.get("applied_preferences", []),
                 "applied_knowledge": result.get("applied_knowledge", []),

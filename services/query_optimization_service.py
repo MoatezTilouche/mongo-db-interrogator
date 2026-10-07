@@ -11,9 +11,9 @@ import re
 from agent.config import QUERY_MAX_OPTIMIZATION_ITERATIONS
 from agents.query_generator_agent import QueryGeneratorAgent
 from services.query_parameter_binder import bind_query_parameters, template_from_concrete, reconcile_template, parameterize_filter_values
-from database.query_template_repository import persist_successful_template
 from services.query_cost_guard import QueryCostGuard
 from database.mongo_client import get_database
+from database.storage_codec import encode_record, decode_record
 from database.value_codec import to_json_safe
 from agents.executor_agent import ExecutorAgent
 from agents.validator_agent import ValidatorAgent
@@ -38,9 +38,10 @@ class QueryOptimizationService:
                 from services.query_history_service import QueryHistoryService
                 fields["result_metadata"] = result["execution_metadata"]
                 fields["result_preview"] = QueryHistoryService()._preview(result.get("execution_result") or [])
-            get_database()[QUERY_HISTORY_COLLECTION].update_one({"_id": request_id}, {"$set": to_json_safe(fields)})
+            get_database()[QUERY_HISTORY_COLLECTION].update_one({"_id": request_id}, {"$set": encode_record(to_json_safe(fields))})
         except Exception as exc:
-            logger.warning("query_optimization_history_failed request_id=%s error_type=%s", request_id, type(exc).__name__)
+            logger.warning("query_optimization_history_failed request_id=%s error_type=%s error_code=%s",
+                           request_id, type(exc).__name__, getattr(exc, "code", None))
 
     def collection(self):
         c = get_database()["_system_pending_queries"]
@@ -48,18 +49,18 @@ class QueryOptimizationService:
         return c
 
     def pause(self, result, question):
-        self.collection().insert_one({"_id": result["request_id"], "user_id": DEFAULT_USER_ID,
+        self.collection().insert_one(encode_record({"_id": result["request_id"], "user_id": DEFAULT_USER_ID,
             "state": "pending", "question": question, "original_question": question, "result": result,
             "optimization_iteration": 0, "optimization_history": [],
-            "expires_at": datetime.now(timezone.utc)+timedelta(hours=1)})
+            "expires_at": datetime.now(timezone.utc)+timedelta(hours=1)}))
         logger.info("query_optimization_requested request_id=%s", result["request_id"])
 
     def continue_query(self, request_id, payload):
         c = self.collection()
         claim = uuid4().hex
-        pending = c.find_one_and_update({"_id": request_id, "user_id": DEFAULT_USER_ID,
+        pending = decode_record(c.find_one_and_update({"_id": request_id, "user_id": DEFAULT_USER_ID,
             "state": {"$in": ["pending", "paged"]}, "expires_at": {"$gt": datetime.now(timezone.utc)}},
-            {"$set": {"state": "executing", "claim": claim}})
+            {"$set": {"state": "executing", "claim": claim}}))
         if not pending: raise HTTPException(409, "Request is expired, unavailable, or already executing")
         executed = False
         try:
@@ -155,15 +156,13 @@ class QueryOptimizationService:
                     result.update({"status": "optimization_required", "execution_success": False})
                     for key in ("execution_result", "execution_error", "execution_error_code", "pagination"):
                         result.pop(key, None)
-                    c.update_one({"_id": request_id, "claim": claim}, {"$set": {
-                        "state": "pending", "result": result, "optimization_iteration": iteration, "optimization_history": history}})
+                    c.update_one({"_id": request_id, "claim": claim}, {"$set": encode_record({
+                        "state": "pending", "result": result, "optimization_iteration": iteration, "optimization_history": history})})
                     self.save_history(request_id, result)
                     return result
                 logger.info("query_optimization_became_safe request_id=%s run_anyway=%s", request_id, choice == "run_anyway")
                 execution = stage("ExecutorAgent", ExecutorAgent().execute, query)
                 executed = True
-                if execution.get("ok"):
-                    result["query_template_id"] = persist_successful_template(generated, request_id, pending["question"], result["schema_spec"])
                 PerformanceLogger().record(query, cost, execution, optimization)
                 if execution.get("ok") and query["operation"] == "aggregate" and execution.get("row_count"):
                     summary = stage("ResultsSummaryAgent", ResultsSummaryAgent().summarize, pending["question"], execution)
@@ -184,8 +183,8 @@ class QueryOptimizationService:
                 # Each page is bounded at the database; full pages permit a next-page probe.
                 result["pagination"] = {"page": payload.page, "page_size": query["limit"],
                     "has_next": execution["row_count"] == query["limit"], "has_previous": payload.page > 1}
-            c.update_one({"_id": request_id, "claim": claim}, {"$set": {"state": "paged" if paged else "completed", "page_size": query.get("limit") if paged else None, "result": {key: value for key, value in result.items() if key not in {"execution_result", "results_summary_agent_output", "final_response"}},
-                "pagination_base_query": previous if paged else None, "optimization_iteration": iteration, "optimization_history": history}})
+            c.update_one({"_id": request_id, "claim": claim}, {"$set": encode_record({"state": "paged" if paged else "completed", "page_size": query.get("limit") if paged else None, "result": {key: value for key, value in result.items() if key not in {"execution_result", "results_summary_agent_output", "final_response"}},
+                "pagination_base_query": previous if paged else None, "optimization_iteration": iteration, "optimization_history": history})})
             self.save_history(request_id, result)
             return result
         except Exception:

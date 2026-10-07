@@ -77,6 +77,7 @@ class SemanticTemplateCache:
                     current_request_id(), migrated, EMBEDDING_REPRESENTATION_VERSION)
             # Projection omits full schema and infrastructure claim fields.
             documents = [decode_record(document) for document in db[QUERY_TEMPLATES_COLLECTION].find({"status": "active", "trusted": {"$ne": False},
+                "positive_feedback_count": {"$gt": 0},
                 "user_id": DEFAULT_USER_ID, "success_count": {"$gt": 0}, "embedding_model": SCHEMA_EMBEDDING_MODEL,
                 "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
                 "embedding": {"$exists": True}}, {"schema_spec": 0})]
@@ -149,6 +150,7 @@ class SemanticTemplateCache:
             if document.get("status") != "active": return "inactive_template"
             if document.get("trusted") is False: return "untrusted_template"
             if document.get("success_count", 0) < 1: return "no_successful_execution"
+            if document.get("positive_feedback_count", 0) < 1: return "no_positive_feedback"
             if not operation_compatible(document, question): return "operation_mismatch"
             if not document.get("source_question") or not document.get("semantic_text"): return "missing_semantic_metadata"
             if not document.get("collections") or not set(document["collections"]) <= collections: return "collection_missing"

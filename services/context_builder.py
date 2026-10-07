@@ -13,13 +13,19 @@ class ContextBuilder:
               full_catalog: dict[str, Any] | None = None) -> dict[str, Any]:
         knowledge = knowledge or []
         schema = deepcopy(schema)
-        # Retrieval budgets must not discard fields needed by verified rules.
+        # Retrieval budgets must not discard collections or fields needed by
+        # verified rules, including a corrected source collection.
         authoritative = (full_catalog or schema).get("collections", {})
-        selected = schema.get("collections", {})
+        selected = schema.setdefault("collections", {})
         for rule in knowledge:
             for name in rule.get("collections", []):
                 if name not in selected:
-                    continue
+                    if name not in authoritative:
+                        raise ValueError(
+                            f"Knowledge/schema conflict: rule references unknown collection {name}. "
+                            "Refresh the schema or correct the learned rule."
+                        )
+                    selected[name] = deepcopy(authoritative[name])
                 fields = authoritative.get(name, {}).get("fields", {})
                 for field in rule.get("fields", []):
                     if field not in fields and field != "_id":
