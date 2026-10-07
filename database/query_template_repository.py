@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from bson import json_util
 from database.mongo_client import get_database
 from database.record_safety import safe_record
+from database.storage_codec import encode_record, decode_record
 from services.query_parameter_binder import bind_query_parameters
 from agent.config import QUERY_TEMPLATES_COLLECTION, DEFAULT_USER_ID, SCHEMA_EMBEDDING_MODEL
 from uuid import uuid4
@@ -84,17 +85,17 @@ class QueryTemplateRepository:
             from services.schema_bootstrap_service import schema_bootstrap_service
             metadata["schema_version"] = schema_bootstrap_service.status().get("schema_version")
         db[COLLECTION].update_one({"_id": template_id}, {
-            "$setOnInsert": {"template_id": template_id, "template_signature": signature,
+            "$setOnInsert": encode_record({"template_id": template_id, "template_signature": signature,
                 "source_request_id": request_id, "operation": template["operation"],
                 "collections": sorted(collections), "template": template,
                 "parameter_schema": {key: parameter_schema(value) for key, value in generated["parameters"].items()},
                 "created_at": now, **{key: value for key, value in metadata.items()
-                    if key not in {"schema_spec", "schema_version"}}},
-            "$set": {"updated_at": now, **({"schema_spec": metadata["schema_spec"],
-                "schema_version": metadata["schema_version"]} if metadata else {})},
+                    if key not in {"schema_spec", "schema_version"}}}),
+            "$set": encode_record({"updated_at": now, **({"schema_spec": metadata["schema_spec"],
+                "schema_version": metadata["schema_version"]} if metadata else {})}),
             "$inc": {"success_count": 1}}, upsert=True)
         if metadata:
-            db[COLLECTION].update_one({"_id": template_id, "source_question": {"$exists": False}}, {"$set": metadata})
+            db[COLLECTION].update_one({"_id": template_id, "source_question": {"$exists": False}}, {"$set": encode_record(metadata)})
             self.ensure_embedding(template_id)
         return template_id
 
@@ -147,7 +148,7 @@ class QueryTemplateRepository:
 
     def get(self, template_id):
         db = self.database if self.database is not None else get_database()
-        return db[COLLECTION].find_one({"_id": template_id, "user_id": DEFAULT_USER_ID, "status": "active"})
+        return decode_record(db[COLLECTION].find_one({"_id": template_id, "user_id": DEFAULT_USER_ID, "status": "active"}))
 
     def record_failure(self, template_id):
         db = self.database if self.database is not None else get_database()
@@ -161,7 +162,9 @@ def persist_successful_template(generated, request_id, question=None, schema_spe
     try:
         return QueryTemplateRepository().record_success(generated, request_id, question, schema_spec)
     except Exception as exc:
-        logging.getLogger(__name__).warning("query_template_save_failed error_type=%s", type(exc).__name__)
+        logging.getLogger(__name__).warning(
+            "query_template_save_failed error_type=%s error_code=%s",
+            type(exc).__name__, getattr(exc, "code", None))
         return None
 
 

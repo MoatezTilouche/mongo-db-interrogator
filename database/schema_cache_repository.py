@@ -6,6 +6,7 @@ from typing import Any
 
 from agent.config import SCHEMA_CACHE_COLLECTION
 from database.mongo_client import get_database
+from database.storage_codec import encode_record, decode_record
 
 
 class SchemaCacheRepository:
@@ -17,7 +18,7 @@ class SchemaCacheRepository:
         return database[SCHEMA_CACHE_COLLECTION]
 
     def get(self, database_name: str) -> dict[str, Any] | None:
-        record = self._collection().find_one({"_id": database_name})
+        record = decode_record(self._collection().find_one({"_id": database_name}))
         if not record:
             return None
         # Explicit allowlist: safe_record intentionally truncates large arrays/maps,
@@ -50,7 +51,7 @@ class SchemaCacheRepository:
             if not isinstance(entry, dict) or not set(entry) <= allowed_entry_keys:
                 raise ValueError("Unexpected schema cache collection metadata")
         document["_id"] = database_name
-        self._collection().replace_one({"_id": database_name}, document, upsert=True)
+        self._collection().replace_one({"_id": database_name}, encode_record(document), upsert=True)
 
     def invalidate(self, database_name: str | None = None) -> int:
         collection = self._collection()

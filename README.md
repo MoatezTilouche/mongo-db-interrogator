@@ -57,6 +57,8 @@ Then open:
 
 Swagger (`/docs`), ReDoc (`/redoc`), and `/openapi.json` require browser HTTP Basic login for testing: username `billcom`, password `billcom`. This documentation login is separate from the existing API key protection for query/feedback endpoints.
 
+MongoDB 4.4 compatibility: template, query-history, and schema-cache payloads containing dollar-prefixed or dotted keys are stored in a reversible Extended JSON envelope. Searchable metadata remains native, and repository reads restore the original query/schema structures. Older native records remain readable; failed template saves are recreated by subsequent successful queries.
+
 For the full setup, frontend build, Docker usage, and configuration details, continue with the sections below.
 
 ## Contents

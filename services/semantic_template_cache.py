@@ -10,6 +10,7 @@ from agent.llm import llm_router
 from agent.progress import emit
 from agent.telemetry import current_request_id
 from database.mongo_client import get_database
+from database.storage_codec import decode_record
 from services.template_parameter_extractor import normalized_question
 from services.query_parameter_binder import bind_query_parameters
 from database.query_template_repository import QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
@@ -75,10 +76,10 @@ class SemanticTemplateCache:
                 logger.info("template_search_embedding_migration request_id=%s migrated=%d representation_version=%d",
                     current_request_id(), migrated, EMBEDDING_REPRESENTATION_VERSION)
             # Projection omits full schema and infrastructure claim fields.
-            documents = list(db[QUERY_TEMPLATES_COLLECTION].find({"status": "active", "trusted": {"$ne": False},
+            documents = [decode_record(document) for document in db[QUERY_TEMPLATES_COLLECTION].find({"status": "active", "trusted": {"$ne": False},
                 "user_id": DEFAULT_USER_ID, "success_count": {"$gt": 0}, "embedding_model": SCHEMA_EMBEDDING_MODEL,
                 "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
-                "embedding": {"$exists": True}}, {"schema_spec": 0}))
+                "embedding": {"$exists": True}}, {"schema_spec": 0})]
             logger.info("template_search_candidates request_id=%s eligible_count=%d", current_request_id(), len(documents))
             if not documents:
                 metadata["miss_reason"] = "no_eligible_templates"
