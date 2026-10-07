@@ -55,6 +55,8 @@ Then open:
 - `http://localhost:8000/health` for health/schema status
 - `http://localhost:4200/` for the separately started frontend
 
+Swagger (`/docs`), ReDoc (`/redoc`), and `/openapi.json` require browser HTTP Basic login for testing: username `billcom`, password `billcom`. This documentation login is separate from the existing API key protection for query/feedback endpoints.
+
 For the full setup, frontend build, Docker usage, and configuration details, continue with the sections below.
 
 ## Contents
