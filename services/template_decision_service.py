@@ -79,6 +79,16 @@ class TemplateDecisionService:
                     query = stage("QueryParameterBinder", bind_query_parameters, document["template"], parameters)
                     try:
                         schema_spec = template_validation_schema(document["schema_spec"])
+                        from services.user_preference_service import UserPreferenceService, apply_preferences_to_query
+                        preference_service = UserPreferenceService(user_id=DEFAULT_USER_ID)
+                        preference_catalog = {"collections": schema_spec.get("collections", {})}
+                        preferences = preference_service.retrieve_for_query(
+                            pending["question"], preference_catalog, request_id,
+                            selected_collections={query.get("collection")} if query.get("collection") else None,
+                        )
+                        applied_preferences = apply_preferences_to_query(
+                            query, preferences, DEFAULT_USER_ID, pending["question"],
+                        )
                         query = stage("ValidatorAgent", ValidatorAgent().validate, query, schema_spec)
                     except QueryValidationError:
                         cache["template_reuse_validation_failed"] = True
@@ -90,7 +100,7 @@ class TemplateDecisionService:
                         "semantic_template_cache": cache, "generated_query": generated, "validated_query": query,
                         "schema_spec": schema_spec, "query_parameters": parameters,
                         "query_template_id": payload.template_id, "cost_analysis": cost, "query_signature": cost["query_signature"],
-                        "applied_preferences": [], "applied_knowledge": [],
+                        "applied_preferences": applied_preferences, "applied_knowledge": [],
                         "execution_path": {"route": "template_reuse", "agents_called": [], "summary_skipped": True, "repair_used": False}}
                     if cost["status"] == "heavy":
                         result.update({"status": "optimization_required", **stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost)})

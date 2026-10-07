@@ -108,6 +108,13 @@ class QueryOptimizationService:
                         pending["question"], result.get("query_context"), result["schema_spec"], previous,
                         intent, result.get("applied_preferences"), result.get("applied_knowledge"))
                     query = stage("QueryParameterBinder", bind_query_parameters, generated["template"], generated["parameters"])
+                    saved_preferences = result.get("applied_preferences") or []
+                    if saved_preferences:
+                        from services.user_preference_service import apply_preferences_to_query
+                        apply_preferences_to_query(
+                            query, saved_preferences, DEFAULT_USER_ID,
+                            question=intent or pending["question"],
+                        )
                     logger.info("query_optimization_generator_completed request_id=%s", request_id)
                     if query.get("collection") != previous["collection"] or (choice != "summary" and query.get("operation") != previous["operation"]):
                         raise HTTPException(422, "Refinement changed the primary intent. Submit a new question for that change.")

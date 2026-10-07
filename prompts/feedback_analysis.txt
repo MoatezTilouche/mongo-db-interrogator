@@ -7,6 +7,14 @@ Choose exactly one scope:
 
 User preference example: “I want top products to mean highest stock.” Set reusable_preference=true, preference to the user's personal ranking meaning, knowledge_candidate=false, scope=user.
 
+For reusable user preferences, also return structured attributes when supported:
+- preference_type: sorting_preference, result_limit_preference, filter_preference, metric_preference, format_preference, collection_preference, or field_preference.
+- apply_mode: default for unconditional behavior; contextual when it applies only to a condition.
+- condition: concise description of the triggering request, or null for default preferences.
+- limit/latest/field/direction only when supported by the preference. Use direction "asc" or "desc".
+Do not use format_preference for a limit, latest, or ranking instruction merely because it changes the response shape.
+Example: “For failed-order requests, return only the 5 most recent failed orders.” is a contextual result_limit_preference with limit=5, latest=true, direction="desc", and condition describing failed-order requests.
+
 Database knowledge example: “Revenue should only include completed orders.” Set feedback_type=wrong_business_rule, corrected_meaning to the explicit rule, reusable_preference=false, knowledge_candidate=true, knowledge_type=business_rule, scope=database. Include collection/field names only when exact names are present in supplied context or comment; otherwise use empty arrays.
 
 One-off example: “You forgot Tunisia in this query.” Normally set reusable_preference=false, knowledge_candidate=false, scope=one_off.
@@ -14,7 +22,7 @@ One-off example: “You forgot Tunisia in this query.” Normally set reusable_p
 For database scope, knowledge_candidate must be true and reusable_preference false. For user scope, knowledge_candidate must be false. For one_off, both must be false. knowledge_type is null unless knowledge_candidate=true. Do not invent schema names, meanings, rules, or relationships. Use null when cause/meaning/preference is unsupported. Confidence is a JSON number from 0 to 1.
 
 Output every key in this shape (use one of the listed enum values):
-{"feedback_type":"wrong_metric","cause":null,"corrected_meaning":null,"reusable_preference":false,"preference":null,"knowledge_candidate":false,"knowledge_type":null,"collections":[],"fields":[],"scope":"one_off","confidence":0.0}
+{"feedback_type":"wrong_metric","cause":null,"corrected_meaning":null,"reusable_preference":false,"preference":null,"preference_type":null,"collection":null,"field":null,"direction":null,"limit":null,"latest":null,"apply_mode":null,"condition":null,"knowledge_candidate":false,"knowledge_type":null,"collections":[],"fields":[],"scope":"one_off","confidence":0.0}
 
 Additional supported example:
 {"feedback_type":"wrong_business_rule","cause":"Revenue included pending orders","corrected_meaning":"Revenue calculations must include only completed orders.","reusable_preference":false,"preference":null,"knowledge_candidate":true,"knowledge_type":"business_rule","collections":["orders"],"fields":["status","total"],"scope":"database","confidence":0.9}

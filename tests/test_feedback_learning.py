@@ -20,7 +20,11 @@ from database.query_history_repository import QueryHistoryRepository
 from database.user_preference_repository import UserPreferenceRepository
 from services.feedback_service import FeedbackService
 from services.query_history_service import QueryHistoryService
-from services.user_preference_service import UserPreferenceService, apply_preferences_to_query
+from services.user_preference_service import (
+    UserPreferenceService,
+    apply_preferences_to_query,
+    preference_from_analysis,
+)
 
 
 class MemoryCollection:
@@ -136,6 +140,140 @@ def client_for(monkeypatch, query_service=None, feedback_service=None):
     if feedback_service is not None:
         app.dependency_overrides[get_feedback_service] = lambda: feedback_service
     return TestClient(app)
+
+
+def preference_catalog():
+    return {"collections": {"orders_proc_hist": {"fields": {
+        "status": ["string"], "executionDate": ["date"], "total": ["number"],
+    }}}}
+
+
+def test_feedback_analysis_normalizes_contextual_latest_limit():
+    analysis = FeedbackAnalysis(
+        feedback_type="format_preference",
+        cause=None,
+        corrected_meaning=None,
+        reusable_preference=True,
+        preference="For failed-order requests, return only the 5 most recent failed orders.",
+        scope="user",
+        confidence=0.94,
+    )
+    normalized = FeedbackAnalysisAgent._normalize_preference_attributes(
+        analysis, {"question": "Show failed orders"}, analysis.preference or "",
+    )
+    assert normalized.preference_type == "result_limit_preference"
+    assert normalized.limit == 5
+    assert normalized.latest is True
+    assert normalized.apply_mode == "contextual"
+    assert normalized.condition == "failed-order requests"
+    assert normalized.direction == "desc"
+
+
+def test_preference_normalization_preserves_structured_fields_and_identity():
+    schema = preference_catalog()
+    base = {
+        "scope": "user", "reusable_preference": True,
+        "preference_type": "result_limit_preference",
+        "preference": "For failed orders, return 5 latest.",
+        "collection": "orders_proc_hist", "field": "executionDate",
+        "direction": "desc", "limit": 5, "latest": True,
+        "apply_mode": "contextual", "condition": "failed orders",
+        "confidence": 0.94,
+    }
+    failed = preference_from_analysis(
+        {"validated_query": {"collection": "orders_proc_hist"},
+         "selected_schema": schema["collections"]},
+        base, "default", "req_failed", schema,
+    )
+    successful = preference_from_analysis(
+        {"validated_query": {"collection": "orders_proc_hist"},
+         "selected_schema": schema["collections"]},
+        {**base, "preference": "For successful orders, return 20.",
+         "condition": "successful orders", "limit": 20},
+        "default", "req_success", schema,
+    )
+    assert failed["type"] == "result_limit_preference"
+    assert failed["field"] == "executionDate"
+    assert failed["latest"] is True
+    assert failed["limit"] == 5
+    assert failed["direction"] == -1
+    assert failed["apply_mode"] == "contextual"
+    assert failed["condition"] == "failed orders"
+    assert failed["_id"] != successful["_id"]
+
+
+def test_contextual_retrieval_and_explicit_overrides():
+    collection = MemoryCollection()
+    database = {"user_preferences": collection}
+    repository = UserPreferenceRepository(database)
+    schema = preference_catalog()
+    for record in (
+        preference_from_analysis(
+            {"validated_query": {"collection": "orders_proc_hist"},
+             "selected_schema": schema["collections"]},
+            {"scope": "user", "reusable_preference": True,
+             "preference_type": "result_limit_preference",
+             "preference": "For failed orders, return 5 latest.",
+             "collection": "orders_proc_hist", "field": "executionDate",
+             "direction": "desc", "limit": 5, "latest": True,
+             "apply_mode": "contextual", "condition": "failed orders", "confidence": 0.94},
+            "default", "req_failed", schema,
+        ),
+        preference_from_analysis(
+            {"validated_query": {"collection": "orders_proc_hist"},
+             "selected_schema": schema["collections"]},
+            {"scope": "user", "reusable_preference": True,
+             "preference_type": "result_limit_preference",
+             "preference": "For successful orders, return 20.",
+             "collection": "orders_proc_hist", "limit": 20,
+             "apply_mode": "contextual", "condition": "successful orders", "confidence": 0.94},
+            "default", "req_success", schema,
+        ),
+    ):
+        repository.upsert(record)
+    service = UserPreferenceService(repository, "default")
+    failed = service.retrieve_for_query("show failed orders", schema, selected_collections={"orders_proc_hist"})
+    successful = service.retrieve_for_query("show successful orders", schema, selected_collections={"orders_proc_hist"})
+    assert [item["limit"] for item in failed] == [5]
+    assert [item["limit"] for item in successful] == [20]
+
+    query = {"operation": "find", "collection": "orders_proc_hist", "limit": None, "sort": []}
+    applied = apply_preferences_to_query(query, failed, question="show 20 failed orders")
+    assert query["limit"] == 20
+    assert query["sort"] == []
+    assert applied == []
+
+    query = {"operation": "find", "collection": "orders_proc_hist", "limit": None, "sort": []}
+    apply_preferences_to_query(query, failed, question="show oldest failed orders")
+    assert query["limit"] == 5
+    assert query["sort"] == [["executionDate", 1]]
+
+
+def test_legacy_limit_preference_is_normalized_at_retrieval():
+    collection = MemoryCollection()
+    repository = UserPreferenceRepository({"user_preferences": collection})
+    now = datetime.now(timezone.utc)
+    repository.upsert({
+        "_id": "legacy", "user_id": "default", "scope": "user",
+        "type": "format_preference", "collection": "orders_proc_hist",
+        "source_collection": "orders_proc_hist", "field": None, "direction": None,
+        "limit": None, "latest": False,
+        "preference": "For failed-order requests, return only the 5 most recent failed orders.",
+        "confidence": 0.94, "active": True, "source_request_id": "req_legacy",
+        "created_at": now, "updated_at": now,
+    })
+    schema = preference_catalog()
+    preferences = UserPreferenceService(repository, "default").retrieve_for_query(
+        "show failed orders", schema, selected_collections={"orders_proc_hist"},
+    )
+    assert preferences[0]["type"] == "result_limit_preference"
+    assert preferences[0]["limit"] == 5
+    assert preferences[0]["latest"] is True
+    assert preferences[0]["field"] == "executionDate"
+    query = {"operation": "find", "collection": "orders_proc_hist", "limit": None, "sort": []}
+    apply_preferences_to_query(query, preferences, question="show failed orders")
+    assert query["limit"] == 5
+    assert query["sort"] == [["executionDate", -1]]
 
 
 @pytest.mark.parametrize("success", [True, False])
