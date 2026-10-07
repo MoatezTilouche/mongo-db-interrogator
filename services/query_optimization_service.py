@@ -16,7 +16,8 @@ from database.mongo_client import get_database
 from database.storage_codec import encode_record, decode_record
 from database.value_codec import to_json_safe
 from agents.executor_agent import ExecutorAgent
-from agents.validator_agent import ValidatorAgent
+from agents.validator_agent import ValidatorAgent, QueryValidationError
+from services.aggregation_validation import normalize_lookups, normalization_context
 from agents.results_summary_agent import ResultsSummaryAgent
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
@@ -100,6 +101,7 @@ class QueryOptimizationService:
                 payload.value = stored_size
                 previous = deepcopy(pending.get("pagination_base_query", previous))
             trace = []
+            repairs = 0
             with request_context(request_id), workflow_listener(trace.append):
                 if natural:
                     logger.info("query_optimization_generator_started request_id=%s", request_id)
@@ -138,7 +140,37 @@ class QueryOptimizationService:
                 generated = parameterize_filter_values(reconcile_template(generated, query))
                 query = stage("QueryParameterBinder", bind_query_parameters, generated["template"], generated["parameters"])
                 logger.info("query_optimization_query_changed request_id=%s changed=%s", request_id, query != previous)
-                query = stage("ValidatorAgent", ValidatorAgent().validate, query, result["schema_spec"])
+                def validate_candidate(candidate):
+                    candidate = stage("AggregationNormalizer", normalize_lookups, candidate)
+                    with normalization_context():
+                        return stage("ValidatorAgent", ValidatorAgent().validate, candidate, result["schema_spec"])
+
+                def repair_candidate(candidate, error):
+                    nonlocal generated, repairs
+                    repairs += 1
+                    try:
+                        generated = stage("QueryGeneratorAgent", QueryGeneratorAgent().repair,
+                            pending["question"], result["schema_spec"], candidate, error,
+                            result.get("applied_preferences"), result.get("applied_knowledge"))
+                        bound = stage("QueryParameterBinder", bind_query_parameters,
+                                      generated["template"], generated["parameters"])
+                    except (ValueError, KeyError, TypeError):
+                        raise QueryValidationError("Repair output does not match the template contract",
+                                                   code="invalid_repair_output", repairable=False) from None
+                    if bound.get("collection") != previous["collection"] or (choice != "summary" and bound.get("operation") != previous["operation"]):
+                        raise QueryValidationError("Repair changed the primary intent", repairable=False)
+                    if result.get("applied_preferences"):
+                        from services.user_preference_service import apply_preferences_to_query
+                        apply_preferences_to_query(bound, result["applied_preferences"], DEFAULT_USER_ID,
+                                                   question=intent or pending["question"])
+                    return validate_candidate(bound)
+
+                try:
+                    query = validate_candidate(query)
+                except QueryValidationError as exc:
+                    if not exc.repairable or "Banned" in str(exc) or "Unsupported operation" in str(exc):
+                        raise
+                    query = repair_candidate(query, str(exc))
                 logger.info("query_optimization_validation_completed request_id=%s", request_id)
                 generated = parameterize_filter_values(reconcile_template(generated, query))
                 cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
@@ -171,6 +203,23 @@ class QueryOptimizationService:
                 execution = stage("ExecutorAgent", ExecutorAgent().execute, query)
                 executed = True
                 PerformanceLogger().record(query, cost, execution, optimization)
+                if not execution.get("ok") and execution.get("repairable") and repairs == 0:
+                    query = repair_candidate(query, str(execution.get("error") or "MongoDB structural error"))
+                    generated = parameterize_filter_values(reconcile_template(generated, query))
+                    cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
+                    cost["previous_estimated_rows"] = previous_cost.get("estimated_rows")
+                    optimization["new_estimated_rows"] = cost.get("estimated_rows")
+                    result.update({"generated_query": generated, "query_parameters": generated["parameters"],
+                                   "validated_query": query, "cost_analysis": cost, "query_signature": cost["query_signature"]})
+                    if cost["status"] == "heavy" and choice != "run_anyway":
+                        result.update(stage("OptimizationAdvisor", OptimizationAdvisor().suggest, query, cost))
+                        result.update({"status": "optimization_required", "execution_success": False})
+                        c.update_one({"_id": request_id, "claim": claim}, {"$set": encode_record({
+                            "state": "pending", "result": result, "optimization_iteration": iteration, "optimization_history": history})})
+                        self.save_history(request_id, result)
+                        return result
+                    execution = stage("ExecutorAgent", ExecutorAgent().execute, query)
+                    PerformanceLogger().record(query, cost, execution, optimization)
                 if execution.get("ok") and query["operation"] == "aggregate" and execution.get("row_count"):
                     summary = stage("ResultsSummaryAgent", ResultsSummaryAgent().summarize, pending["question"], execution)
                 else:

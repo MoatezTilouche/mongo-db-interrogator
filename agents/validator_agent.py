@@ -8,6 +8,8 @@ from agent.config import (DEFAULT_LIMIT, MAX_LIMIT, QUERY_HISTORY_COLLECTION, FE
                           USER_PREFERENCES_COLLECTION, SCHEMA_CACHE_COLLECTION,
                           DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION, QUERY_TEMPLATES_COLLECTION)
 from agent.tracing import traceable
+from services.aggregation_validation import QueryValidationError, validate_pipeline
+from services.mongo_capabilities import get_mongo_capabilities
 
 
 ALLOWED_OPERATIONS = {"find", "aggregate", "count_documents", "distinct"}
@@ -19,10 +21,6 @@ ALLOWED_STAGES = {
 BANNED_KEYS = {
     "$where", "$function", "$accumulator", "$out", "$merge",
 }
-
-
-class QueryValidationError(ValueError):
-    pass
 
 
 def _walk_keys(value: Any):
@@ -73,6 +71,9 @@ def _validate_filter_fields(value: Any, known_fields: set[str]) -> None:
 
 
 class ValidatorAgent:
+    def __init__(self, capabilities=None):
+        self.capabilities = capabilities or get_mongo_capabilities()
+
     @traceable(name="validator.validate")
     def validate(self, query: dict[str, Any], schema_spec: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(query, dict):
@@ -121,22 +122,7 @@ class ValidatorAgent:
 
         elif operation == "aggregate":
             pipeline = normalized.get("pipeline")
-            if not isinstance(pipeline, list):
-                raise QueryValidationError("aggregate.pipeline must be a list")
-            for stage in pipeline:
-                if not isinstance(stage, dict) or len(stage) != 1:
-                    raise QueryValidationError("Each aggregation stage must be a one-key object")
-                stage_name = next(iter(stage))
-                if stage_name not in ALLOWED_STAGES:
-                    raise QueryValidationError(f"Unsupported aggregation stage: {stage_name}")
-                if stage_name == "$lookup":
-                    lookup = stage[stage_name]
-                    if isinstance(lookup, dict):
-                        target = lookup.get("from")
-                        if target and (str(target) in internal or str(target).split(".")[-1].startswith("_system_")):
-                            raise QueryValidationError("Internal system collections are not queryable")
-                        if target and str(target) not in known_collections:
-                            raise QueryValidationError(f"Unknown $lookup collection: {target}")
+            validate_pipeline(pipeline, ALLOWED_STAGES, known_collections, self.capabilities)
 
         elif operation == "count_documents":
             normalized.setdefault("filter", {})

@@ -48,7 +48,7 @@ class QueryResponse(BaseModel):
     query_plan: dict[str, Any] | None = None
     generated_query: dict[str, Any] | None = None
     validated_query: dict[str, Any] | None = None
-    validation_errors: list[str] = []
+    validation_errors: list[dict[str, Any] | str] = Field(default_factory=list)
     python_artifact: dict[str, Any] | None = None
     results_summary_agent_output: dict[str, Any] | None = None
 

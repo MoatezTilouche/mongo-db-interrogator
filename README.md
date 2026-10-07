@@ -1578,6 +1578,26 @@ Before opening a merge request, run the relevant backend/frontend tests and rebu
 
 ## Maintainers
 
+Aggregation compatibility uses `MONGO_SUPPORTS_LOOKUP_PIPELINE_WITH_LOCAL_FOREIGN=false`
+by default. Enable it only after confirming support in the deployment, including
+feature compatibility version and any MongoDB proxy; a version string alone is
+not used as proof. Generation, refinement, repair and deterministic validation
+share this capability setting.
+
+Fresh and optimized queries are bound, normalized, structurally validated, cost
+checked and then executed. Lookup and facet pipelines are recursively validated.
+Structural failures permit at most one repair attempt, followed by the same
+validation and cost checks. Repair returns the current `template`/`parameters`
+envelope; parameter schemas remain derived by the existing template repository.
+
+The deterministic normalizer removes an empty foreign pipeline from a mixed
+equality lookup only when both field references are plain and `let` is absent.
+It preserves aliases and all remaining stages and never mutates the input.
+Nonempty foreign pipelines go to repair: sampled schema types cannot prove that
+an `$expr: {$eq: ...}` rewrite preserves array-element and missing-key semantics.
+Structural validation does not prove that every expression or business meaning
+is correct; deployment integration testing remains necessary.
+
 **Data Pilot team**
 
 For internal ownership, deployment access, or architecture questions, use the maintainer/contact information configured in the company GitLab project.

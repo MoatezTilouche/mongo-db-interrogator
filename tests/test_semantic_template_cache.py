@@ -143,6 +143,53 @@ def test_exact_aggregate_question_is_detected_without_embedding(monkeypatch):
     embed.assert_not_called()
 
 
+@pytest.mark.parametrize("stage", [
+    {"$group": {"_id": "$commandId", "related": {"$push": "$related"}}},
+    {"$facet": {"rows": [{"$limit": 10}]}},
+])
+def test_exact_aggregate_with_non_row_stages_overrides_find_hint(monkeypatch, stage):
+    import services.semantic_template_cache as module
+    doc = retrieval_aggregate_document()
+    doc["template"]["pipeline"].append(stage)
+    doc["template_signature"] = template_signature(doc["template"])
+    collection = Mock()
+    collection.find.return_value = [doc]
+    db = Mock()
+    db.__getitem__ = Mock(return_value=collection)
+    db.list_collection_names.return_value = ["orders"]
+    monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
+    from services.schema_bootstrap_service import schema_bootstrap_service
+    monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
+    embed = Mock(side_effect=AssertionError("Exact saved question must not need embedding"))
+    monkeypatch.setattr(module.llm_router, "embed_query", embed)
+    question = "  " + SOURCE.upper().replace(" ", "   ") + "  "
+    assert module.operation_hint(question) == "find"
+    candidate, metadata = SemanticTemplateCache(db).lookup(question)
+    assert candidate == doc and metadata["hit"]
+    assert metadata["match_type"] == "exact_question"
+    embed.assert_not_called()
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("schema", "schema_version_mismatch"),
+    ("collection", "collection_missing"),
+    ("signature", "template_signature_mismatch"),
+    ("trust", "untrusted_template"),
+    ("binding", "malformed_template_or_binding"),
+])
+def test_exact_question_operation_override_preserves_other_checks(change, reason):
+    doc = retrieval_aggregate_document()
+    doc["template"]["pipeline"].append({"$group": {"_id": "$commandId"}})
+    doc["template_signature"] = template_signature(doc["template"])
+    collections, version = {"orders"}, None
+    if change == "schema": version = "changed"
+    elif change == "collection": collections = set()
+    elif change == "signature": doc["template_signature"] = "wrong"
+    elif change == "trust": doc["trusted"] = False
+    elif change == "binding": doc["parameter_schema"] = {}
+    assert SemanticTemplateCache.compatibility_reason(doc, SOURCE, collections, version) == reason
+
+
 def test_same_question_uses_the_same_embedding_representation_at_save_and_lookup(monkeypatch):
     """The invariant is representation equality; equal vectors must yield cosine 1.0."""
     import services.semantic_template_cache as cache_module

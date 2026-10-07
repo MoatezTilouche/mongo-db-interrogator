@@ -11,6 +11,7 @@ from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
 from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values
 from services.query_cost_guard import QueryCostGuard
+from services.aggregation_validation import normalize_lookups, normalization_context
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
 
@@ -82,7 +83,7 @@ class OrchestratorAgent:
         applied_knowledge: list[dict[str, Any]] = []
         execution: dict[str, Any] = {}
         execution_time_ms = 0.0
-        validation_errors: list[str] = []
+        validation_errors: list[dict[str, Any]] = []
         agents_called: list[str] = []
         try:
             catalog = stage("Precheck", schema_bootstrap_service.get_catalog)
@@ -154,15 +155,17 @@ class OrchestratorAgent:
             apply_preferences_to_query(bound_query, preferences, self.preference_service.user_id, question=question)
             repairs = 0
 
-            validation_errors: list[str] = []
+            validation_errors: list[dict[str, Any]] = []
             validated_query: dict[str, Any] | None = None
             for attempt in range(2):
                 try:
-                    validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
+                    bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
+                    with normalization_context():
+                        validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
                     break
                 except QueryValidationError as exc:
-                    validation_errors.append(str(exc))
-                    if attempt == 0 and "Banned" not in str(exc) and "Unsupported operation" not in str(exc):
+                    validation_errors.append(exc.to_dict())
+                    if attempt == 0 and exc.repairable and "Banned" not in str(exc) and "Unsupported operation" not in str(exc):
                         repairs += 1
                         agents_called.append("repair")
                         generated_query = stage("QueryGeneratorAgent", self.query_generator.repair,
@@ -202,7 +205,9 @@ class OrchestratorAgent:
                 bound_query = stage("QueryParameterBinder", bind_query_parameters, repaired["template"], repaired["parameters"])
                 apply_preferences_to_query(bound_query, preferences, self.preference_service.user_id, question=question)
                 try:
-                    validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
+                    bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
+                    with normalization_context():
+                        validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
                     generated_query = parameterize_filter_values(reconcile_template(repaired, validated_query))
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
                     if cost["status"] == "heavy":
@@ -214,7 +219,8 @@ class OrchestratorAgent:
                     PerformanceLogger().record(validated_query, cost, execution)
                     execution_time_ms += execution.get("execution_time_ms", 0)
                 except QueryValidationError as exc:
-                    validation_errors.append(str(exc))
+                    validation_errors.append(exc.to_dict())
+                    raise
 
             template_id = None  # Reusable templates require explicit positive feedback.
             needs_summary = bool(execution.get("ok") and execution.get("row_count") and (
@@ -264,8 +270,14 @@ class OrchestratorAgent:
             }
         except Exception as exc:
             # Keep completed stages available for history even when a later stage fails.
+            if isinstance(exc, QueryValidationError):
+                detail = exc.to_dict()
+                if not validation_errors or validation_errors[-1] != detail:
+                    validation_errors.append(detail)
             return {
-                "execution_success": False, "execution_error": str(exc),
+                "execution_success": False,
+                "execution_error": str(exc) if isinstance(exc, QueryValidationError) else "Query pipeline failed.",
+                "execution_error_code": exc.details["code"] if isinstance(exc, QueryValidationError) else "query_pipeline_failed",
                 "final_response": "I could not complete this query. See execution_error for details.",
                 "route": route, "query_context": query_context, "schema_spec": schema_spec, "query_plan": None,
                 "execution_path": {"route": route.get("complexity") if route else None,

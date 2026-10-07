@@ -85,6 +85,11 @@ if QUERY_PERFORMANCE_COLLECTION in {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTIO
 
 QUERY_MAX_OPTIMIZATION_ITERATIONS = max(1, int(os.getenv("QUERY_MAX_OPTIMIZATION_ITERATIONS", "3")))
 
+# Enable only after verifying server, feature compatibility version and any proxy.
+MONGO_SUPPORTS_LOOKUP_PIPELINE_WITH_LOCAL_FOREIGN = os.getenv(
+    "MONGO_SUPPORTS_LOOKUP_PIPELINE_WITH_LOCAL_FOREIGN", "false"
+).lower() == "true"
+
 # Semantic template suggestions always require an explicit user decision.
 QUERY_TEMPLATES_COLLECTION = os.getenv("QUERY_TEMPLATES_COLLECTION", "_system_query_templates")
 SEMANTIC_TEMPLATE_CACHE_ENABLED = os.getenv("SEMANTIC_TEMPLATE_CACHE_ENABLED", "true").lower() == "true"

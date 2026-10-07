@@ -39,7 +39,15 @@ def cosine(left, right):
 
 
 def operation_compatible(document, question):
-    """A retrieval can use either find or a pipeline that joins and returns rows."""
+    """Exact saved intent overrides hints; other retrievals may use row pipelines."""
+    source = document.get("source_question")
+    if isinstance(source, str) and source.strip() and (
+        " ".join(source.casefold().split()) == " ".join(question.casefold().split())
+    ):
+        # A keyword hint describes wording, not the MongoDB implementation.
+        # The successfully executed, approved template for this exact question
+        # is stronger evidence. All remaining compatibility checks still apply.
+        return True
     requested = operation_hint(question)
     if document.get("operation") == requested:
         return True
