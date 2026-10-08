@@ -5,7 +5,8 @@ Schema: $schema_json
 Operation hint: $operation_hint
 Constraints: $constraints_json
 User preferences: $user_preferences_json
-Verified active database knowledge: $database_knowledge_json
+Verified active database knowledge (highest retrieval priority first): $database_knowledge_json
+When supplied rules conflict, prefer the first applicable rule while preserving explicit current request precedence. Do not merge contradictory rules.
 Hint `count` means `count_documents`.
 Choose exactly one output shape below. Replace every <placeholder>, filters, limits and stages with values required by the question and selected schema. Do not copy absent schema names or return all four shapes.
 find:

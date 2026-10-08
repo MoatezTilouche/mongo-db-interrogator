@@ -52,7 +52,7 @@ class KnowledgeRepository:
             raise RuntimeError("Knowledge candidate disappeared during deduplication")
         return ("confirmation_added" if result.modified_count else "deduplicated"), current
 
-    def list_active(self, limit: int = 1000) -> list[dict[str, Any]]:
+    def list_active(self, limit: int | None = None) -> list[dict[str, Any]]:
         collection = self._collection()
         if not self._active_index_ready:
             try:
@@ -61,7 +61,11 @@ class KnowledgeRepository:
                 # Retrieval remains correct without the optional performance index.
                 logger.warning("knowledge_index_creation_failed error_type=%s", type(exc).__name__)
             self._active_index_ready = True
-        cursor = collection.find({"status": "active", "active": True}).limit(limit)
+        # Retrieval must rank the whole eligible population before top-k. An
+        # arbitrary insertion-order cap can hide newer feedback corrections.
+        cursor = collection.find({"status": "active", "active": True})
+        if limit is not None:
+            cursor = cursor.limit(limit)
         return list(cursor)
 
     def save_embedding_if_missing(self, knowledge_id: str, vector: list[float], model: str) -> None:

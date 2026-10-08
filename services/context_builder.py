@@ -18,6 +18,17 @@ class ContextBuilder:
         authoritative = (full_catalog or schema).get("collections", {})
         selected = schema.setdefault("collections", {})
         for rule in knowledge:
+            # Stored fields form a flat list, even for multi-collection rules.
+            # Validate the union, then restore each field only to its owner.
+            rule_names = rule.get("collections") or list(selected)
+            known_fields = {field for name in rule_names
+                            for field in authoritative.get(name, {}).get("fields", {})}
+            unknown_fields = set(rule.get("fields") or []) - known_fields - {"_id"}
+            if unknown_fields:
+                raise ValueError(
+                    f"Knowledge/schema conflict: rule references unknown fields {sorted(unknown_fields)}. "
+                    "Refresh the schema or correct the learned rule; no substitute field was used."
+                )
             for name in rule.get("collections", []):
                 if name not in selected:
                     if name not in authoritative:
@@ -28,12 +39,6 @@ class ContextBuilder:
                     selected[name] = deepcopy(authoritative[name])
                 fields = authoritative.get(name, {}).get("fields", {})
                 for field in rule.get("fields", []):
-                    if field not in fields and field != "_id":
-                        raise ValueError(
-                            f"Knowledge/schema conflict: rule references {name}.{field}, "
-                            "but the schema catalog does not contain that field. "
-                            "Refresh the schema or correct the learned rule; no substitute field was used."
-                        )
                     if field in fields:
                         selected[name].setdefault("fields", {})[field] = deepcopy(fields[field])
         for preference in preferences or []:

@@ -1011,6 +1011,8 @@ Knowledge candidates are deduplicated. Two independent confirmations can mark a 
 
 Conflicts can block activation. Only active knowledge reaches prompts. Internal approve/reject/supersede methods exist, without public administration routes. Precedence is explicit question, active database knowledge, then compatible preferences; schema constrains valid references.
 
+Knowledge retrieval applies a semantic relevance gate before configurable feedback, scope, collection, and field bonuses, then keeps the highest-ranked five rules. Raw similarity and ranking score remain separate, and ordered active rules reach both generation prompts. See [knowledge ranking and evaluation](docs/knowledge-ranking.md) for configuration, runtime tracing, tests, and limitations.
+
 
 
 ## Configuration reference

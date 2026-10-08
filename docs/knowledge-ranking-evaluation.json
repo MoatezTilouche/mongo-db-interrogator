@@ -1,0 +1,108 @@
+{
+  "embedding_model": "text-embedding-3-small",
+  "minimum_semantic_similarity": 0.5,
+  "scenarios": [
+    {
+      "scenario": "same_intent",
+      "question": "show failed orders",
+      "raw_similarities": {
+        "failed_feedback": 0.535869,
+        "manual": 0.424449,
+        "revenue_feedback": 0.477064
+      },
+      "ordered_results": [
+        {
+          "knowledge_id": "failed_feedback",
+          "semantic_similarity": 0.535869,
+          "ranking_score": 0.805869
+        }
+      ]
+    },
+    {
+      "scenario": "close_paraphrase",
+      "question": "list orders that failed",
+      "raw_similarities": {
+        "failed_feedback": 0.536484,
+        "manual": 0.432302,
+        "revenue_feedback": 0.33782
+      },
+      "ordered_results": [
+        {
+          "knowledge_id": "failed_feedback",
+          "semantic_similarity": 0.536484,
+          "ranking_score": 0.806484
+        }
+      ]
+    },
+    {
+      "scenario": "unrelated",
+      "question": "show customer contact details",
+      "raw_similarities": {
+        "failed_feedback": 0.118748,
+        "manual": 0.152982,
+        "revenue_feedback": 0.254576
+      },
+      "ordered_results": []
+    },
+    {
+      "scenario": "conflicting_rule",
+      "question": "show failed orders, explicitly include retry status X",
+      "raw_similarities": {
+        "failed_feedback": 0.803296,
+        "manual": 0.411379,
+        "revenue_feedback": 0.369849,
+        "conflicting_manual": 0.830675
+      },
+      "ordered_results": [
+        {
+          "knowledge_id": "failed_feedback",
+          "semantic_similarity": 0.803296,
+          "ranking_score": 1.073296
+        },
+        {
+          "knowledge_id": "conflicting_manual",
+          "semantic_similarity": 0.830675,
+          "ranking_score": 0.950675
+        }
+      ]
+    },
+    {
+      "scenario": "multiple_feedback_rules",
+      "question": "show failed orders excluding retry status X and cancelled retries",
+      "raw_similarities": {
+        "failed_feedback": 0.79222,
+        "manual": 0.391177,
+        "revenue_feedback": 0.403631,
+        "conflicting_manual": 0.741598,
+        "second_feedback": 0.723731
+      },
+      "ordered_results": [
+        {
+          "knowledge_id": "failed_feedback",
+          "semantic_similarity": 0.79222,
+          "ranking_score": 1.06222
+        },
+        {
+          "knowledge_id": "second_feedback",
+          "semantic_similarity": 0.723731,
+          "ranking_score": 0.993731
+        },
+        {
+          "knowledge_id": "conflicting_manual",
+          "semantic_similarity": 0.741598,
+          "ranking_score": 0.861598
+        }
+      ]
+    },
+    {
+      "scenario": "multilingual_paraphrase",
+      "question": "affiche les commandes en échec",
+      "raw_similarities": {
+        "failed_feedback": 0.386892,
+        "manual": 0.35226,
+        "revenue_feedback": 0.292145
+      },
+      "ordered_results": []
+    }
+  ]
+}

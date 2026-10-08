@@ -1,30 +1,49 @@
-"""Retrieve a bounded set of active business-knowledge records only."""
+"""Rank relevant, schema-valid active knowledge before applying the prompt budget."""
 from __future__ import annotations
 
 import logging
 import math
-import re
 import time
 from typing import Any
 
-from agent.config import KNOWLEDGE_RETRIEVAL_TOP_K
+from agent.config import (
+    KNOWLEDGE_COLLECTION_MATCH_BONUS,
+    KNOWLEDGE_EMBEDDING_MODEL,
+    KNOWLEDGE_FEEDBACK_PRIORITY_BONUS,
+    KNOWLEDGE_FIELD_MATCH_BONUS,
+    KNOWLEDGE_MIN_SEMANTIC_SIMILARITY,
+    KNOWLEDGE_RETRIEVAL_TOP_K,
+    KNOWLEDGE_SCOPE_MATCH_BONUS,
+)
 from database.knowledge_repository import KnowledgeRepository
 
 logger = logging.getLogger(__name__)
-_STOP = {"a", "an", "the", "show", "give", "me", "find", "get", "list", "of", "for", "in", "on", "to", "by", "with", "and", "or"}
 
 
-def _tokens(value: str) -> set[str]:
-    return {word for word in re.findall(r"[a-z0-9]+", str(value).lower()) if word not in _STOP}
+def _cosine(left: list[float], right: list[float]) -> float | None:
+    """Keep the raw cosine; unavailable/invalid embeddings cannot prove relevance."""
+    if (not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple))
+            or not left or not right or len(left) != len(right)):
+        return None
+    try:
+        if not all(isinstance(value, (int, float)) and math.isfinite(value)
+                   for value in [*left, *right]):
+            return None
+        dot = sum(a * b for a, b in zip(left, right))
+        norm_left = math.sqrt(sum(a * a for a in left))
+        norm_right = math.sqrt(sum(b * b for b in right))
+        if not norm_left or not norm_right:
+            return None
+        similarity = dot / (norm_left * norm_right)
+        return similarity if math.isfinite(similarity) else None
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
-def _cosine(left: list[float], right: list[float]) -> float:
-    if not left or len(left) != len(right):
-        return 0.0
-    dot = sum(a * b for a, b in zip(left, right))
-    norm_left = math.sqrt(sum(a * a for a in left))
-    norm_right = math.sqrt(sum(b * b for b in right))
-    return dot / (norm_left * norm_right) if norm_left and norm_right else 0.0
+def _references(value: Any) -> set[str] | None:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        return None
+    return set(value)
 
 
 class KnowledgeRetriever:
@@ -38,71 +57,96 @@ class KnowledgeRetriever:
         started = time.perf_counter()
         candidate_collections = schema_candidates.get("collections", {})
         candidate_names = set(candidate_collections)
-        candidate_fields = {
-            name: set((entry.get("fields") or {}).keys())
-            for name, entry in candidate_collections.items()
-        }
-        question_tokens = _tokens(question)
+        authoritative = (full_schema if full_schema is not None else schema_candidates).get("collections", {})
         scored = []
         try:
-            # Repository query enforces BOTH status=active and active=true.
             records = self.repository.list_active()
         except Exception as exc:
             logger.warning("knowledge_retrieval_failed error_type=%s", type(exc).__name__)
             records = []
         for record in records:
-            collections = set(record.get("collections") or [])
-            if full_schema is not None and collections:
-                full_collections = full_schema.get("collections", {})
-                if not collections <= set(full_collections):
-                    continue
-                verified_fields = {
-                    field for name in collections
-                    for field in full_collections.get(name, {}).get("fields", {})
-                }
-                record_fields = set(record.get("fields") or [])
-                if record_fields - verified_fields:
-                    continue
-            overlap = collections & candidate_names
-            if collections and not overlap:
-                continue
-            fields = set(record.get("fields") or [])
-            field_overlap = set().union(*(
-                fields & candidate_fields.get(name, set()) for name in overlap
-            )) if overlap else set()
-            text = str(record.get("text") or "")
-            lexical_tokens = _tokens(text)
-            lexical = len(question_tokens & lexical_tokens) / max(1, len(question_tokens))
-            semantic = max(0.0, _cosine(query_embedding or [], record.get("embedding") or []))
-            collection_score = len(overlap) / max(1, len(collections)) if collections else 0.0
-            field_score = min(1.0, len(field_overlap) / max(1, len(fields))) if fields else 0.0
-            kind = str(record.get("type") or "")
-            type_terms = {
-                "relationship": {"related", "relationship", "link", "join", "reference"},
-                "field_definition": {"meaning", "means", "definition", "represent", "represents"},
-                "coded_value": {"code", "coded", "status", "value", "means"},
-                "business_rule": {"rule", "revenue", "include", "exclude", "policy"},
-            }.get(kind, set())
-            type_score = 0.05 if question_tokens & type_terms else 0.0
-            if not query_embedding:
-                score = 0.50 * lexical + 0.30 * collection_score + 0.15 * field_score + type_score
+            knowledge_id = str(record.get("_id", ""))
+            source = record.get("source") or "manual"
+            semantic = _cosine(query_embedding or [], record.get("embedding") or [])
+            collections = _references(record.get("collections", []))
+            fields = _references(record.get("fields", []))
+            rejection = None
+            overlap = (collections or set()) & candidate_names
+            # Defense in depth: never rely solely on the repository's filter.
+            if record.get("status") != "active" or record.get("active") is not True:
+                rejection = "inactive"
+            elif not knowledge_id or not isinstance(record.get("text"), str) or not record["text"].strip():
+                rejection = "invalid_record"
+            elif collections is None or fields is None or record.get("scope", "database") != "database":
+                rejection = "invalid_scope"
+            elif not collections <= set(authoritative):
+                rejection = "unknown_collection"
             else:
-                score = 0.42 * semantic + 0.23 * lexical + 0.20 * collection_score + 0.10 * field_score + type_score
-            if score > 0:
-                scored.append((score, record))
-        scored.sort(key=lambda pair: (-pair[0], str(pair[1].get("_id", ""))))
-        selected = []
-        for score, record in scored[:self.top_k]:
-            selected.append({
-                "knowledge_id": str(record.get("_id", "")),
-                "type": record.get("type"), "text": record.get("text"),
+                # Fields are flat in storage; each scoped collection may own
+                # different fields. ContextBuilder restores them to their owner.
+                scoped_names = collections or candidate_names
+                allowed_fields = {field for name in scoped_names
+                                  for field in authoritative.get(name, {}).get("fields", {})}
+                compatible_names = overlap if collections else candidate_names
+                if fields - allowed_fields:
+                    rejection = "unknown_field"
+                elif collections and not overlap:
+                    rejection = "collection_mismatch"
+                elif record.get("embedding_model") not in (None, KNOWLEDGE_EMBEDDING_MODEL):
+                    rejection = "embedding_model_mismatch"
+                elif semantic is None:
+                    rejection = "embedding_unavailable"
+                elif semantic < KNOWLEDGE_MIN_SEMANTIC_SIMILARITY:
+                    rejection = "below_semantic_threshold"
+            if rejection:
+                logger.info("knowledge_candidate knowledge_id=%s source=%s semantic_similarity=%s "
+                            "feedback_bonus=0 collection_bonus=0 field_bonus=0 scope_bonus=0 "
+                            "ranking_score=None eligible=false reason=%s",
+                            knowledge_id, source, semantic, rejection)
+                continue
+
+            # Legacy user_feedback records also originated solely in the negative
+            # feedback path. Missing source remains ordinary knowledge.
+            from_feedback = source in {"negative_feedback", "user_feedback"}
+            feedback_bonus = KNOWLEDGE_FEEDBACK_PRIORITY_BONUS if from_feedback else 0.0
+            scope_bonus = KNOWLEDGE_SCOPE_MATCH_BONUS if collections <= candidate_names else 0.0
+            collection_bonus = KNOWLEDGE_COLLECTION_MATCH_BONUS * len(overlap) / max(1, len(collections))
+            retrieved_fields = {field for name in compatible_names
+                                for field in candidate_collections.get(name, {}).get("fields", {})}
+            field_bonus = KNOWLEDGE_FIELD_MATCH_BONUS * len(fields & retrieved_fields) / max(1, len(fields))
+            ranking_score = semantic + feedback_bonus + scope_bonus + collection_bonus + field_bonus
+            logger.info("knowledge_candidate knowledge_id=%s source=%s semantic_similarity=%.6f "
+                        "feedback_bonus=%.6f collection_bonus=%.6f field_bonus=%.6f scope_bonus=%.6f "
+                        "ranking_score=%.6f eligible=true",
+                        knowledge_id, source, semantic, feedback_bonus, collection_bonus,
+                        field_bonus, scope_bonus, ranking_score)
+            scored.append({
+                "knowledge_id": knowledge_id, "source": source,
+                "created_from_feedback": from_feedback,
+                "source_request_id": record.get("source_request_id"),
+                "semantic_similarity": semantic, "ranking_score": ranking_score,
+                "type": record.get("type"), "text": record["text"],
                 "collections": record.get("collections", []), "fields": record.get("fields", []),
                 "confidence": record.get("confidence", 0),
             })
+        scored.sort(key=lambda item: (-item["ranking_score"], -item["semantic_similarity"], item["knowledge_id"]))
+        selected = []
+        seen_ids = set()
+        seen_rules = set()
+        for item in scored:
+            identity = (str(item["type"] or ""), " ".join(item["text"].split()).casefold(),
+                        tuple(sorted(set(item["collections"]))), tuple(sorted(set(item["fields"]))))
+            if item["knowledge_id"] in seen_ids or identity in seen_rules:
+                continue
+            seen_ids.add(item["knowledge_id"])
+            seen_rules.add(identity)
+            selected.append(item)
+            if len(selected) == self.top_k:
+                break
         elapsed = (time.perf_counter() - started) * 1000
         telemetry = {"knowledge_retrieval_latency_ms": elapsed,
                      "knowledge_retrieval_top_k": self.top_k,
                      "knowledge_candidates_returned": len(selected)}
-        logger.info("knowledge_retrieval_completed candidates=%d top_k=%d latency_ms=%.1f",
-                    len(selected), self.top_k, elapsed)
+        logger.info("knowledge_retrieval_result ordered_knowledge_ids=%s top_k=%d returned_count=%d latency_ms=%.1f",
+                    [item["knowledge_id"] for item in selected], self.top_k, len(selected), elapsed)
         return {"knowledge": selected, "telemetry": telemetry}

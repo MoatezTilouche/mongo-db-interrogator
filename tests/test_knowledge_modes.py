@@ -51,6 +51,9 @@ def test_learning_modes(monkeypatch, mode, count, minimum, confidence, enabled, 
         "collections": ["orders"], "fields": ["status"], "confidence": confidence}, "req_rule")
     assert result["status"] == expected
     assert repository.record["active"] == (expected == "active")
+    assert repository.record["source"] == "negative_feedback"
+    assert repository.record["created_from_feedback"] is True
+    assert repository.record["source_request_id"] == "req_rule"
 
 
 def test_immediate_mode_keeps_conflict_check(monkeypatch):

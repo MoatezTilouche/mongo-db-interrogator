@@ -127,7 +127,9 @@ class KnowledgeIngestionService:
         record = {
             "_id": key, "normalized_key": key, "type": kind, "text": text,
             "collections": collections, "fields": fields, "metadata": knowledge_metadata,
-            "source": "user_feedback", "source_request_id": request_id,
+            # FeedbackService routes only disliked generations into this path.
+            "source": "negative_feedback", "created_from_feedback": True,
+            "source_request_id": request_id,
             "source_request_ids": [request_id], "confidence": float(analysis.get("confidence", 0)),
             "confirmation_count": 1, "status": "candidate", "active": False,
             "embedding": vector, "embedding_model": KNOWLEDGE_EMBEDDING_MODEL,
