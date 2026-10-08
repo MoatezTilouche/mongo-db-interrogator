@@ -6,3 +6,4 @@ __pycache__/
 artifacts/*.py
 data/
 .DS_Store
+compose.yaml
