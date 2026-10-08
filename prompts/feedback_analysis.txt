@@ -1,9 +1,13 @@
-Classify negative feedback using only the supplied request context and comment. Return compact JSON only; no reasoning or query. Never turn dissatisfaction or a request-specific correction into database-wide knowledge.
+Classify negative feedback using only the supplied request context and comment. Return compact JSON only; no query. Distinguish reusable business facts from personal preferences and changes limited to one request. Never turn dissatisfaction alone or an explicitly one-time change into reusable database knowledge.
 
 Choose exactly one scope:
 - user: a reusable personal interpretation or format preference.
-- database: an explicit reusable business rule, field meaning, coded value, or collection relationship supported by the comment/context.
+- database: an asserted reusable business rule, collection/source mapping, field meaning, coded value, or collection relationship supported by the comment/context. A rule may apply to a particular business intent; it does not have to apply to every query.
 - one_off: correction limited to this query, missing one requested filter, or anything unsupported/unclear.
+
+Classify the business meaning independently of feedback_type: wrong_collection, wrong_field, and wrong_filter can also describe reusable database knowledge. Users do not have to say "save this", "remember", "always", or "future requests" to assert a business fact. Generic statements such as "orders should be fetched from <collection> with <field> = <value>" can assert a reusable source/value rule. Preserve the supported business condition; do not generalize a recharge-order rule to all orders.
+Use one_off for explicit temporary restrictions ("this query only", "just this once") and requests for individual values/dates that do not define business semantics. Absence of the word "always" is not evidence of one_off. Do not invent "for this request" or another temporary restriction in corrected_meaning when the user/context did not provide it. If the intended breadth is genuinely unclear, retain one_off and describe that ambiguity in scope_reason instead of asserting an invented restriction.
+Return scope_reason as a brief classification justification, and scope_evidence as a short verbatim excerpt of the user's comment supporting the scope, or null if no such excerpt exists. These fields explain the decision, not query execution.
 
 User preference example: “I want top products to mean highest stock.” Set reusable_preference=true, preference to the user's personal ranking meaning, knowledge_candidate=false, scope=user.
 
@@ -19,10 +23,15 @@ Database knowledge example: “Revenue should only include completed orders.” 
 
 One-off example: “You forgot Tunisia in this query.” Normally set reusable_preference=false, knowledge_candidate=false, scope=one_off.
 
+Reusable source/value example: "orders should be fetched from orders_proc_hist collection with actionCode = Recharge" asserts a collection-source mapping and exact case-sensitive code. When the request context concerns recharge orders, set feedback_type=wrong_collection, scope=database, knowledge_candidate=true, knowledge_type=business_rule, collections=["orders_proc_hist"], fields=["actionCode"], corrected_meaning="Recharge orders are fetched from orders_proc_hist where actionCode = 'Recharge'." Preserve the supported intent when the original question supplies a different condition; never invent it.
+Contrasting one-off example: "For this query only, fetch orders from orders_proc_hist with actionCode = Recharge" has scope=one_off and knowledge_candidate=false. Keep the supplied correction available to the current request without treating it as a reusable rule.
+Field meaning example: "executionDate is the date the order was processed, not the creation date" is database knowledge with knowledge_type=field_definition when those meanings are explicitly asserted.
+Coded value example: "actionCode Recharge means a recharge operation; recharge is not the same value" is database knowledge with knowledge_type=coded_value. Preserve literal spelling and case.
+
 For database scope, knowledge_candidate must be true and reusable_preference false. For user scope, knowledge_candidate must be false. For one_off, both must be false. knowledge_type is null unless knowledge_candidate=true. Do not invent schema names, meanings, rules, or relationships. Use null when cause/meaning/preference is unsupported. Confidence is a JSON number from 0 to 1.
 
 Output every key in this shape (use one of the listed enum values):
-{"feedback_type":"wrong_metric","cause":null,"corrected_meaning":null,"reusable_preference":false,"preference":null,"preference_type":null,"collection":null,"field":null,"direction":null,"limit":null,"latest":null,"apply_mode":null,"condition":null,"knowledge_candidate":false,"knowledge_type":null,"collections":[],"fields":[],"scope":"one_off","confidence":0.0}
+{"feedback_type":"wrong_metric","cause":null,"corrected_meaning":null,"reusable_preference":false,"preference":null,"preference_type":null,"collection":null,"field":null,"direction":null,"limit":null,"latest":null,"apply_mode":null,"condition":null,"knowledge_candidate":false,"knowledge_type":null,"collections":[],"fields":[],"scope":"one_off","scope_reason":null,"scope_evidence":null,"confidence":0.0}
 
 Additional supported example:
 {"feedback_type":"wrong_business_rule","cause":"Revenue included pending orders","corrected_meaning":"Revenue calculations must include only completed orders.","reusable_preference":false,"preference":null,"knowledge_candidate":true,"knowledge_type":"business_rule","collections":["orders"],"fields":["status","total"],"scope":"database","confidence":0.9}

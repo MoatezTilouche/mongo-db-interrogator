@@ -23,7 +23,8 @@ def query(payload: QueryRequest, request: Request,
         raise HTTPException(status_code=503, detail={
             "message": "Schema bootstrap has not completed.", "schema_ready": False,
         })
-    return public_response(service.run(payload.question))
+    options = {"feedback_request_id": payload.feedback_request_id} if payload.feedback_request_id else {}
+    return public_response(service.run(payload.question, **options))
 
 
 def schema_ready(request: Request) -> bool:
@@ -45,7 +46,8 @@ async def stream_query(payload: QueryRequest, request: Request,
     def run():
         try:
             with workflow_listener(lambda data: send("workflow", data)):
-                result = public_response(service.run(payload.question))
+                options = {"feedback_request_id": payload.feedback_request_id} if payload.feedback_request_id else {}
+                result = public_response(service.run(payload.question, **options))
             send("result", jsonable_encoder(result))
         except Exception:
             send("error", {"message": "Query could not be completed."})

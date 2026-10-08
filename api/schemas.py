@@ -5,6 +5,7 @@ from agents.feedback_analysis_agent import FeedbackAnalysis
 
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1)
+    feedback_request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("question")
     @classmethod
@@ -39,6 +40,7 @@ class QueryResponse(BaseModel):
     query_context: dict[str, Any] | None = None
     applied_preferences: list[dict[str, Any]] = Field(default_factory=list)
     applied_knowledge: list[dict[str, Any]] = Field(default_factory=list)
+    applied_feedback: dict[str, Any] | None = None
     execution_metadata: dict[str, Any] | None = None
     route: dict[str, Any] | None = None
     execution_path: dict[str, Any] | None = None
@@ -91,6 +93,8 @@ class FeedbackResponse(BaseModel):
     knowledge_id: str | None = None
     knowledge_status: str | None = None
     knowledge_error: str | None = None
+    learning_active: bool = False
+    regeneration_ready: bool = False
 
 class OptimizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

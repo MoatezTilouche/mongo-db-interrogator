@@ -1013,6 +1013,8 @@ Conflicts can block activation. Only active knowledge reaches prompts. Internal 
 
 Knowledge retrieval applies a semantic relevance gate before configurable feedback, scope, collection, and field bonuses, then keeps the highest-ranked five rules. Raw similarity and ranking score remain separate, and ordered active rules reach both generation prompts. See [knowledge ranking and evaluation](docs/knowledge-ranking.md) for configuration, runtime tracing, tests, and limitations.
 
+Submitted negative feedback also stages a correction for the next generation of the same question, independently of reusable knowledge classification. The existing frontend flow needs no changes. See [backend feedback regeneration](docs/feedback-regeneration.md) for matching, retries, response fields, and tests.
+
 
 
 ## Configuration reference

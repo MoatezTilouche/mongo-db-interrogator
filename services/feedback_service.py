@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
-from agent.config import DEFAULT_USER_ID
+from agent.config import DEFAULT_USER_ID, FEEDBACK_REGENERATION_TTL_SECONDS
 from agents.feedback_analysis_agent import FeedbackAnalysis, FeedbackAnalysisAgent
 from agent.telemetry import request_context
 from database.feedback_repository import FeedbackRepository
@@ -63,8 +63,21 @@ class FeedbackService:
         now = datetime.now(timezone.utc)
         revision = uuid4().hex
         user_id = history.get("user_id") or DEFAULT_USER_ID
+        original_question = history.get("original_question") or history.get("question") or ""
+        regeneration_ready = bool(not liked and original_question and comment and comment.strip())
         record = safe_record({"request_id": request_id, "user_id": user_id, "liked": liked, "comment": comment,
                               "analysis": None, "revision": revision,
+                              # Save together with raw feedback, independently of
+                              # classification/learning success. Positive feedback
+                              # cancels a pending correction on this request.
+                              "regeneration": {
+                                  "question": original_question.strip(),
+                                  "base_question": history.get("effective_question") or original_question,
+                                  "state": "pending" if regeneration_ready else "cancelled",
+                                  "submitted_at": now,
+                                  "submission_order": time.time_ns(),
+                                  "expires_at": now + timedelta(seconds=FEEDBACK_REGENERATION_TTL_SECONDS),
+                              },
                               "created_at": now, "updated_at": now})
         try:
             self.feedback_repository.save(record)
@@ -76,7 +89,8 @@ class FeedbackService:
                     "analysis_created": False, "analysis": None, "analysis_error": None,
                     "preference_saved": False, "preference_action": None, "preference_error": None,
                     "knowledge_saved": False, "knowledge_action": None,
-                    "knowledge_id": None, "knowledge_status": None, "knowledge_error": None}
+                    "knowledge_id": None, "knowledge_status": None, "knowledge_error": None,
+                    "learning_active": False, "regeneration_ready": regeneration_ready}
         if liked and history.get("execution_success") and history.get("generated_query"):
             try:
                 schema = {"collections": history.get("selected_schema") or {},
@@ -111,6 +125,7 @@ class FeedbackService:
             output = FeedbackAnalysis.model_validate(safe_record(analysis.model_dump())).model_dump()
             if not self.feedback_repository.save_analysis(request_id, revision, output):
                 response["analysis_error"] = "Feedback was updated while analysis was running; stale analysis was discarded."
+                response["regeneration_ready"] = False
                 return response
             response.update(analysis_created=True, analysis=output)
             # Upsert the replacement before touching existing learning. Failed
@@ -119,7 +134,7 @@ class FeedbackService:
                 learning = self.learning_router.route(history, output, request_id, user_id)
                 if learning.get("route") == "user_preference":
                     action = learning.get("preference_action")
-                    response.update(preference_saved=bool(action), preference_action=action)
+                    response.update(preference_saved=bool(action), preference_action=action, learning_active=bool(action))
                     if action is None:
                         response["preference_error"] = "Reusable preference could not be matched to the query schema."
                         logger.info("user_preference_skipped request_id=%s user_id=%s reason=see_normalization_log",
@@ -129,6 +144,7 @@ class FeedbackService:
                     response.update(
                         knowledge_saved=bool(outcome), knowledge_action=outcome.get("action"),
                         knowledge_id=outcome.get("knowledge_id"), knowledge_status=outcome.get("status"),
+                        learning_active=outcome.get("status") == "active" and outcome.get("active") is True,
                     )
                     if not outcome:
                         response["knowledge_error"] = "Analysis did not contain a usable knowledge candidate."

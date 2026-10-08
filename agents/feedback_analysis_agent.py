@@ -15,6 +15,15 @@ from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 from database.record_safety import safe_record
 
+_ONE_OFF = re.compile(
+    r"\b(?:for\s+)?(?:this|that)\s+(?:request|query|report)\s+only\b"
+    r"|\bonly\s+for\s+(?:this|that)\s+(?:request|query|report)\b"
+    r"|\bonly\s+(?:this|that)\s+(?:request|query|report)\b"
+    r"|\b(?:just\s+)?this\s+time\s+only\b"
+    r"|\bjust\s+this\s+once\b"
+    r"|\bone[- ]time\s+(?:only\s+)?(?:request|query|report)\b", re.I,
+)
+
 
 class FeedbackAnalysis(StrictOutput):
     feedback_type: Literal[
@@ -43,6 +52,8 @@ class FeedbackAnalysis(StrictOutput):
     collections: list[str] = Field(default_factory=list, max_length=20)
     fields: list[str] = Field(default_factory=list, max_length=50)
     scope: Literal["user", "database", "one_off"]
+    scope_reason: str | None = Field(default=None, max_length=300)
+    scope_evidence: str | None = Field(default=None, max_length=300)
     confidence: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
@@ -62,6 +73,20 @@ class FeedbackAnalysis(StrictOutput):
 
 class FeedbackAnalysisAgent:
     @staticmethod
+    def _normalize_explicit_one_off(analysis: FeedbackAnalysis, comment: str) -> FeedbackAnalysis:
+        # Only the user's original words can establish this restriction. Never
+        # infer it from "for this request" invented by corrected_meaning.
+        evidence = _ONE_OFF.search(comment)
+        if evidence is None:
+            return analysis
+        return analysis.model_copy(update={
+            "scope": "one_off", "knowledge_candidate": False, "knowledge_type": None,
+            "reusable_preference": False, "preference": None,
+            "scope_reason": "The user explicitly limited the correction to one request.",
+            "scope_evidence": evidence.group(0),
+        })
+
+    @staticmethod
     def _normalize_clear_ranking_correction(analysis: FeedbackAnalysis, history: dict,
                                            comment: str) -> FeedbackAnalysis:
         """Treat concrete corrections to ambiguous rankings as reusable user intent."""
@@ -76,16 +101,7 @@ class FeedbackAnalysisAgent:
         question = str(history.get("question") or "")
         if confidence < 0.75 or not re.search(r"\b(top|rank|ranking|highest|lowest|most|least|best|sort|order)\b", question, re.I):
             return analysis
-        explicit_one_off = re.search(
-            r"\b(?:for\s+)?(?:this|that)\s+(?:request|query|report)\s+only\b"
-            r"|\bonly\s+for\s+(?:this|that)\s+(?:request|query|report)\b"
-            r"|\bonly\s+(?:this|that)\s+(?:request|query|report)\b"
-            r"|\b(?:just\s+)?this\s+time\s+only\b"
-            r"|\bjust\s+this\s+once\b"
-            r"|\bone[- ]time\s+(?:only\s+)?(?:request|query|report)\b",
-            comment,
-            re.I,
-        )
+        explicit_one_off = _ONE_OFF.search(comment)
         if explicit_one_off:
             return analysis
         preference = (analysis.corrected_meaning or "").strip()
@@ -101,7 +117,7 @@ class FeedbackAnalysisAgent:
     def analyze(self, history: dict, comment: str) -> FeedbackAnalysis:
         # Explicit allowlist: never forward previews, telemetry or other requests.
         context = {key: history.get(key) for key in (
-            "question", "selected_schema", "query_context", "generated_query",
+            "question", "original_question", "effective_question", "selected_schema", "query_context", "generated_query",
             "validated_query", "final_response",
         )}
         if context["query_context"] is None and history.get("query_plan"):
@@ -113,6 +129,7 @@ class FeedbackAnalysisAgent:
         })
         response = llm_router.invoke("feedback_analysis", [HumanMessage(content=prompt)], FeedbackAnalysis)
         analysis = FeedbackAnalysis.model_validate(parse_json_from_text(response.content))
+        analysis = self._normalize_explicit_one_off(analysis, comment)
         analysis = self._normalize_clear_ranking_correction(analysis, history, comment)
         return self._normalize_preference_attributes(analysis, history, comment)
 
