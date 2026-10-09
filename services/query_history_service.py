@@ -12,6 +12,7 @@ from agent.config import DEFAULT_USER_ID, QUERY_HISTORY_PREVIEW_MAX_BYTES, QUERY
 from agent.telemetry import request_context, capture_usage, totals
 from agent.progress import capture_workflow
 from database.query_history_repository import QueryHistoryRepository
+from database.feedback_repository import FeedbackRepository
 from database.record_safety import safe_record
 from database.schema_inspector import compact_schema
 from orchestrator import run_request
@@ -19,16 +20,45 @@ from orchestrator import run_request
 logger = logging.getLogger(__name__)
 
 
+class FeedbackCorrectionUnavailable(ValueError):
+    pass
+
+
 class QueryHistoryService:
     def __init__(self, repository=None, pipeline: Callable | None = None,
                  preview_size: int = QUERY_HISTORY_PREVIEW_SIZE,
-                 preview_max_bytes: int = QUERY_HISTORY_PREVIEW_MAX_BYTES):
+                 preview_max_bytes: int = QUERY_HISTORY_PREVIEW_MAX_BYTES, feedback_repository=None):
         self.repository = repository if repository is not None else QueryHistoryRepository()
         self.pipeline = pipeline if pipeline is not None else run_request
         from services.semantic_template_cache import SemanticTemplateCache
         self.template_cache = SemanticTemplateCache() if pipeline is None else None
         self.preview_size = max(0, preview_size)
         self.preview_max_bytes = max(0, preview_max_bytes)
+        # Runtime uses durable feedback storage; injected pipelines/repositories
+        # can opt in explicitly without introducing external I/O in unit tests.
+        self.feedback_repository = feedback_repository
+        if self.feedback_repository is None and repository is None:
+            self.feedback_repository = FeedbackRepository()
+        elif (self.feedback_repository is None and isinstance(self.repository, QueryHistoryRepository)
+              and self.repository.database is not None):
+            self.feedback_repository = FeedbackRepository(self.repository.database)
+
+    @staticmethod
+    def _corrected_question(base_question: str, comment: str) -> str:
+        return (f"Original question and any earlier corrections:\n{base_question}\n\n"
+                "Latest correction submitted by the user for this question:\n"
+                f"{comment}\n\n"
+                "Apply the latest correction to this generation. It overrides conflicting earlier details; "
+                "preserve all unrelated requested filters, dates, limits, and output requirements. "
+                "Use valid schema references and retain read-only query constraints.")
+
+    def _finish_correction(self, correction, request_id, applied):
+        try:
+            self.feedback_repository.finish_correction(correction["request_id"], correction["revision"], request_id, applied)
+            logger.info("feedback_correction_%s request_id=%s source_request_id=%s",
+                        "applied" if applied else "retry_pending", request_id, correction["request_id"])
+        except Exception as exc:
+            logger.error("feedback_correction_finish_failed request_id=%s error_type=%s", request_id, type(exc).__name__)
 
     def _preview(self, rows: list) -> list:
         preview = []
@@ -39,20 +69,40 @@ class QueryHistoryService:
             preview.append(candidate)
         return preview
 
-    def run(self, question: str, request_id=None, skip_cache=False, cache_metadata=None) -> dict[str, Any]:
+    def run(self, question: str, request_id=None, skip_cache=False, cache_metadata=None,
+            feedback_request_id: str | None = None) -> dict[str, Any]:
         continuation = request_id is not None
         request_id = request_id or f"req_{uuid4().hex}"
         started = time.perf_counter()
+        correction = None
+        effective_question = question
         try:
             with request_context(request_id), capture_usage() as cache_usage, capture_workflow() as trace:
                 if not (question or "").strip():
                     raise ValueError("Question is empty")
-                document, metadata = (self.template_cache.lookup(question)
+                if not continuation and self.feedback_repository is not None:
+                    correction = self.feedback_repository.claim_correction(
+                        question, DEFAULT_USER_ID, request_id, feedback_request_id)
+                    if correction:
+                        base_question = correction["regeneration"].get("base_question") or question
+                        effective_question = self._corrected_question(base_question, correction["comment"])
+                        # This is an explicit regeneration, not a request to
+                        # suggest/reuse a template that may encode the rejected query.
+                        skip_cache = True
+                        cache_metadata = {"checked": False, "hit": False,
+                                          "user_decision": "feedback_regenerate",
+                                          "feedback_request_id": correction["request_id"]}
+                        logger.info("feedback_correction_claimed request_id=%s source_request_id=%s revision=%s",
+                                    request_id, correction["request_id"], correction["revision"])
+                if feedback_request_id and not correction:
+                    raise FeedbackCorrectionUnavailable()
+                document, metadata = (self.template_cache.lookup(effective_question)
                     if self.template_cache is not None and not skip_cache else (None, cache_metadata or {"checked": False, "hit": False}))
                 if skip_cache and metadata.get("user_decision") == "regenerate":
                     from agent.progress import emit
                     emit("SemanticTemplateCache", "completed", message="User chose regeneration")
-                result = self.template_cache.suggestion(document, metadata) if document else self.pipeline(question)
+                result = self.template_cache.suggestion(document, metadata) if document else self.pipeline(effective_question)
+                result = dict(result)
                 result["semantic_template_cache"] = metadata
                 telemetry = result.setdefault("telemetry", totals(cache_usage) if document else {})
                 if not document:
@@ -69,14 +119,32 @@ class QueryHistoryService:
         except Exception as exc:
             logger.error("query_pipeline_failed request_id=%s error_type=%s", request_id, type(exc).__name__)
             result = {"execution_success": False, "execution_error": "Query pipeline failed."}
+            if isinstance(exc, FeedbackCorrectionUnavailable):
+                result.update(execution_error="The feedback correction is unavailable for this question.",
+                              execution_error_code="feedback_correction_unavailable")
         elapsed = (time.perf_counter() - started) * 1000
         result["request_id"] = request_id
-        if result.get("status") == "similar_template_detected":
-            from services.template_decision_service import TemplateDecisionService
-            TemplateDecisionService().pause(request_id, question, result)
-        if result.get("status") == "optimization_required":
-            from services.query_optimization_service import QueryOptimizationService
-            QueryOptimizationService().pause(result, question)
+        if correction:
+            result["original_question"] = question
+            result["effective_question"] = effective_question
+            result["applied_feedback"] = {
+                "source_request_id": correction["request_id"], "revision": correction["revision"],
+                "comment": correction["comment"],
+            }
+        try:
+            if result.get("status") == "similar_template_detected":
+                from services.template_decision_service import TemplateDecisionService
+                TemplateDecisionService().pause(request_id, effective_question, result)
+            if result.get("status") == "optimization_required":
+                from services.query_optimization_service import QueryOptimizationService
+                QueryOptimizationService().pause(result, effective_question)
+        except Exception:
+            if correction:
+                self._finish_correction(correction, request_id, False)
+            raise
+        if correction:
+            applied = bool(result.get("execution_success") or result.get("status") == "optimization_required")
+            self._finish_correction(correction, request_id, applied)
         self.save_result(request_id, question, result, elapsed, continuation)
         return result
 
@@ -102,6 +170,7 @@ class QueryHistoryService:
                 "query_context": result.get("query_context"),
                 "applied_preferences": result.get("applied_preferences", []),
                 "applied_knowledge": result.get("applied_knowledge", []),
+                "applied_feedback": result.get("applied_feedback"),
                 "agents_called": (result.get("execution_path") or {}).get("agents_called", []),
                 "summary_skipped": (result.get("execution_path") or {}).get("summary_skipped", True),
                 "repair_used": (result.get("execution_path") or {}).get("repair_used", False),

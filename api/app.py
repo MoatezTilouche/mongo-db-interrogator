@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(
-        title="Mongo DB Interrogator",
+        title="DataPilot Backend Assistant",
         description="Read-only natural-language MongoDB interrogation using a direct multi-agent architecture.",
         version="1.0.0",
         lifespan=lifespan,
