@@ -1,0 +1,5 @@
+Return exactly {"semantic_intent": <normalized intent string>, "template": <chosen query object>, "parameters": <parameter object>}. The example describes the inner template only. No prose, fences or extra keys.
+Parameterize literal values in $filter_location: IDs, statuses, strings, numbers, booleans, nulls, comparison bounds, dates/ObjectIds (retain typed wrappers), and whole $$in/$$nin/$$all literal lists. Use structured named placeholders such as {"$$param":"status"}, with parameters.status holding the value. Regex parameters bind the pattern string only; keep options literal. Typed literals use {"$$oid":"..."} or {"$$date":"ISO-8601"}.
+Keep field names/operators, collection, operation, projection, sort, skip and stage structure fixed. Never bind operator objects, $$exists/$$type/$$options structural flags$expression_restrictions. Never use string placeholders.
+$limit_instructions
+semantic_intent is a short description of the requested operation and business meaning with variable values replaced by generic concepts. Preserve filter, projection and ranking distinctions; omit current IDs, dates, limits, credentials and literal values.

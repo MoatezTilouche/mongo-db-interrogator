@@ -1,0 +1,120 @@
+{
+  "question": "give me orders in progress",
+  "minimum_semantic_similarity": 0.5,
+  "initial_collections": [
+    "orders",
+    "orders_proc_hist",
+    "ordersHist",
+    "basket_Order_Assoc",
+    "basketHeader",
+    "basketAction",
+    "basketCustomerInfo",
+    "basketProductPrice"
+  ],
+  "context_collections": [
+    "orders",
+    "orders_proc_hist",
+    "ordersHist",
+    "basket_Order_Assoc",
+    "basketHeader",
+    "basketAction",
+    "basketCustomerInfo",
+    "basketProductPrice",
+    "manual_recycle"
+  ],
+  "added_collections": [
+    "manual_recycle"
+  ],
+  "selected_rules": [
+    {
+      "text": "Passed orders have status = 'Passed'.",
+      "collections": [
+        "orders_proc_hist"
+      ],
+      "fields": [
+        "status"
+      ],
+      "semantic_similarity": 0.535278081430518,
+      "ranking_score": 0.8052780814305182
+    },
+    {
+      "text": "In-progress orders have requestStatus = 'In Progress'.",
+      "collections": [],
+      "fields": [],
+      "semantic_similarity": 0.6292552969906344,
+      "ranking_score": 0.7992552969906345
+    },
+    {
+      "text": "Orders in progress have statusOrder = \"In Progress\".",
+      "collections": [
+        "manual_recycle"
+      ],
+      "fields": [
+        "statusOrder"
+      ],
+      "semantic_similarity": 0.6490515183897307,
+      "ranking_score": 0.7990515183897308
+    },
+    {
+      "text": "The history of a command's orders should always be collected from orders_proc_hist.",
+      "collections": [
+        "orders_proc_hist"
+      ],
+      "fields": [],
+      "semantic_similarity": 0.512963261489525,
+      "ranking_score": 0.7329632614895251
+    },
+    {
+      "text": "Orders in progress must be fetched from the manual_recycle collection.",
+      "collections": [
+        "manual_recycle"
+      ],
+      "fields": [],
+      "semantic_similarity": 0.5035673426616397,
+      "ranking_score": 0.6535673426616397
+    }
+  ],
+  "in_progress_rules": [
+    {
+      "text": "Orders in progress must always be fetched from the manual_recycle collection.",
+      "collections": [
+        "manual_recycle",
+        "orders_proc_hist"
+      ],
+      "semantic_similarity": 0.47517143820751334
+    },
+    {
+      "text": "Orders in progress have statusOrder = \"In Progress\".",
+      "collections": [
+        "manual_recycle"
+      ],
+      "semantic_similarity": 0.6490515183897307
+    },
+    {
+      "text": "In-progress orders have requestStatus = 'In Progress'.",
+      "collections": [],
+      "semantic_similarity": 0.6292552969906344
+    },
+    {
+      "text": "Orders in progress must be fetched from the manual_recycle collection.",
+      "collections": [
+        "manual_recycle"
+      ],
+      "semantic_similarity": 0.5035673426616397
+    }
+  ],
+  "manual_recycle_in_compact_prompt": true,
+  "database_writes": 0,
+  "chat_calls": 0,
+  "embedding_calls": 1,
+  "manual_recycle_statusOrder_in_compact_prompt": true,
+  "manual_recycle_prompt_field_count": 110,
+  "generated_at": "2026-10-09T13:16:11.288885+00:00",
+  "validation_scope": "Actual cached schema and active rules with one real question embedding; collection selection and query generation LLMs were not called.",
+  "remaining_conflict": "The global requestStatus rule remains active and ranks just above the collection-scoped statusOrder rule; retrieval recovery does not correct persisted rule semantics.",
+  "focused_tests_passed": 182,
+  "full_suite": {
+    "passed": 413,
+    "preexisting_failures": 17
+  }
+}

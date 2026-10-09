@@ -1,0 +1,3 @@
+Use count_documents for count requests (the hint count means count_documents). Inner template shape:
+{"operation":"count_documents","collection":"<collection>","filter":{}}
+Filter is an object. Count all matching documents; do not add projection, sort or a result limit.

@@ -14,6 +14,8 @@ from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 from services.mongo_capabilities import get_mongo_capabilities
 from agent.telemetry import current_request_id
+from services.prompt_context import compact_knowledge, compact_preferences
+from services.query_prompt_instructions import normalize_operation, operation_instructions, output_contract
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,8 +25,9 @@ class QueryGeneratorAgent:
     def __init__(self, capabilities=None):
         self.capabilities = capabilities or get_mongo_capabilities()
 
-    def _invoke_json(self, prompt: str, role: str) -> dict[str, Any]:
-        prompt += "\n" + self.capabilities.lookup_guidance()
+    def _invoke_json(self, prompt: str, role: str, *, include_lookup_guidance: bool = True) -> dict[str, Any]:
+        if include_lookup_guidance:
+            prompt += "\n" + self.capabilities.lookup_guidance()
         try:
             response = llm_router.invoke(role, [HumanMessage(content=prompt)], GeneratedQuery)
             parsed = parse_json_from_text((getattr(response, "content", "") or "").strip())
@@ -45,14 +48,17 @@ class QueryGeneratorAgent:
                  operation_hint: str = "unknown", user_preferences: list[dict[str, Any]] | None = None,
                  database_knowledge: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         # `plan` is accepted for compatibility but intentionally never enters the prompt.
+        operation = normalize_operation(operation_hint)
         return self._invoke_json(render_prompt("query_generator", {
             "question": question,
             "schema_json": json.dumps(compact_schema(schema_spec), ensure_ascii=False, default=str),
-            "operation_hint": operation_hint,
+            "operation_hint": operation,
             "constraints_json": json.dumps({"read_only": True, "default_limit": None, "preserve_requested_limit": True, "server_enforces_output_cap": True}),
-            "user_preferences_json": json.dumps(user_preferences or [], ensure_ascii=False, separators=(",", ":")),
-            "database_knowledge_json": json.dumps(database_knowledge or [], ensure_ascii=False, separators=(",", ":")),
-        }), "query_generator")
+            "user_preferences_json": json.dumps(compact_preferences(user_preferences), ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(compact_knowledge(database_knowledge), ensure_ascii=False, separators=(",", ":")),
+            "operation_instructions": operation_instructions(operation),
+            "output_contract": output_contract(operation),
+        }), "query_generator", include_lookup_guidance=operation in {"aggregate", "unknown"})
 
     @traceable(name="query_generator.optimize")
     def optimize(self, original_question, query_context, schema_spec, previous_query,
@@ -69,8 +75,11 @@ class QueryGeneratorAgent:
         context = {"mode": "optimize", "original_question": original_question,
                    "query_context": query_context, "selected_schema": compact_schema(schema_spec),
                    "previous_query": previous_query, "refinement": refinement,
-                   "user_preferences": user_preferences or [], "database_knowledge": database_knowledge or []}
-        return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str), "query_generator")
+                   "user_preferences": compact_preferences(user_preferences),
+                   "database_knowledge": compact_knowledge(database_knowledge)}
+        operation = normalize_operation(previous_query.get("operation"))
+        return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str), "query_generator",
+                                 include_lookup_guidance=operation in {"aggregate", "unknown"})
 
     @traceable(name="query_generator.repair")
     def repair(
@@ -101,11 +110,16 @@ class QueryGeneratorAgent:
                         log_lookups(child, f"{path}[{index}].$facet.{name}")
         log_lookups(previous_query.get("pipeline"))
         logger.info("query_repair request_id=%s llm_repair_invoked=true", current_request_id())
+        operation = normalize_operation(previous_query.get("operation"))
         return self._invoke_json(render_prompt("query_repair", {
             "question": question,
             "schema_json": json.dumps(compact_schema(schema_spec), ensure_ascii=False, default=str),
             "query_json": json.dumps(previous_query, ensure_ascii=False, default=str),
             "error": error,
-            "user_preferences_json": json.dumps(user_preferences or [], ensure_ascii=False, separators=(",", ":")),
-            "database_knowledge_json": json.dumps(database_knowledge or [], ensure_ascii=False, separators=(",", ":")),
-        }), "repair")
+            "user_preferences_json": json.dumps(compact_preferences(user_preferences), ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(compact_knowledge(database_knowledge), ensure_ascii=False, separators=(",", ":")),
+            "operation_instructions": operation_instructions(operation),
+            "repair_instructions": (render_prompt("query_aggregate_repair", {"operation": operation})
+                                    if operation in {"aggregate", "unknown"} else ""),
+            "output_contract": output_contract(operation),
+        }), "repair", include_lookup_guidance=operation in {"aggregate", "unknown"})

@@ -1,4 +1,6 @@
 from copy import deepcopy
+import json
+import math
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -50,3 +52,75 @@ def test_no_knowledge_keeps_retrieved_catalog():
     full_catalog, candidates, _ = fixtures()
     context = ContextBuilder().build("commands", candidates, [], full_catalog=full_catalog)
     assert context["schema"] == candidates
+
+
+@pytest.mark.parametrize("source_scope", [["manual_recycle"], ["manual_recycle", "orders_proc_hist"]])
+def test_in_progress_source_missing_from_shortlist_reaches_both_prompts(monkeypatch, source_scope):
+    import orchestrator
+    from agent.llm import llm_router
+    import services.knowledge_retriever as retrieval
+
+    monkeypatch.setattr(retrieval, "KNOWLEDGE_MIN_SEMANTIC_SIMILARITY", 0.50)
+    full_catalog = {"collections": {
+        "orders": {"fields": {"commandId": ["string"]}},
+        "orders_proc_hist": {"fields": {"commandId": ["string"]}},
+        "manual_recycle": {"fields": {"commandId": ["string"], "statusOrder": ["string"]}},
+    }}
+    candidates = {"collections": {"orders": deepcopy(full_catalog["collections"]["orders"])}}
+    records = [{"_id": "in-progress-source", "type": "business_rule", "source": "user_feedback",
+        "text": "Orders in progress must be fetched from the manual_recycle collection.",
+        "collections": source_scope, "fields": [], "active": True, "status": "active",
+        "embedding_model": retrieval.KNOWLEDGE_EMBEDDING_MODEL,
+        "embedding": [0.60, math.sqrt(1 - 0.60 ** 2)]},
+        {"_id": "in-progress-status", "type": "coded_value", "source": "user_feedback",
+        "text": 'Orders in progress have statusOrder = "In Progress".',
+        "collections": ["manual_recycle"], "fields": ["statusOrder"], "active": True, "status": "active",
+        "embedding_model": retrieval.KNOWLEDGE_EMBEDDING_MODEL,
+        "embedding": [0.55, math.sqrt(1 - 0.55 ** 2)]}]
+    originals = deepcopy((full_catalog, candidates, records))
+    prompts = {}
+
+    def invoke(role, messages, schema):
+        prompts[role] = messages[0].content
+        if role == "query_context":
+            # The actual prompt must contain the source before the mocked LLM
+            # can choose it; the validator then checks the restored catalog.
+            assert '"manual_recycle":' in prompts[role]
+            output = {"complexity": "simple", "operation": "find", "collections": ["manual_recycle"],
+                      "fields": {"manual_recycle": ["commandId"]}}
+        else:
+            output = {"semantic_intent": "Find orders in progress", "template": {
+                "operation": "find", "collection": "manual_recycle",
+                "filter": {"statusOrder": {"$param": "status"}}, "limit": 100},
+                "parameters": {"status": "In Progress"}}
+        return SimpleNamespace(content=json.dumps(output))
+
+    monkeypatch.setattr(llm_router, "invoke", invoke)
+    monkeypatch.setattr(orchestrator.schema_bootstrap_service, "get_catalog", lambda: full_catalog)
+    monkeypatch.setattr(orchestrator.schema_bootstrap_service, "status", lambda: {})
+    monkeypatch.setattr(orchestrator.schema_bootstrap_service, "retrieve", lambda *args: {
+        "catalog": candidates, "telemetry": {}, "_query_embedding": [1.0, 0.0]})
+    app = orchestrator.OrchestratorAgent()
+    app.knowledge_retriever = retrieval.KnowledgeRetriever(SimpleNamespace(list_active=lambda: records))
+    app.preference_service = Mock(user_id="test")
+    app.preference_service.retrieve_for_query.return_value = []
+    app.executor = Mock()
+    app.executor.execute.return_value = {"ok": True, "row_count": 0, "all_rows": [], "sample_rows": []}
+    monkeypatch.setattr(orchestrator.QueryCostGuard, "analyze", Mock(return_value={
+        "status": "safe", "query_signature": "sig", "estimated_rows": 0}))
+    monkeypatch.setattr(orchestrator.PerformanceLogger, "record", Mock())
+
+    result = app.run("give me orders in progress")
+    assert result["execution_success"], result
+    assert result["query_context"]["collections"] == ["manual_recycle"]
+    assert "statusOrder" in result["schema_spec"]["collections"]["manual_recycle"]["fields"]
+    assert result["validated_query"]["collection"] == "manual_recycle"
+    assert result["validated_query"]["filter"] == {"statusOrder": "In Progress"}
+    assert len(result["applied_knowledge"]) == 2
+    for role in ("query_context", "query_generator"):
+        for record in records:
+            # JSON encodes the quotes inside the complete status rule.
+            assert json.dumps(record["text"])[1:-1] in prompts[role]
+        assert '"knowledge_id"' not in prompts[role]
+        assert '"semantic_similarity"' not in prompts[role]
+    assert (full_catalog, candidates, records) == originals

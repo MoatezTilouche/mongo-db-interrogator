@@ -34,6 +34,8 @@ This is a 63.7% reduction in estimated complete prompt size, with all listed fie
 
 ## Labeled questions and recall
 
+Generation, repair and refinement also compact learned metadata and tailor operation instructions. See [generator prompt compaction](generator-prompt-compaction.md) for the shared rule projection and the smaller `find` prompt.
+
 [The dataset](../evaluation/schema_questions.json) contains 40 realistic questions grounded in the 33-collection cached schema, with required collection labels and rationales. Four cases require two collections. The command-history label also incorporates the user's explicit correction. These are **curated seed labels**, not 40 independently reviewed production queries. Add real accepted queries, diverse paraphrases, multilingual questions and more joins before treating this as a production quality estimate. Schema existence checks validate collection names, not the correctness of a business interpretation.
 
 The evaluator calls the exact production `SchemaRetriever.rank_collections` function. It embeds all questions in one batch using `text-embedding-3-small`, reuses the existing cached collection vectors, and fails on missing/incompatible vectors instead of silently measuring lexical fallback. It generates and executes no business queries and performs no database writes.

@@ -1,0 +1,3 @@
+Use find. Inner template shape (replace placeholders and values using the question and selected schema):
+{"operation":"find","collection":"<collection>","filter":{},"projection":null,"sort":[],"limit":null}
+Filter/projection are objects; sort is [["field",1]] or [["field",-1]]. Return only requested fields when a projection is requested. Use JSON numbers for sort directions and limits.

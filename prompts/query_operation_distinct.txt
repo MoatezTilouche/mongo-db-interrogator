@@ -1,0 +1,3 @@
+Use distinct. Inner template shape:
+{"operation":"distinct","collection":"<collection>","field":"<field>","filter":{}}
+Choose the real requested field from the selected schema; filter is an object. Preserve an explicitly requested result limit.

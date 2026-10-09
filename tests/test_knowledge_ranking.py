@@ -123,9 +123,47 @@ def test_schema_invalid_or_malformed_knowledge_is_excluded(changes):
     assert ids(retrieve([rule("bad", 1.0, "negative_feedback", **changes)])) == []
 
 
-def test_valid_but_incompatible_collection_scope_is_excluded():
+def test_relevant_rule_outside_shortlist_is_admitted_without_overlap_bonuses():
     record = rule("customer-feedback", 0.99, "negative_feedback", collections=["customers"], fields=["name"])
+    result = retrieve([record])
+    assert ids(result) == ["customer-feedback"]
+    assert result["knowledge"][0]["ranking_score"] == pytest.approx(0.99 + 0.15)
+    context = ContextBuilder().build("show customer names", CANDIDATES, result["knowledge"], full_catalog=CATALOG)
+    assert context["schema"]["collections"]["customers"] == CATALOG["collections"]["customers"]
+
+
+@pytest.mark.parametrize("changes", [
+    {"status": "candidate", "active": False},
+    {"fields": ["removed_name"]},
+    {"embedding_model": "different-model"},
+    {"embedding": []},
+])
+def test_rule_outside_shortlist_still_requires_valid_active_embedded_knowledge(changes):
+    record = rule("customer-feedback", 0.99, "negative_feedback",
+                  collections=["customers"], fields=["name"])
+    record.update(changes)
     assert ids(retrieve([record])) == []
+
+
+def test_rule_outside_shortlist_still_obeys_default_semantic_threshold(monkeypatch):
+    monkeypatch.setattr(module, "KNOWLEDGE_MIN_SEMANTIC_SIMILARITY", 0.50)
+    monkeypatch.setattr(module, "KNOWLEDGE_FEEDBACK_PRIORITY_BONUS", 100)
+    records = [rule("below", 0.49, "negative_feedback", collections=["customers"], fields=["name"]),
+               rule("boundary", 0.50, "negative_feedback", collections=["customers"], fields=["name"])]
+    assert ids(retrieve(records)) == ["boundary"]
+
+
+def test_rule_outside_shortlist_is_rejected_without_authoritative_catalog():
+    record = rule("customer-feedback", 0.99, "negative_feedback", collections=["customers"], fields=["name"])
+    assert ids(retrieve([record], full_schema=None)) == []
+
+
+def test_rules_outside_shortlist_still_share_the_top_five_budget():
+    records = [rule(f"customer-{index}", 0.90 - index / 100, collections=["customers"], fields=["name"])
+               for index in range(8)]
+    result = retrieve(records)
+    assert ids(result) == [f"customer-{index}" for index in range(5)]
+    assert result["telemetry"]["knowledge_candidates_returned"] == 5
 
 
 def test_schema_validation_is_enforced_without_full_catalog():
@@ -278,7 +316,7 @@ def test_retrieval_order_reaches_both_actual_agent_prompts_and_orchestrator(monk
         assert "Do not merge contradictory rules" in prompt
     assert result["telemetry"]["knowledge_candidates_returned"] == 2
     assert '"knowledge_id"' not in prompts["query_context"]
-    assert '"knowledge_id":"z-feedback"' in prompts["query_generator"]
+    assert '"knowledge_id"' not in prompts["query_generator"]
     assert result["telemetry"]["query_context_candidates_returned"] == 1
     assert result["telemetry"]["query_context_prompt_tokens_estimate"] > 0
 

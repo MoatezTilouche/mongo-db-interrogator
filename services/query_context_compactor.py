@@ -12,6 +12,7 @@ import tiktoken
 from agent.config import QUERY_CONTEXT_MAX_RELATIONSHIPS, QUERY_CONTEXT_TOKEN_BUDGET
 from database.schema_inspector import compact_schema
 from services.schema_retriever import _phrase_present, _tokens
+from services.prompt_context import compact_knowledge, compact_preferences
 
 
 def compact_json(value: Any) -> str:
@@ -45,15 +46,8 @@ class QueryContextCompactor:
         original = {"schema": compact_schema(catalog), "knowledge": knowledge, "preferences": preferences}
         before = count_tokens(compact_json(original))
         words = _tokens(question)
-        # Keep complete rule semantics and retrieval order; omit provenance and scores.
-        rule_keys = ("type", "text", "collections", "fields", "mandatory", "operation", "enforcement", "metadata")
-        preference_keys = ("type", "collection", "source_collection", "field", "direction", "limit",
-                           "latest", "apply_mode", "condition", "preference", "value", "values", "operator")
-        # Nonempty metadata can encode coded values or excluded collections;
-        # these are business semantics, unlike top-level provenance and scores.
-        rules = [{key: deepcopy(rule[key]) for key in rule_keys
-                  if key in rule and (key != "metadata" or rule[key])} for rule in knowledge]
-        defaults = [{key: deepcopy(item[key]) for key in preference_keys if key in item} for item in preferences]
+        rules = compact_knowledge(knowledge)
+        defaults = compact_preferences(preferences)
         schema = deepcopy(original["schema"])
         required = {name: {field for field in entry["fields"] if _field_mentioned(words, field)}
                     for name, entry in schema.items()}
