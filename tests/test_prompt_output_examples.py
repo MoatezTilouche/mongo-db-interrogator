@@ -7,6 +7,7 @@ from agent.output_schemas import Plan, Query, QueryContext, Route, Selection
 from agent.prompt_loader import render_prompt
 from agents.feedback_analysis_agent import FeedbackAnalysis
 from agents.validator_agent import ValidatorAgent
+from services.query_prompt_instructions import operation_instructions, output_contract
 
 
 def examples(prompt_name):
@@ -14,6 +15,8 @@ def examples(prompt_name):
         "question": "example question", "schema_json": "{}", "operation_hint": "find",
         "constraints_json": "{}", "optional_plan": "", "query_json": "{}", "error": "error",
         "context_json": "{}", "output_schema": "{}",
+        "operation_instructions": operation_instructions("unknown"),
+        "output_contract": output_contract("unknown"), "repair_instructions": "",
     })
     return [json.loads(line) for line in prompt.splitlines() if line.startswith("{")]
 

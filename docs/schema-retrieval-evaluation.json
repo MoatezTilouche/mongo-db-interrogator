@@ -1,0 +1,3698 @@
+{
+  "generated_at": "2026-10-09T12:17:38.592699+00:00",
+  "mode": "hybrid_embeddings",
+  "embedding_model": "text-embedding-3-small",
+  "schema_version": "b7c2c30a7f86634ce805c88c8788f9cd3b287ca8804e0de3ac46d0c730ff5ebf",
+  "collection_count": 33,
+  "catalog_sha256": "a283549b78f50b1ba1311f4bd4a86bdbf78c496f14235831f9df87a21b7c5138",
+  "question_count": 40,
+  "definition": "Recall@k is the fraction of questions with ALL required collections in the first k ranked results, before relationship/preference/knowledge expansion.",
+  "recall_at_k": {
+    "1": 0.75,
+    "3": 0.9,
+    "5": 0.95,
+    "8": 1.0,
+    "10": 1.0
+  },
+  "expanded_recall_at_k": {
+    "1": 0.775,
+    "3": 0.95,
+    "5": 0.975,
+    "8": 1.0,
+    "10": 1.0
+  },
+  "target_recall_at_8": 0.9,
+  "description_review_needed": false,
+  "failed_at_8": [],
+  "description_review_collections": [],
+  "cases": [
+    {
+      "id": "q01",
+      "category": "order_history",
+      "question": "Give the history of orders of command CMD-000012897984.",
+      "required_collections": [
+        "orders_proc_hist"
+      ],
+      "required_ranks": {
+        "orders_proc_hist": 2
+      },
+      "ranked_top_10": [
+        {
+          "collection": "orders",
+          "score": 1.266249
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.521443
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.373984
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.339559
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.241827
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.230929
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.228378
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 0.222922
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.193791
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.193709
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "orders_proc_hist"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "orders_proc_hist"
+          ],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q02",
+      "category": "order_history",
+      "question": "Show the latest processing status of command CMD-000012897984.",
+      "required_collections": [
+        "orders_proc_hist"
+      ],
+      "required_ranks": {
+        "orders_proc_hist": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.222669
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.109783
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 1.090701
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.970793
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.963085
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.249416
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.217825
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.211789
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 0.20019
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.183741
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q03",
+      "category": "order_history",
+      "question": "Which microservices processed this command and when?",
+      "required_collections": [
+        "orders_proc_hist"
+      ],
+      "required_ranks": {
+        "orders_proc_hist": 2
+      },
+      "ranked_top_10": [
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 1.130481
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.417863
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.320799
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.304317
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.230364
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.209789
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.205249
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.204576
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.20078
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.193554
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "orders_proc_hist"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "orders_proc_hist"
+          ],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q04",
+      "category": "orders",
+      "question": "Show current orders with their products, quantities and customer details.",
+      "required_collections": [
+        "orders"
+      ],
+      "required_ranks": {
+        "orders": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "orders",
+          "score": 1.569136
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 1.166528
+        },
+        {
+          "collection": "basketAction",
+          "score": 1.125299
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.503682
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.368482
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.327342
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.310858
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.308479
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.307062
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.30523
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q05",
+      "category": "orders",
+      "question": "Count current orders grouped by their order status.",
+      "required_collections": [
+        "orders"
+      ],
+      "required_ranks": {
+        "orders": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "orders",
+          "score": 1.412472
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.237524
+        },
+        {
+          "collection": "basketHeader",
+          "score": 1.1241
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.009176
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.981751
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.980456
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.425003
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.331591
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.283215
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.233387
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q06",
+      "category": "orders",
+      "question": "Find historical order records with contract details and an execution end date.",
+      "required_collections": [
+        "ordersHist"
+      ],
+      "required_ranks": {
+        "ordersHist": 2
+      },
+      "ranked_top_10": [
+        {
+          "collection": "orders",
+          "score": 1.436511
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.616378
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.537052
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.425354
+        },
+        {
+          "collection": "requests",
+          "score": 0.360286
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.350183
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.310169
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.301915
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.300984
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.29241
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "ordersHist"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "ordersHist"
+          ],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q07",
+      "category": "requests",
+      "question": "Show service requests with failed retry counts and their initiators.",
+      "required_collections": [
+        "requests"
+      ],
+      "required_ranks": {
+        "requests": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "requests",
+          "score": 1.495466
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.390103
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.378618
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.336035
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.333144
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.329363
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.248513
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.246975
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.215025
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.204048
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q08",
+      "category": "requests",
+      "question": "Count current service requests grouped by request status.",
+      "required_collections": [
+        "requests"
+      ],
+      "required_ranks": {
+        "requests": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "requests",
+          "score": 1.456763
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.192187
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 1.161938
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.053675
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.967973
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.965295
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.495151
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.454309
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.415896
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.395078
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q09",
+      "category": "requests",
+      "question": "Find historical request payloads with transaction identifiers and execution end dates.",
+      "required_collections": [
+        "requestsHist"
+      ],
+      "required_ranks": {
+        "requestsHist": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "requestsHist",
+          "score": 0.645636
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.515437
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.504607
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.497895
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.41751
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.408202
+        },
+        {
+          "collection": "requests",
+          "score": 0.378271
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.3485
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.348101
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.341436
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q10",
+      "category": "request_history",
+      "question": "Show the processing history for request REQ-123 including platforms and microservices.",
+      "required_collections": [
+        "request_proc_hist"
+      ],
+      "required_ranks": {
+        "request_proc_hist": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "request_proc_hist",
+          "score": 1.617412
+        },
+        {
+          "collection": "requestsHist",
+          "score": 1.417911
+        },
+        {
+          "collection": "ordersHist",
+          "score": 1.205738
+        },
+        {
+          "collection": "sms_requests",
+          "score": 1.179933
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 1.139554
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 1.13727
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 1.099813
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.580289
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.441842
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.410661
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q11",
+      "category": "request_history",
+      "question": "Count failed request processing events by platform.",
+      "required_collections": [
+        "request_proc_hist"
+      ],
+      "required_ranks": {
+        "request_proc_hist": 3
+      },
+      "ranked_top_10": [
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 1.069821
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.386313
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.38376
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.38331
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.346981
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.318318
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.275543
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.271275
+        },
+        {
+          "collection": "requests",
+          "score": 0.258187
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.255792
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "request_proc_hist"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "request_proc_hist"
+          ],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q12",
+      "category": "request_history",
+      "question": "Find archived request processing logs for request REQ-123.",
+      "required_collections": [
+        "request_proc_hist_archive"
+      ],
+      "required_ranks": {
+        "request_proc_hist_archive": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 1.614373
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.538891
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.41037
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.391824
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.380301
+        },
+        {
+          "collection": "requests",
+          "score": 0.367142
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.353122
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.324679
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.319107
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.316882
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q13",
+      "category": "recycling",
+      "question": "Show manual retry records for command CMD-123 with their retry counts.",
+      "required_collections": [
+        "manual_recycle"
+      ],
+      "required_ranks": {
+        "manual_recycle": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "manual_recycle",
+          "score": 0.424347
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.307861
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 0.305178
+        },
+        {
+          "collection": "requests",
+          "score": 0.28384
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.272541
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.262529
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.249124
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 0.207513
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.206784
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.194924
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q14",
+      "category": "recycling",
+      "question": "Find archived manual recycle requests with their sent dates.",
+      "required_collections": [
+        "manual_recycle_archive"
+      ],
+      "required_ranks": {
+        "manual_recycle_archive": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "manual_recycle_archive",
+          "score": 1.690144
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 1.495719
+        },
+        {
+          "collection": "requests",
+          "score": 1.349715
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.5209
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.4505
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.427676
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.387203
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.38504
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.354343
+        },
+        {
+          "collection": "input_extraction_mappings",
+          "score": 0.307904
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q15",
+      "category": "baskets",
+      "question": "Which shopping cart belongs to command CMD-123?",
+      "required_collections": [
+        "basket_Order_Assoc"
+      ],
+      "required_ranks": {
+        "basket_Order_Assoc": 2
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basket",
+          "score": 1.381825
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.427306
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.345076
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.33614
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.322327
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.286662
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.259007
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.257131
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.252685
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.204051
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q16",
+      "category": "baskets",
+      "question": "Show cart headers with their creator, creation date and current status.",
+      "required_collections": [
+        "basketHeader"
+      ],
+      "required_ranks": {
+        "basketHeader": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketHeader",
+          "score": 1.355555
+        },
+        {
+          "collection": "basket",
+          "score": 1.234751
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.076111
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.045184
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 1.037705
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.975612
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.357856
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.284792
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.2791
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.277746
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q17",
+      "category": "baskets",
+      "question": "Show the customer's email and billing cycle for shopping cart CART-123.",
+      "required_collections": [
+        "basketCustomerInfo"
+      ],
+      "required_ranks": {
+        "basketCustomerInfo": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketCustomerInfo",
+          "score": 1.539819
+        },
+        {
+          "collection": "basket",
+          "score": 1.30931
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.382519
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.361344
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.350099
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.340994
+        },
+        {
+          "collection": "orders",
+          "score": 0.329828
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.319575
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.293034
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.289465
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q18",
+      "category": "baskets",
+      "question": "Show shopping cart totals before and after tax.",
+      "required_collections": [
+        "basketTrailer"
+      ],
+      "required_ranks": {
+        "basketTrailer": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketTrailer",
+          "score": 1.564706
+        },
+        {
+          "collection": "basket",
+          "score": 1.301812
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.337377
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.306666
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.291323
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.291149
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.273822
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.230866
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.176392
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.175177
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q19",
+      "category": "baskets",
+      "question": "List basket actions with their product descriptions and priorities.",
+      "required_collections": [
+        "basketAction"
+      ],
+      "required_ranks": {
+        "basketAction": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketAction",
+          "score": 1.659241
+        },
+        {
+          "collection": "basket",
+          "score": 1.352052
+        },
+        {
+          "collection": "orders",
+          "score": 1.202261
+        },
+        {
+          "collection": "ordersHist",
+          "score": 1.123764
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 1.099718
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 1.083342
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.546666
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.545669
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.431725
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.378862
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q20",
+      "category": "baskets",
+      "question": "Find basket sub-actions with dependent CFS details and user actions.",
+      "required_collections": [
+        "basketSubAction"
+      ],
+      "required_ranks": {
+        "basketSubAction": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketSubAction",
+          "score": 1.773326
+        },
+        {
+          "collection": "basketAction",
+          "score": 1.490167
+        },
+        {
+          "collection": "basket",
+          "score": 1.360044
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 1.184415
+        },
+        {
+          "collection": "orders",
+          "score": 1.177645
+        },
+        {
+          "collection": "ordersHist",
+          "score": 1.175245
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 1.170895
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.416923
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.388508
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.369378
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q21",
+      "category": "pricing",
+      "question": "Show recurring and one-time product prices with gross, net and discount amounts.",
+      "required_collections": [
+        "basketProductPrice"
+      ],
+      "required_ranks": {
+        "basketProductPrice": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketProductPrice",
+          "score": 2.458408
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.356841
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.353957
+        },
+        {
+          "collection": "orders",
+          "score": 0.251605
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.245484
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.223633
+        },
+        {
+          "collection": "product_sequence",
+          "score": 0.219612
+        },
+        {
+          "collection": "cs_offer_map",
+          "score": 0.214206
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.213231
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.183045
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q22",
+      "category": "sms",
+      "question": "Show bulk SMS test messages with sender, receiver and delivery status.",
+      "required_collections": [
+        "bulk_sms_test"
+      ],
+      "required_ranks": {
+        "bulk_sms_test": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "bulk_sms_test",
+          "score": 2.565616
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.020624
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.987671
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.983535
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.968815
+        },
+        {
+          "collection": "sms_action_map",
+          "score": 0.404773
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.37467
+        },
+        {
+          "collection": "sms_together",
+          "score": 0.323445
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.242427
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.217545
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q23",
+      "category": "sms",
+      "question": "Show SMS service requests with their platform job statuses.",
+      "required_collections": [
+        "sms_requests"
+      ],
+      "required_ranks": {
+        "sms_requests": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "sms_requests",
+          "score": 1.689248
+        },
+        {
+          "collection": "requests",
+          "score": 1.365501
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 1.049158
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.458318
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.450266
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.36201
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.31591
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.301205
+        },
+        {
+          "collection": "sms_action_map",
+          "score": 0.300414
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.293089
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q24",
+      "category": "sms",
+      "question": "Which SMS templates and sending flags apply to the master and slave for an action?",
+      "required_collections": [
+        "sms_action_map"
+      ],
+      "required_ranks": {
+        "sms_action_map": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "sms_action_map",
+          "score": 1.499512
+        },
+        {
+          "collection": "request_ussd",
+          "score": 1.265764
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.417702
+        },
+        {
+          "collection": "sms_together",
+          "score": 0.315163
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.290701
+        },
+        {
+          "collection": "input_extraction_mappings",
+          "score": 0.261086
+        },
+        {
+          "collection": "inputExtractionMapping",
+          "score": 0.240308
+        },
+        {
+          "collection": "requests",
+          "score": 0.23127
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.229769
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.225418
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q25",
+      "category": "ussd",
+      "question": "Show USSD requests with master and slave phone numbers.",
+      "required_collections": [
+        "request_ussd"
+      ],
+      "required_ranks": {
+        "request_ussd": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "request_ussd",
+          "score": 2.421417
+        },
+        {
+          "collection": "requests",
+          "score": 1.26141
+        },
+        {
+          "collection": "sms_action_map",
+          "score": 0.386005
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.324909
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.262714
+        },
+        {
+          "collection": "sms_together",
+          "score": 0.23913
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.233446
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.226956
+        },
+        {
+          "collection": "hlr_service_method_map",
+          "score": 0.210634
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.193639
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q26",
+      "category": "configuration",
+      "question": "Map an external offer identifier to its CS offer identifier and type.",
+      "required_collections": [
+        "cs_offer_map"
+      ],
+      "required_ranks": {
+        "cs_offer_map": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "cs_offer_map",
+          "score": 1.695553
+        },
+        {
+          "collection": "input_extraction_mappings",
+          "score": 1.081848
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.575402
+        },
+        {
+          "collection": "hlr_service_method_map",
+          "score": 0.397264
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.393505
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.289966
+        },
+        {
+          "collection": "inputExtractionMapping",
+          "score": 0.275462
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.25935
+        },
+        {
+          "collection": "sms_action_map",
+          "score": 0.258585
+        },
+        {
+          "collection": "requests",
+          "score": 0.242542
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 2
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q27",
+      "category": "configuration",
+      "question": "Find the balance identifier and unit of measure for a product code.",
+      "required_collections": [
+        "cs_product_balance_map"
+      ],
+      "required_ranks": {
+        "cs_product_balance_map": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.594244
+        },
+        {
+          "collection": "cs_offer_map",
+          "score": 0.349333
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.340394
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.31722
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.309822
+        },
+        {
+          "collection": "product_sequence",
+          "score": 0.301799
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.284549
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.281052
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.269609
+        },
+        {
+          "collection": "orders",
+          "score": 0.251797
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q28",
+      "category": "configuration",
+      "question": "List HLR service methods with namespaces and execution sequence numbers.",
+      "required_collections": [
+        "hlr_service_method_map"
+      ],
+      "required_ranks": {
+        "hlr_service_method_map": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "hlr_service_method_map",
+          "score": 2.450961
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 2.348184
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.308197
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.306034
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.290043
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.275129
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.271705
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.262403
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.24956
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.23885
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 2
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q29",
+      "category": "configuration",
+      "question": "List IN service method actions and inputs in sequence order.",
+      "required_collections": [
+        "in_service_method_map"
+      ],
+      "required_ranks": {
+        "in_service_method_map": 5
+      },
+      "ranked_top_10": [
+        {
+          "collection": "orders",
+          "score": 1.162792
+        },
+        {
+          "collection": "ordersHist",
+          "score": 1.162096
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 1.080857
+        },
+        {
+          "collection": "manual_recycle_archive",
+          "score": 1.057323
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.581011
+        },
+        {
+          "collection": "hlr_service_method_map",
+          "score": 0.52538
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.378105
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.372126
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.350842
+        },
+        {
+          "collection": "requests",
+          "score": 0.311955
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "in_service_method_map"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "in_service_method_map"
+          ],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": false,
+          "missing": [
+            "in_service_method_map"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "in_service_method_map"
+          ],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q30",
+      "category": "configuration",
+      "question": "Show active platform input extraction paths by input name.",
+      "required_collections": [
+        "inputExtractionMapping"
+      ],
+      "required_ranks": {
+        "inputExtractionMapping": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "inputExtractionMapping",
+          "score": 1.651039
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 1.09038
+        },
+        {
+          "collection": "input_extraction_mappings",
+          "score": 0.566396
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.304919
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.227529
+        },
+        {
+          "collection": "requests",
+          "score": 0.220317
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.211445
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.194325
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.18444
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.182018
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q31",
+      "category": "configuration",
+      "question": "Show input extraction mappings by action type and method name.",
+      "required_collections": [
+        "input_extraction_mappings"
+      ],
+      "required_ranks": {
+        "input_extraction_mappings": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "input_extraction_mappings",
+          "score": 2.541981
+        },
+        {
+          "collection": "inputExtractionMapping",
+          "score": 1.604726
+        },
+        {
+          "collection": "sms_action_map",
+          "score": 1.102572
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.455633
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.443365
+        },
+        {
+          "collection": "hlr_service_method_map",
+          "score": 0.438883
+        },
+        {
+          "collection": "requests",
+          "score": 0.3984
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.385639
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.302136
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.299634
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q32",
+      "category": "configuration",
+      "question": "Which consumer and producer topics are configured for a microservice?",
+      "required_collections": [
+        "microserviceTopicConfig"
+      ],
+      "required_ranks": {
+        "microserviceTopicConfig": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "microserviceTopicConfig",
+          "score": 2.446622
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.087248
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.086427
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 1.055691
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 0.252261
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.23093
+        },
+        {
+          "collection": "requests",
+          "score": 0.208679
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.182248
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.177343
+        },
+        {
+          "collection": "sms_together",
+          "score": 0.165833
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q33",
+      "category": "configuration",
+      "question": "Show platform and command error bypass rules for a microservice.",
+      "required_collections": [
+        "prov_error_bypass_rules"
+      ],
+      "required_ranks": {
+        "prov_error_bypass_rules": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 2.578348
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.061325
+        },
+        {
+          "collection": "microserviceTopicConfig",
+          "score": 1.015287
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.006964
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.979645
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.328879
+        },
+        {
+          "collection": "manual_recycle",
+          "score": 0.225129
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.184632
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.179055
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.149049
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q34",
+      "category": "configuration",
+      "question": "Show the web service request and method used in a platform simulation.",
+      "required_collections": [
+        "requests_simulation_platform"
+      ],
+      "required_ranks": {
+        "requests_simulation_platform": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "requests_simulation_platform",
+          "score": 1.700695
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 1.028802
+        },
+        {
+          "collection": "request_ussd",
+          "score": 0.434534
+        },
+        {
+          "collection": "sms_requests",
+          "score": 0.418381
+        },
+        {
+          "collection": "requestsHist",
+          "score": 0.32186
+        },
+        {
+          "collection": "requests",
+          "score": 0.318306
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.304656
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.301936
+        },
+        {
+          "collection": "hlr_service_method_map",
+          "score": 0.299223
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.281098
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q35",
+      "category": "configuration",
+      "question": "List project names and their prefixes.",
+      "required_collections": [
+        "project"
+      ],
+      "required_ranks": {
+        "project": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "project",
+          "score": 1.654639
+        },
+        {
+          "collection": "microserviceTopicConfig",
+          "score": 0.397964
+        },
+        {
+          "collection": "prov_error_bypass_rules",
+          "score": 0.264853
+        },
+        {
+          "collection": "input_extraction_mappings",
+          "score": 0.24338
+        },
+        {
+          "collection": "hlr_service_method_map",
+          "score": 0.243064
+        },
+        {
+          "collection": "in_service_method_map",
+          "score": 0.241548
+        },
+        {
+          "collection": "inputExtractionMapping",
+          "score": 0.238817
+        },
+        {
+          "collection": "requests_simulation_platform",
+          "score": 0.18226
+        },
+        {
+          "collection": "sms_together",
+          "score": 0.181252
+        },
+        {
+          "collection": "product_sequence",
+          "score": 0.178213
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 3
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q36",
+      "category": "configuration",
+      "question": "Show the current product numbering counter.",
+      "required_collections": [
+        "product_sequence"
+      ],
+      "required_ranks": {
+        "product_sequence": 1
+      },
+      "ranked_top_10": [
+        {
+          "collection": "product_sequence",
+          "score": 1.538119
+        },
+        {
+          "collection": "cs_product_balance_map",
+          "score": 0.286588
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.261895
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.231305
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.226358
+        },
+        {
+          "collection": "cs_offer_map",
+          "score": 0.222016
+        },
+        {
+          "collection": "orders",
+          "score": 0.215163
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.161797
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.160146
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.155616
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q37",
+      "category": "join",
+      "question": "For command CMD-123, find its shopping cart and show that cart's header status and creation date.",
+      "required_collections": [
+        "basket_Order_Assoc",
+        "basketHeader"
+      ],
+      "required_ranks": {
+        "basketHeader": 1,
+        "basket_Order_Assoc": 7
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketHeader",
+          "score": 2.269035
+        },
+        {
+          "collection": "basket",
+          "score": 1.294605
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.164127
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 1.043511
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 1.034182
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.983478
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.338473
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.316784
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.287713
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.27412
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": false,
+          "missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": false,
+          "missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q38",
+      "category": "join",
+      "question": "For each cart header, show its status alongside the total price including tax.",
+      "required_collections": [
+        "basketHeader",
+        "basketTrailer"
+      ],
+      "required_ranks": {
+        "basketHeader": 1,
+        "basketTrailer": 7
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketHeader",
+          "score": 2.199161
+        },
+        {
+          "collection": "basket",
+          "score": 1.271396
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 1.008431
+        },
+        {
+          "collection": "request_proc_hist",
+          "score": 0.960106
+        },
+        {
+          "collection": "request_proc_hist_archive",
+          "score": 0.941875
+        },
+        {
+          "collection": "bulk_sms_test",
+          "score": 0.938723
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.455731
+        },
+        {
+          "collection": "basketCustomerInfo",
+          "score": 0.30799
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.280996
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.248435
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "basketTrailer"
+          ],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": false,
+          "missing": [
+            "basketTrailer"
+          ],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": false,
+          "missing": [
+            "basketTrailer"
+          ],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q39",
+      "category": "join",
+      "question": "Show basket action descriptions alongside the corresponding separate recurring price records.",
+      "required_collections": [
+        "basketAction",
+        "basketProductPrice"
+      ],
+      "required_ranks": {
+        "basketAction": 5,
+        "basketProductPrice": 2
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basket",
+          "score": 1.341112
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 1.333601
+        },
+        {
+          "collection": "sms_action_map",
+          "score": 1.016857
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.546106
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.535726
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.4127
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.404283
+        },
+        {
+          "collection": "orders",
+          "score": 0.401156
+        },
+        {
+          "collection": "basketTrailer",
+          "score": 0.395166
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.380875
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "basketAction",
+            "basketProductPrice"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "basketAction",
+            "basketProductPrice"
+          ],
+          "expanded_candidate_count": 1
+        },
+        "3": {
+          "all_required_present": false,
+          "missing": [
+            "basketAction"
+          ],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    },
+    {
+      "id": "q40",
+      "category": "join",
+      "question": "For command CMD-123, find the associated cart and show that cart's customer's billing cycle and email.",
+      "required_collections": [
+        "basket_Order_Assoc",
+        "basketCustomerInfo"
+      ],
+      "required_ranks": {
+        "basketCustomerInfo": 1,
+        "basket_Order_Assoc": 3
+      },
+      "ranked_top_10": [
+        {
+          "collection": "basketCustomerInfo",
+          "score": 1.470595
+        },
+        {
+          "collection": "basket",
+          "score": 1.248447
+        },
+        {
+          "collection": "basket_Order_Assoc",
+          "score": 0.34266
+        },
+        {
+          "collection": "orders",
+          "score": 0.317783
+        },
+        {
+          "collection": "basketAction",
+          "score": 0.29944
+        },
+        {
+          "collection": "orders_proc_hist",
+          "score": 0.295453
+        },
+        {
+          "collection": "ordersHist",
+          "score": 0.293328
+        },
+        {
+          "collection": "basketHeader",
+          "score": 0.290176
+        },
+        {
+          "collection": "basketProductPrice",
+          "score": 0.285126
+        },
+        {
+          "collection": "basketSubAction",
+          "score": 0.27774
+        }
+      ],
+      "by_k": {
+        "1": {
+          "all_required_present": false,
+          "missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_all_required_present": false,
+          "expanded_missing": [
+            "basket_Order_Assoc"
+          ],
+          "expanded_candidate_count": 4
+        },
+        "3": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 6
+        },
+        "5": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 8
+        },
+        "8": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 11
+        },
+        "10": {
+          "all_required_present": true,
+          "missing": [],
+          "expanded_all_required_present": true,
+          "expanded_missing": [],
+          "expanded_candidate_count": 13
+        }
+      }
+    }
+  ],
+  "label_source": "40 curated domain questions grounded in the actual cached schema; the command-history case also uses the user's explicit correction. These are seed relevance labels, not a claim of 40 independently reviewed production queries.",
+  "dataset_sha256": "184c61fc05f3ab0c434e97dd7ca258bcdd776550dec3d4ca5542f214cdd9f993"
+}

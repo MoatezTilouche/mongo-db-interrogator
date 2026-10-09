@@ -5,6 +5,7 @@ Output:
 {"complexity":"simple","operation":"find","collections":["<collection>"],"fields":{"<collection>":["<field>"]}}
 Question: $question
 Catalog: $schema_catalog
+Join hints [source collection, source field, target collection, target field]: $relationship_candidates_json
 User preferences: $user_preferences_json
 Verified active database knowledge (highest retrieval priority first): $database_knowledge_json
 When supplied rules conflict, prefer the first applicable rule while preserving explicit current request precedence. Do not merge contradictory rules.

@@ -82,16 +82,15 @@ class KnowledgeRetriever:
             elif not collections <= set(authoritative):
                 rejection = "unknown_collection"
             else:
-                # Fields are flat in storage; each scoped collection may own
-                # different fields. ContextBuilder restores them to their owner.
+                # Validate against the full catalog, not the retrieval shortlist:
+                # a relevant rule may identify a missing source collection.
+                # ContextBuilder restores those collections and field owners.
                 scoped_names = collections or candidate_names
                 allowed_fields = {field for name in scoped_names
                                   for field in authoritative.get(name, {}).get("fields", {})}
                 compatible_names = overlap if collections else candidate_names
                 if fields - allowed_fields:
                     rejection = "unknown_field"
-                elif collections and not overlap:
-                    rejection = "collection_mismatch"
                 elif record.get("embedding_model") not in (None, KNOWLEDGE_EMBEDDING_MODEL):
                     rejection = "embedding_model_mismatch"
                 elif semantic is None:

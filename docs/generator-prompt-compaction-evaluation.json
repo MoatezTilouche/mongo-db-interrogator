@@ -1,0 +1,15 @@
+{
+  "original_prompt_tokens": 1513,
+  "compacted_prompt_tokens": 660,
+  "reduction_percent": 56.4,
+  "operation": "find",
+  "schema_collection_count": 1,
+  "schema_field_count": 3,
+  "lookup_guidance_included": false,
+  "rule_texts_preserved": true,
+  "knowledge_tokens_before": 139,
+  "knowledge_tokens_after": 33,
+  "preference_tokens_before": 108,
+  "preference_tokens_after": 64,
+  "measurement": "Local cl100k_base token estimate of the pasted prompt versus the actual new generation prompt; LLM mocked, no business query executed."
+}

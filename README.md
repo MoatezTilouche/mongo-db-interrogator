@@ -901,6 +901,10 @@ Persistent records contain descriptions, aliases, relationship candidates, searc
 
 Request retrieval combines cosine similarity and lexical relevance, with optional relationship expansion and fields needed by rules/preferences. Candidate/field budgets limit ordinary context; required fields can extend it. MongoDB stores vectors and the application ranks them; no FAISS service or Atlas vector-search index is required.
 
+Query-context prompts now compact relationship hints and knowledge metadata under a configurable token budget. See [prompt compaction and schema retrieval evaluation](docs/schema-retrieval.md) for telemetry, the 40 labeled questions, strict recall@k results, and repeatable evaluation commands.
+
+Generator and repair prompts use instructions for the selected operation, and all generator paths retain rule meaning/scope while omitting IDs and retrieval scores. See [generator prompt compaction](docs/generator-prompt-compaction.md) for the measured reduction and validation.
+
 
 
 Sparse fields can be missed. Restart to inspect schema changes; force rebuilding with SCHEMA_REBUILD_ON_STARTUP=true. Internal schema_bootstrap_service.refresh() and .invalidate() methods exist, without public admin routes. SCHEMA_CACHE_TTL_SECONDS governs the inspector's process-local cache, not a scheduled semantic-index rebuild.
