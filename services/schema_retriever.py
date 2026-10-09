@@ -91,6 +91,31 @@ class SchemaRetriever:
                 chosen.append(field)
         return {field: fields[field] for field in chosen}
 
+    def rank_collections(self, question: str, query_vector: list[float] | None) -> list[tuple[float, str]]:
+        """The production ranking, without expansion or a new embedding call."""
+        question_tokens = _tokens(question)
+        scored = [(self._score(question_tokens, name, entry, query_vector)[0], name)
+                  for name, entry in self.collections.items()]
+        return sorted(scored, key=lambda item: (-item[0], item[1]))
+
+    def select_collections(self, ranked: list[tuple[float, str]],
+                           required_collections: list[str] | None = None) -> list[str]:
+        """Apply the production preference and relationship expansion to top-k."""
+        selected_names = [name for _, name in ranked[:self.top_k]]
+        for collection in required_collections or []:
+            if collection in self.collections and collection not in selected_names:
+                selected_names.append(collection)
+        if SCHEMA_RELATIONSHIP_EXPANSION:
+            for name in list(selected_names):
+                for relationship in self.collections[name].get("relationships", []):
+                    target = relationship.get("to_collection")
+                    if (target in self.collections and target not in selected_names
+                            and len(selected_names) < self.top_k + 3):
+                        selected_names.append(target)
+                if len(selected_names) >= self.top_k + 3:
+                    break
+        return selected_names
+
     def retrieve(self, question: str, preferences: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         started = time.perf_counter()
         question_tokens = _tokens(question)
@@ -109,26 +134,10 @@ class SchemaRetriever:
             embedding_failed = True
             logger.warning("schema_retrieval_embedding_failed error_type=%s", type(exc).__name__)
 
-        scored = []
-        for name, entry in self.collections.items():
-            score, _ = self._score(question_tokens, name, entry, query_vector)
-            scored.append((score, name))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        selected_names = [name for _, name in scored[:self.top_k]]
+        scored = self.rank_collections(question, query_vector)
         # Learned preferences are relevant schema evidence and should not be evicted
         # by approximate semantic similarity.
-        for collection in required_by_collection:
-            if collection in self.collections and collection not in selected_names:
-                selected_names.append(collection)
-        if SCHEMA_RELATIONSHIP_EXPANSION:
-            for name in list(selected_names):
-                for relationship in self.collections[name].get("relationships", []):
-                    target = relationship.get("to_collection")
-                    if (target in self.collections and target not in selected_names
-                            and len(selected_names) < self.top_k + 3):
-                        selected_names.append(target)
-                if len(selected_names) >= self.top_k + 3:
-                    break
+        selected_names = self.select_collections(scored, list(required_by_collection))
 
         selected_set = set(selected_names)
         for name in selected_names:

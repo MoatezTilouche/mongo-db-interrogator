@@ -124,6 +124,7 @@ class OrchestratorAgent:
                 context["question"], context["schema"], context["user_preferences"],
                 context["database_knowledge"],
             )
+            retrieval_status.update(context_result.pop("_prompt_compaction", {}))
             if context_result.get("error"):
                 return {
                     "execution_success": False,

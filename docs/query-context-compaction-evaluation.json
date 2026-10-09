@@ -1,0 +1,30 @@
+{
+  "query_context_context_tokens_before": 4416,
+  "query_context_context_tokens_after": 1315,
+  "query_context_token_budget": 1800,
+  "query_context_budget_exceeded": false,
+  "query_context_relationships_returned": 8,
+  "query_context_candidates_returned": 8,
+  "original_prompt_tokens": 4854,
+  "compacted_prompt_tokens": 1764,
+  "visible_field_counts": {
+    "orders_proc_hist": 7,
+    "orders": 8,
+    "ordersHist": 9,
+    "basket_Order_Assoc": 3,
+    "manual_recycle_archive": 8,
+    "basketAction": 12,
+    "basketSubAction": 7,
+    "manual_recycle": 10
+  },
+  "descriptions_retained": [
+    "orders_proc_hist",
+    "orders",
+    "ordersHist",
+    "basket_Order_Assoc",
+    "manual_recycle_archive",
+    "basketAction",
+    "basketSubAction",
+    "manual_recycle"
+  ]
+}

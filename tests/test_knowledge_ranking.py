@@ -269,12 +269,18 @@ def test_retrieval_order_reaches_both_actual_agent_prompts_and_orchestrator(monk
     assert result["execution_success"], result
     for role in ("query_context", "query_generator"):
         prompt = prompts[role]
-        assert prompt.index('"knowledge_id":"z-feedback"') < prompt.index('"knowledge_id":"a-manual"')
-        assert prompt.count('"knowledge_id":"z-feedback"') == 1
+        # Selection omits provenance IDs; ordering must still preserve complete
+        # rule semantics through both real prompt boundaries.
+        assert prompt.index(records[1]["text"]) < prompt.index(records[0]["text"])
+        assert prompt.count(records[1]["text"]) == 1
         assert "explicitly include retry status X" in prompt
         assert "explicit current request" in prompt
         assert "Do not merge contradictory rules" in prompt
     assert result["telemetry"]["knowledge_candidates_returned"] == 2
+    assert '"knowledge_id"' not in prompts["query_context"]
+    assert '"knowledge_id":"z-feedback"' in prompts["query_generator"]
+    assert result["telemetry"]["query_context_candidates_returned"] == 1
+    assert result["telemetry"]["query_context_prompt_tokens_estimate"] > 0
 
 
 @pytest.mark.parametrize("liked", [False, True])

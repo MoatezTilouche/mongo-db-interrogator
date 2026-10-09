@@ -1,7 +1,7 @@
 """Choose relevant schema metadata and query hints in one concise LLM call."""
 from __future__ import annotations
 
-import json
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -12,6 +12,9 @@ from agent.output_schemas import QueryContext
 from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 from database.schema_inspector import compact_schema
+from services.query_context_compactor import QueryContextCompactor, compact_json, count_tokens
+
+logger = logging.getLogger(__name__)
 
 
 class QueryContextAgent:
@@ -27,12 +30,20 @@ class QueryContextAgent:
         if not available:
             return {"error": "no_collections", "detail": "The configured MongoDB database has no collections."}
 
+        compacted = QueryContextCompactor().build(question, catalog, database_knowledge, user_preferences)
+        available = compacted["schema"]
         prompt = render_prompt("query_context", {
             "question": question,
-            "schema_catalog": json.dumps(available, ensure_ascii=False, separators=(",", ":")),
-            "database_knowledge_json": json.dumps(database_knowledge, ensure_ascii=False, separators=(",", ":")),
-            "user_preferences_json": json.dumps(user_preferences, ensure_ascii=False, separators=(",", ":")),
+            "schema_catalog": compact_json(available),
+            "database_knowledge_json": compact_json(compacted["knowledge"]),
+            "user_preferences_json": compact_json(compacted["preferences"]),
+            "relationship_candidates_json": compact_json(compacted["joins"]),
         })
+        metrics = compacted["telemetry"]
+        metrics["query_context_prompt_tokens_estimate"] = count_tokens(prompt)
+        logger.info("query_context_compacted before_tokens=%d after_tokens=%d prompt_tokens=%d budget_exceeded=%s",
+                    metrics["query_context_context_tokens_before"], metrics["query_context_context_tokens_after"],
+                    metrics["query_context_prompt_tokens_estimate"], metrics["query_context_budget_exceeded"])
         response = llm_router.invoke("query_context", [HumanMessage(content=prompt)], QueryContext)
         context = QueryContext.model_validate(parse_json_from_text(response.content))
         if not set(context.collections) <= set(available):
@@ -68,4 +79,5 @@ class QueryContextAgent:
             "query_context": normalized_context,
             "schema_spec": {"collections": selected},
             "user_preferences": selected_preferences,
+            "_prompt_compaction": metrics,
         }

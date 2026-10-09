@@ -5,5 +5,7 @@ __pycache__/
 .pytest_cache/
 artifacts/*.py
 data/
+evaluation/*.local.json
+evaluation/*.local/
 .DS_Store
 compose.yaml
