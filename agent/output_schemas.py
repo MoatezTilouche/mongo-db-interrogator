@@ -22,6 +22,18 @@ class QueryContext(StrictOutput):
     collections: list[str] = Field(min_length=1)
     fields: dict[str, list[str]]
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_operation_alias(cls, value):
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        if result.get("operation") == "count_documents":
+            result["operation"] = "count"
+        if result.get("complexity") == "aggregate" and result.get("operation") == "aggregate":
+            result["complexity"] = "complex"
+        return result
+
 
 class CollectionEnrichment(StrictOutput):
     collection: str = Field(min_length=1, max_length=200)
@@ -74,6 +86,12 @@ class GeneratedQuery(StrictOutput):
     semantic_intent: str = Field(default="", max_length=600)
     template: QueryTemplate
     parameters: dict[str, Any]
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_placeholder_syntax(cls, value):
+        from services.query_parameter_binder import normalize_parameter_placeholders
+        return normalize_parameter_placeholders(value)
 
     @model_validator(mode="after")
     def valid_binding(self):

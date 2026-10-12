@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -15,6 +16,40 @@ from database.schema_inspector import compact_schema
 from services.query_context_compactor import QueryContextCompactor, compact_json, count_tokens
 
 logger = logging.getLogger(__name__)
+
+
+def _question_required_fields(question, fields):
+    """Retain schema-backed fields for named entities, status and recency."""
+    words = set(re.findall(r"[a-z0-9_]+", question.casefold()))
+    words.update(word[:-1] for word in list(words) if word.endswith("s") and len(word) > 3)
+    status_requested = bool(words & {"fail", "failed", "failure", "success", "successful", "completed",
+                                     "pending", "cancelled", "canceled", "refunded", "status", "state"})
+    recent_requested = bool(words & {"latest", "recent", "newest", "oldest", "earliest", "last"})
+    date_names = {"executiondate", "createdat", "created_at", "creationdate", "timestamp",
+                  "date", "updatedat", "updated_at"}
+    retained = []
+    for name in fields:
+        leaf = name.rsplit(".", 1)[-1]
+        split_name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", leaf).casefold()
+        field_words = set(re.findall(r"[a-z0-9]+", split_name)) - {"id", "at", "date", "time"}
+        if leaf.casefold() in words or field_words & words \
+                or (status_requested and ("status" in field_words or "state" in field_words)) \
+                or (recent_requested and leaf.casefold() in date_names):
+            retained.append(name)
+    return retained
+
+
+def _grouping_requested(question, fields):
+    pattern = r"\b(?:group(?:ed|ing)?|count|number|total|sum|average|avg)\b.*?\b(?:by|per)\s+([\w.]+)"
+    for match in re.finditer(pattern, question, re.I):
+        target = match.group(1).casefold()
+        if re.search(r"\b(?:sort(?:ed)?|order(?:ed)?)\s+by\s*$", question[:match.start(1)], re.I):
+            continue
+        if any(target in {field.casefold(), field.rsplit(".", 1)[-1].casefold()}
+               or (target.endswith("s") and target[:-1] == field.rsplit(".", 1)[-1].casefold())
+               for field in fields):
+            return True
+    return False
 
 
 class QueryContextAgent:
@@ -58,6 +93,9 @@ class QueryContextAgent:
             # Drop hallucinated fields. If all are absent, retain this collection's
             # compact field catalog so generation can choose a real field safely.
             valid = list(dict.fromkeys(field for field in requested if field in catalog_fields))
+            # Restore only catalog-backed fields needed for the requested
+            # entity, filtering or recency; do not invent missing schema fields.
+            valid.extend(_question_required_fields(question, catalog_fields))
             for preference in selected_preferences:
                 if preference.get("collection") == name and preference.get("field") in catalog_fields:
                     valid.append(preference["field"])
@@ -71,7 +109,9 @@ class QueryContextAgent:
             selected[name] = {"fields": {field: catalog_fields[field] for field in valid}}
 
         changes = {"fields": normalized_fields}
-        if len(context.collections) > 1 and context.complexity == "simple":
+        selected_fields = [field for entry in selected.values() for field in entry["fields"]]
+        if (len(context.collections) > 1 and context.complexity == "simple") \
+                or _grouping_requested(question, selected_fields):
             # A single find/count cannot use multiple collections; generation must aggregate.
             changes.update(complexity="complex", operation="aggregate")
         normalized_context = context.model_copy(update=changes).model_dump()

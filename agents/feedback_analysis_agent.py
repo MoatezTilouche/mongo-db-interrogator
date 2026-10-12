@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Literal
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import Field, model_validator
 
 from agent.llm import llm_router
@@ -13,7 +14,7 @@ from agent.llm_structured import parse_json_from_text
 from agent.output_schemas import StrictOutput
 from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
-from database.record_safety import safe_record
+from agents.feedback_prompt import build_feedback_context, feedback_output_contract
 
 _ONE_OFF = re.compile(
     r"\b(?:for\s+)?(?:this|that)\s+(?:request|query|report)\s+only\b"
@@ -115,20 +116,19 @@ class FeedbackAnalysisAgent:
 
     @traceable(name="feedback_analysis.analyze")
     def analyze(self, history: dict, comment: str) -> FeedbackAnalysis:
-        # Explicit allowlist: never forward previews, telemetry or other requests.
-        context = {key: history.get(key) for key in (
-            "question", "original_question", "effective_question", "selected_schema", "query_context", "generated_query",
-            "validated_query", "final_response",
-        )}
-        if context["query_context"] is None and history.get("query_plan"):
-            context["query_context"] = {"legacy_plan": history["query_plan"]}
-        context["feedback_comment"] = comment
-        prompt = render_prompt("feedback_analysis", {
-            "context_json": json.dumps(safe_record(context), ensure_ascii=False, default=str),
-            "output_schema": json.dumps(FeedbackAnalysis.model_json_schema()),
-        })
-        response = llm_router.invoke("feedback_analysis", [HumanMessage(content=prompt)], FeedbackAnalysis)
-        analysis = FeedbackAnalysis.model_validate(parse_json_from_text(response.content))
+        # Baseline always calls the model for empty comments: shortcut stays OFF.
+        if not (comment or "").strip() and os.getenv("FEEDBACK_SKIP_EMPTY_CLASSIFICATION", "false").lower() == "true":
+            return FeedbackAnalysis(
+                feedback_type="other", cause=None, corrected_meaning=None,
+                reusable_preference=False, preference=None, scope="one_off",
+                scope_reason="No specific feedback or corrections indicated in the comment.", confidence=0.0,
+            )
+        context = build_feedback_context(history, comment)
+        contract = feedback_output_contract()
+        messages = [SystemMessage(content=render_prompt("feedback_analysis")),
+                    HumanMessage(content=json.dumps(context, ensure_ascii=False, separators=(",", ":"), default=str))]
+        response = llm_router.invoke("feedback_analysis", messages, contract)
+        analysis = contract.model_validate(parse_json_from_text(response.content))
         analysis = self._normalize_explicit_one_off(analysis, comment)
         analysis = self._normalize_clear_ranking_correction(analysis, history, comment)
         return self._normalize_preference_attributes(analysis, history, comment)

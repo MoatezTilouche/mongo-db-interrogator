@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 class LLMRouterError(RuntimeError):
     """Raised when the configured OpenAI model fails."""
 
+    def __init__(self, message: str, *, role: str | None = None,
+                 code: str = "llm_unavailable", detail: str | None = None):
+        super().__init__(message)
+        self.role = role
+        self.code = code
+        self.detail = detail
+
 
 class StructuredOutputError(ValueError):
     """Raised when a provider returns invalid output for the requested schema."""
@@ -89,7 +96,7 @@ class LLMRouter:
 
     @staticmethod
     def _is_recoverable(exc: Exception) -> bool:
-        if isinstance(exc, StructuredOutputError):
+        if isinstance(exc, (StructuredOutputError, TimeoutError, ConnectionError)):
             return True
         status = getattr(exc, "status_code", None)
         response = getattr(exc, "response", None)
@@ -128,6 +135,24 @@ class LLMRouter:
                 location = error.get("loc", ())
                 field = location[0] if location and location[0] in known else "output"
                 details.append(f"{field} ({error['type']})")
+            from agent.output_schemas import GeneratedQuery
+            if schema is GeneratedQuery:
+                # Binding validators use a small fixed set of messages. Expose
+                # those actionable reasons, never arbitrary validator contexts.
+                allowed = {
+                    "Unexpected query parameters", "Invalid parameter placeholder",
+                    "Only limits and filter literal values may be parameterized",
+                    "Limit parameter must be a positive integer named limit",
+                    "Filter parameters must be literal data, not operators or placeholders",
+                    "Membership parameters must be arrays", "Regex parameters must be strings",
+                    "String placeholders are not supported",
+                }
+                for error in exc.errors(include_input=False, include_context=True, include_url=False)[:5]:
+                    reason = str((error.get("ctx") or {}).get("error", ""))
+                    if reason in allowed:
+                        details.append(reason)
+                    elif reason.startswith("Missing parameter:"):
+                        details.append("A template parameter is missing its corresponding parameters value")
             raise StructuredOutputError("Output schema validation failed: " + ", ".join(details)) from None
         except ValueError:
             raise StructuredOutputError("Response is not valid JSON or does not match the output contract.") from None
@@ -146,15 +171,28 @@ class LLMRouter:
         except KeyError as exc:
             raise ValueError(f"Unknown LLM role: {role}") from exc
 
+        from agent.output_schemas import GeneratedQuery, QueryContext
+        query_contract = role in {"query_generator", "repair"} and structured_output_schema is GeneratedQuery
+        context_contract = role == "query_context" and structured_output_schema is QueryContext
+        request_messages = list(messages)
+        format_retries = 0
         retry_count = 0
         for attempt in range(LLM_MAX_RETRIES + 1):
             retry_count = attempt
             started = time.perf_counter()
             response = None
             try:
-                response = self._client(model).invoke(messages)
+                client = self._client(model)
+                if role == "feedback_analysis" and hasattr(structured_output_schema, "feedback_response_format"):
+                    # Bind per invocation, leaving other roles' settings intact.
+                    client = client.bind(response_format=structured_output_schema.feedback_response_format())
+                elif query_contract or context_contract:
+                    # MongoDB filter/parameter maps have dynamic keys, so enforce
+                    # a JSON object here and keep the full local schema validator.
+                    client = client.bind(response_format={"type": "json_object"})
+                response = client.invoke(request_messages)
                 if structured_output_schema is not None:
-                    self._validate_structured(str(getattr(response, "content", "") or ""), structured_output_schema)
+                    self._validate_structured(getattr(response, "content", "") or "", structured_output_schema)
                 logger.info(
                     "llm role=%s model=%s fallback_used=%s retry_count=%d latency_ms=%.1f request_id=%s",
                     role, model, False, retry_count,
@@ -166,6 +204,34 @@ class LLMRouter:
                 recoverable = self._is_recoverable(exc)
                 if not recoverable:
                     raise
+                if isinstance(exc, StructuredOutputError) and (query_contract or context_contract) and format_retries == 0 \
+                        and attempt < LLM_MAX_RETRIES and self._finish_reason(response) != "content_filter" \
+                        and not (getattr(response, "additional_kwargs", None) or {}).get("refusal"):
+                    from langchain_core.messages import HumanMessage
+                    format_retries += 1
+                    # Only sanitized schema diagnostics; do not echo raw output,
+                    # result rows, credentials, or model-produced field names.
+                    guidance = (
+                        f"The previous response failed JSON validation: {exc}. "
+                        "Regenerate the same read-only query using only the selected schema and original constraints. "
+                        "Return one JSON object with semantic_intent, template (a query object), and parameters (an object). "
+                        "These are sibling keys. Return a query specification, never result rows or text-content blocks. "
+                        "Use concrete filter literals; the backend parameterizes them. Never use $param strings. "
+                        "parameters is {} unless template has an explicit limit placeholder {\"$param\":\"limit\"}; "
+                        "then parameters contains only its integer limit value. "
+                        "Preserve requested filters, ordering and limits; do not invent schema fields."
+                    ) if query_contract else (
+                        f"The previous response failed JSON validation: {exc}. "
+                        "Return one JSON object with complexity, operation, collections and fields. "
+                        "complexity must be exactly simple or complex, never aggregate. "
+                        "operation must be find, count, distinct or aggregate; aggregate requires complex. "
+                        "collections is an array of catalog collection names; fields maps those names to arrays of real field names. "
+                        "Preserve the question's meaning and applicable supplied business rules."
+                    )
+                    request_messages = [*messages, HumanMessage(content=guidance)]
+                    logger.warning("llm structured_retry role=%s model=%s retry_count=%d detail=%s request_id=%s",
+                                   role, model, attempt + 1, str(exc), current_request_id())
+                    continue
                 if attempt < LLM_MAX_RETRIES and not isinstance(exc, StructuredOutputError):
                     continue
                 logger.warning(
@@ -183,10 +249,15 @@ class LLMRouter:
                     logger.warning("llm structured_failure role=%s request_id=%s finish_reason=%s detail=%s",
                                    role, current_request_id(), finish_reason, detail)
                     message += f": {detail}; finish_reason={finish_reason}"
-                raise LLMRouterError(message) from None
+                code = ("invalid_query_output" if query_contract else "invalid_llm_output") \
+                    if isinstance(exc, StructuredOutputError) else "llm_unavailable"
+                raise LLMRouterError(message, role=role, code=code,
+                                     detail=detail if isinstance(exc, StructuredOutputError) else None) from None
             finally:
                 record = record_attempt(role, model, response, (time.perf_counter() - started) * 1000, False)
                 record["finish_reason"] = self._finish_reason(response)
+                record["retry_count"] = attempt
+                record["structured_output_retries"] = format_retries
                 logger.debug("llm telemetry=%s", record)
         raise LLMRouterError(f"OpenAI request failed for {role}")
 

@@ -5,6 +5,7 @@ from typing import Any
 from agent.progress import stage, emit
 import logging
 from agent.telemetry import capture_usage, totals
+from agent.llm import LLMRouterError
 from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
@@ -292,10 +293,21 @@ class OrchestratorAgent:
                 detail = exc.to_dict()
                 if not validation_errors or validation_errors[-1] != detail:
                     validation_errors.append(detail)
+            error = str(exc) if isinstance(exc, QueryValidationError) else "Query pipeline failed."
+            code = exc.details["code"] if isinstance(exc, QueryValidationError) else "query_pipeline_failed"
+            if isinstance(exc, LLMRouterError):
+                code = exc.code
+                error = ("The query generator returned an invalid JSON query template."
+                         if code == "invalid_query_output" else
+                         "The language model returned an invalid structured response."
+                         if code == "invalid_llm_output" else "The language model is unavailable. Please retry.")
+                if exc.detail:
+                    error += " " + exc.detail
+                validation_errors.append({"code": code, "detail": error, "repairable": False})
             return {
                 "execution_success": False,
-                "execution_error": str(exc) if isinstance(exc, QueryValidationError) else "Query pipeline failed.",
-                "execution_error_code": exc.details["code"] if isinstance(exc, QueryValidationError) else "query_pipeline_failed",
+                "execution_error": error,
+                "execution_error_code": code,
                 "final_response": "I could not complete this query. See execution_error for details.",
                 "route": route, "query_context": query_context, "schema_spec": schema_spec, "query_plan": None,
                 "execution_path": {"route": route.get("complexity") if route else None,
