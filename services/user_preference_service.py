@@ -379,7 +379,7 @@ class UserPreferenceService:
                 # field named in the correction is the stronger signal; repair the record
                 # so both the prompt and deterministic query application agree.
                 described_field = _field_from_preference([candidate.get("preference", "")], list(fields))
-                if described_field and field != described_field:
+                if candidate.get("source") != "standalone_feedback" and described_field and field != described_field:
                     logger.warning(
                         "user_preference_field_mismatch_repaired request_id=%s user_id=%s collection=%s old_field=%s new_field=%s",
                         _safe_id(request_id or current_request_id()), _safe_id(self.user_id),

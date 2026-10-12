@@ -494,6 +494,7 @@ Positive feedback does not rerun the query or call feedback analysis. After nega
 \| POST | /query/{request_id}/optimize | Yes | Continue a retained query. |
 
 \| POST | /feedback | Yes | Store feedback and optionally analyze a correction. |
+\| POST | /feedback/standalone | Yes | Learn explicit rules or preferences without a question. |
 
 
 
@@ -785,6 +786,8 @@ Negative feedback:
 
 liked must be a JSON boolean. Negative feedback needs a non-empty comment; comments accept up to 4000 characters and request IDs up to 128. Results include feedback_saved, analysis_created, analysis/errors, and preference/knowledge outcomes. Saved raw feedback does not guarantee successful learning. Repeated submissions update that request's record.
 
+Use `POST /feedback/standalone` to teach a structured user preference or database rule without generating a question or analyzing query feedback. Preference submissions make zero model calls; a new database rule uses one embedding call for later retrieval. See [standalone feedback API](docs/standalone-feedback.md) for request examples, activation/conflict behavior, and response fields.
+
 
 
 ### HTTP outcomes
@@ -1013,7 +1016,7 @@ Knowledge candidates are deduplicated. Two independent confirmations can mark a 
 
 
 
-Conflicts can block activation. Only active knowledge reaches prompts. Internal approve/reject/supersede methods exist, without public administration routes. Precedence is explicit question, active database knowledge, then compatible preferences; schema constrains valid references.
+Conflicts can block activation. Only active knowledge reaches prompts. Internal approve/reject/supersede methods exist; standalone feedback uses approval for explicit rule submissions, without exposing general administration routes. Precedence is explicit question, active database knowledge, then compatible preferences; schema constrains valid references.
 
 Knowledge retrieval applies a semantic relevance gate before configurable feedback, scope, collection, and field bonuses, then keeps the highest-ranked five rules. Raw similarity and ranking score remain separate, and ordered active rules reach both generation prompts. See [knowledge ranking and evaluation](docs/knowledge-ranking.md) for configuration, runtime tracing, tests, and limitations.
 

@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 from agents.feedback_analysis_agent import FeedbackAnalysis
 
@@ -95,6 +95,70 @@ class FeedbackResponse(BaseModel):
     knowledge_error: str | None = None
     learning_active: bool = False
     regeneration_ready: bool = False
+
+
+class StandalonePreferenceRequest(BaseModel):
+    """Explicit structured learning avoids question generation and LLM analysis."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    scope: Literal["user"]
+    type: Literal[
+        "sorting_preference", "result_limit_preference", "filter_preference",
+        "metric_preference", "format_preference", "field_preference", "user_preference",
+    ]
+    text: str = Field(min_length=1, max_length=500)
+    collection: str = Field(min_length=1, max_length=200)
+    field: str | None = Field(default=None, min_length=1, max_length=200)
+    direction: Literal["asc", "desc"] | None = None
+    limit: int | None = Field(default=None, ge=1, le=50000, strict=True)
+    latest: StrictBool = False
+    apply_mode: Literal["default", "contextual"] = "default"
+    condition: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def consistent_preference(self):
+        if self.type in {"sorting_preference", "field_preference"} and not self.field:
+            raise ValueError("This preference type requires field")
+        if self.type == "sorting_preference" and self.direction is None:
+            raise ValueError("sorting_preference requires direction")
+        if self.type == "result_limit_preference" and self.limit is None:
+            raise ValueError("result_limit_preference requires limit")
+        if self.type != "sorting_preference" and self.direction is not None:
+            raise ValueError("direction is only supported for sorting_preference")
+        if self.type != "result_limit_preference" and (self.limit is not None or self.latest):
+            raise ValueError("limit and latest are only supported for result_limit_preference")
+        if self.latest and not self.field:
+            raise ValueError("latest requires an explicit ordering field")
+        if self.apply_mode == "contextual" and not self.condition:
+            raise ValueError("contextual preferences require condition")
+        if self.apply_mode == "default" and self.condition is not None:
+            raise ValueError("condition requires apply_mode=contextual")
+        return self
+
+
+class StandaloneKnowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    scope: Literal["database"]
+    type: Literal["business_rule", "field_definition", "coded_value", "relationship"]
+    text: str = Field(min_length=1, max_length=1200)
+    collections: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(min_length=1, max_length=20)
+    fields: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=50)
+
+
+StandaloneFeedbackRequest = Annotated[
+    StandalonePreferenceRequest | StandaloneKnowledgeRequest, Field(discriminator="scope")
+]
+
+
+class StandaloneFeedbackResponse(BaseModel):
+    feedback_id: str
+    feedback_saved: bool = True
+    scope: Literal["user", "database"]
+    learning_id: str
+    action: str
+    status: str
+    learning_active: bool
+    learning_error: str | None = None
+
 
 class OptimizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

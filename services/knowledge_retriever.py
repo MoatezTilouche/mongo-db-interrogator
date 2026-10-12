@@ -106,7 +106,7 @@ class KnowledgeRetriever:
 
             # Legacy user_feedback records also originated solely in the negative
             # feedback path. Missing source remains ordinary knowledge.
-            from_feedback = source in {"negative_feedback", "user_feedback"}
+            from_feedback = source in {"negative_feedback", "user_feedback", "standalone_feedback"}
             feedback_bonus = KNOWLEDGE_FEEDBACK_PRIORITY_BONUS if from_feedback else 0.0
             scope_bonus = KNOWLEDGE_SCOPE_MATCH_BONUS if collections <= candidate_names else 0.0
             collection_bonus = KNOWLEDGE_COLLECTION_MATCH_BONUS * len(overlap) / max(1, len(collections))

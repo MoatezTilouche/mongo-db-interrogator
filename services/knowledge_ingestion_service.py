@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+import math
 import re
 from typing import Any
 
@@ -89,11 +90,12 @@ class KnowledgeIngestionService:
 
     def _embed(self, text: str) -> list[float]:
         vectors = self.embedding_provider.embed_documents([text], model=KNOWLEDGE_EMBEDDING_MODEL)
-        if len(vectors) != 1 or not vectors[0] or not all(isinstance(x, (int, float)) for x in vectors[0]):
+        if len(vectors) != 1 or not vectors[0] or not all(
+                isinstance(x, (int, float)) and math.isfinite(x) for x in vectors[0]) or not any(vectors[0]):
             raise ValueError("Knowledge embedding provider returned an invalid vector")
         return [float(value) for value in vectors[0]]
 
-    def ingest(self, analysis: dict[str, Any], request_id: str) -> dict[str, Any] | None:
+    def ingest(self, analysis: dict[str, Any], request_id: str, *, explicit: bool = False) -> dict[str, Any] | None:
         if analysis.get("scope") != "database" or not analysis.get("knowledge_candidate"):
             return None
         kind = analysis.get("knowledge_type")
@@ -104,6 +106,9 @@ class KnowledgeIngestionService:
             [str(item) for item in analysis.get("collections", []) if isinstance(item, str)],
             [str(item) for item in analysis.get("fields", []) if isinstance(item, str)],
         )
+        if explicit and (set(collections) != set(analysis.get("collections", []))
+                         or set(fields) != set(analysis.get("fields", []))):
+            raise ValueError("Explicit knowledge references could not be verified")
         now = datetime.now(timezone.utc)
         key = _candidate_id(kind, text, collections, fields)
         existing = self.repository.get_by_key(key)
@@ -116,6 +121,9 @@ class KnowledgeIngestionService:
             except Exception as exc:
                 logger.warning("knowledge_embedding_failed request_id=%s error_type=%s",
                                request_id, type(exc).__name__)
+                if explicit:
+                    # An active rule without a vector would never pass retrieval.
+                    raise
         knowledge_metadata = {}
         if kind == "coded_value":
             coded = re.search(
@@ -127,14 +135,15 @@ class KnowledgeIngestionService:
         record = {
             "_id": key, "normalized_key": key, "type": kind, "text": text,
             "collections": collections, "fields": fields, "metadata": knowledge_metadata,
-            # FeedbackService routes only disliked generations into this path.
-            "source": "negative_feedback", "created_from_feedback": True,
+            "source": "standalone_feedback" if explicit else "negative_feedback", "created_from_feedback": True,
             "source_request_id": request_id,
             "source_request_ids": [request_id], "confidence": float(analysis.get("confidence", 0)),
             "confirmation_count": 1, "status": "candidate", "active": False,
             "embedding": vector, "embedding_model": KNOWLEDGE_EMBEDDING_MODEL,
             "created_at": now, "updated_at": now,
         }
+        if explicit:
+            record["source_feedback_id"] = request_id
         action, saved = self.repository.add_or_confirm(record)
         logger.info("knowledge_candidate_%s request_id=%s knowledge_id=%s confirmation_count=%s",
                     action, request_id, key, saved.get("confirmation_count", 1))
@@ -143,6 +152,13 @@ class KnowledgeIngestionService:
         confidence = float(saved.get("confidence", 0))
         if saved.get("status") == "active" and saved.get("active"):
             return {"action": action, "knowledge_id": key, "status": "active", "active": True}
+        if explicit:
+            # This endpoint is an explicit instruction to learn the supplied rule;
+            # approval retains the existing conflict/rejection checks, independent
+            # of thresholds intended for model-classified negative feedback.
+            active = self.approve(key)
+            return {"action": action, "knowledge_id": key,
+                    "status": "active" if active else saved.get("status", "candidate"), "active": active}
         if confirmations >= 2 and saved.get("status") == "candidate":
             self.repository.set_status(key, "confirmed", False)
             saved["status"] = "confirmed"
