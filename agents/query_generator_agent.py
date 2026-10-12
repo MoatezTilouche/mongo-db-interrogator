@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 from langchain_core.messages import HumanMessage
 
 from agent.llm import llm_router, LLMRouterError
@@ -54,6 +56,7 @@ class QueryGeneratorAgent:
         # `plan` is accepted for compatibility but intentionally never enters the prompt.
         operation = normalize_operation(operation_hint)
         return self._invoke_json(render_prompt("query_generator", {
+            "today": datetime.now(ZoneInfo("Africa/Tunis")).date().isoformat(),
             "question": question,
             "schema_json": json.dumps(compact_schema(schema_spec), ensure_ascii=False, default=str),
             "operation_hint": operation,

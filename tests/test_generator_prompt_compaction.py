@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import datetime as real_datetime
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -65,6 +66,17 @@ def test_generator_sends_only_chosen_shape_and_simple_operations_omit_aggregatio
         assert "$group" in prompt
         assert "$match" in prompt
         assert "Never combine pipeline" in prompt
+
+
+def test_generator_prompt_includes_today(monkeypatch):
+    import agents.query_generator_agent as module
+
+    monkeypatch.setattr(module, "datetime", Mock(now=Mock(return_value=real_datetime(2026, 10, 12))))
+    agent, invoke = capture(monkeypatch)
+
+    agent.generate("Show orders", SCHEMA)
+
+    assert "Today: 2026-10-12" in invoke.call_args.args[1][0].content
 
 
 @pytest.mark.parametrize("hint", ["unknown", None, "unexpected"])

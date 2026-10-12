@@ -16,8 +16,14 @@ from agent.config import (
     KNOWLEDGE_SCOPE_MATCH_BONUS,
 )
 from database.knowledge_repository import KnowledgeRepository
+from agent.telemetry import current_request_id
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
 
 
 def _cosine(left: list[float], right: list[float]) -> float | None:
@@ -142,6 +148,14 @@ class KnowledgeRetriever:
             selected.append(item)
             if len(selected) == self.top_k:
                 break
+        selected_ids = {item["knowledge_id"] for item in selected}
+        for rank, item in enumerate(scored, start=1):
+            logger.info(
+                "knowledge_ranked_rule request_id=%s rank=%d selected=%s knowledge_id=%s "
+                "ranking_score=%.6f text=%s",
+                current_request_id(), rank, item["knowledge_id"] in selected_ids, item["knowledge_id"],
+                item["ranking_score"], item["text"],
+            )
         elapsed = (time.perf_counter() - started) * 1000
         telemetry = {"knowledge_retrieval_latency_ms": elapsed,
                      "knowledge_retrieval_top_k": self.top_k,
