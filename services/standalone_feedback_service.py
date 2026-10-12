@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from agent.config import DEFAULT_USER_ID
 from agent.telemetry import request_context
-from api.schemas import StandaloneKnowledgeRequest, StandalonePreferenceRequest
+from api.schemas import StandaloneFeedbackRequest, StandaloneKnowledgeRequest, StandalonePreferenceRequest
 from database.record_safety import safe_record
 from database.user_preference_repository import UserPreferenceRepository
 from services.feedback_service import FeedbackPersistenceError
@@ -89,3 +89,14 @@ class StandaloneFeedbackService:
         action = self.preference_repository.upsert(record)
         return {"feedback_id": feedback_id, "scope": "user", "learning_id": record["_id"],
                 "action": action, "status": "active", "learning_active": True}
+def submit_batch(
+    self,
+    items: list[StandaloneFeedbackRequest],
+) -> list[dict]:
+    results = []
+
+    for item in items:
+        result = self.submit(item)
+        results.append(result)
+
+    return results

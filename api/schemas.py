@@ -172,3 +172,19 @@ class TemplateDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["reuse", "regenerate"]
     template_id: str = Field(min_length=1, max_length=160, pattern=r"^tpl_[a-zA-Z0-9_]+$")
+
+
+
+class StandaloneFeedbackBatchRequest(BaseModel):
+    items: list[StandaloneFeedbackRequest] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+    )
+
+
+class StandaloneFeedbackBatchResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[StandaloneFeedbackResponse]
