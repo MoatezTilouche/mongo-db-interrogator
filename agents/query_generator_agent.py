@@ -30,14 +30,18 @@ class QueryGeneratorAgent:
             prompt += "\n" + self.capabilities.lookup_guidance()
         try:
             response = llm_router.invoke(role, [HumanMessage(content=prompt)], GeneratedQuery)
-            parsed = parse_json_from_text((getattr(response, "content", "") or "").strip())
+            parsed = parse_json_from_text(getattr(response, "content", "") or "")
             if not isinstance(parsed, dict):
                 raise ValueError("Query generator returned a non-object JSON response")
             generated = GeneratedQuery.model_validate(parsed).model_dump(by_alias=True, exclude_unset=True)
             return parameterize_filter_values(generated)
         except (ValueError, LLMRouterError) as exc:
             if role != "repair":
-                raise
+                if isinstance(exc, LLMRouterError):
+                    raise
+                from services.aggregation_validation import QueryValidationError
+                raise QueryValidationError("Query generator did not return a usable JSON query template.",
+                                           code="invalid_query_output", repairable=False) from None
             from services.aggregation_validation import QueryValidationError
             code = "repair_failed" if isinstance(exc, LLMRouterError) else "invalid_repair_output"
             raise QueryValidationError("Repair did not return a usable parameterized template",

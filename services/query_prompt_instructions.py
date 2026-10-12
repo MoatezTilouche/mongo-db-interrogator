@@ -33,6 +33,9 @@ def output_contract(operation: str | None) -> str:
     return render_prompt("query_output_contract", {
         "filter_location": "filter and aggregation $match predicates" if aggregate else "filter predicates",
         "limit_instructions": limit_instructions,
+        "parameter_instructions": "parameters must be {}: count_documents has no limit parameter." if operation == "count_documents" else
+            'parameters is {} unless an explicit requested limit uses {"$param":"limit"} in template; '
+            'then it contains exactly {"limit":<positive integer>}.',
         # Direct find/count/distinct filters can contain $expr too.
         "expression_restrictions": "; never bind $expr field references" + (" or lookup variables" if aggregate else ""),
     })

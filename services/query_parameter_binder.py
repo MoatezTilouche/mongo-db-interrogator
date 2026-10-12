@@ -160,6 +160,50 @@ def visit_filter_values(template, transform):
     return result
 
 
+def normalize_parameter_placeholders(generated):
+    """Canonicalize only explicit, resolvable placeholder syntax; never guess values."""
+    if not isinstance(generated, dict) or not isinstance(generated.get("template"), dict) \
+            or not isinstance(generated.get("parameters"), dict):
+        return generated
+    parameters = generated["parameters"]
+
+    def replace(value, path):
+        if not isinstance(value, str):
+            return value
+        named = re.fullmatch(r"\$param\.([A-Za-z_][A-Za-z0-9_]*)", value)
+        name = named.group(1) if named else None
+        if value == "$param":
+            field = next((part for part in reversed(path) if isinstance(part, str)
+                          and not part.startswith("$")), "")
+            candidates = [field, field.rsplit(".", 1)[-1]]
+            name = next((candidate for candidate in candidates if candidate in parameters), None)
+            if name is None and set(parameters) - {"limit"} == {"param"}:
+                name = "param"
+        if name is not None and name in parameters:
+            return {"$param": name}
+        return value
+
+    template = visit_filter_values(generated["template"], replace)
+    if template.get("operation") == "count":
+        template["operation"] = "count_documents"
+
+    def normalize_limit(value, path):
+        supplied = parameters.get("limit")
+        # Both representations already specify exactly the same positive limit.
+        # Preserve the value and make its explicit parameter binding consistent.
+        if type(value) is int and type(supplied) is int and value == supplied and value > 0:
+            return {"$param": "limit"}
+        return replace(value, path)
+
+    if "limit" in template:
+        template["limit"] = normalize_limit(template["limit"], ("limit",))
+    if isinstance(template.get("pipeline"), list):
+        for index, stage in enumerate(template["pipeline"]):
+            if isinstance(stage, dict) and "$limit" in stage:
+                stage["$limit"] = normalize_limit(stage["$limit"], ("pipeline", index, "limit"))
+    return {**generated, "template": template}
+
+
 def parameterize_filter_values(generated):
     """Canonical parameter names come from predicate paths, independent of literal values."""
     concrete = bind_query_parameters(generated["template"], generated["parameters"])

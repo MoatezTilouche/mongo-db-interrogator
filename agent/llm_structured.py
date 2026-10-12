@@ -5,9 +5,29 @@ import re
 from typing import Any
 
 
+def extract_text_content(content: Any) -> str:
+    """Read provider text blocks without serializing their metadata as output."""
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        if parts:
+            return "".join(parts)
+    raise ValueError("LLM response contains no supported text content")
+
+
 def parse_json_from_text(text: str) -> Any:
     """Parse strict JSON, tolerating a surrounding Markdown code fence."""
-    raw = (text or "").strip()
+    raw = extract_text_content(text).strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
         raw = re.sub(r"\s*```$", "", raw)

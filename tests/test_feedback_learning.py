@@ -612,8 +612,8 @@ def test_feedback_agent_uses_central_router_with_minimal_context(monkeypatch, an
     captured = []
     def invoke(role, messages, schema):
         assert role == "feedback_analysis"
-        assert schema is FeedbackAnalysis
-        captured.append(messages[0].content)
+        assert schema.model_fields is FeedbackAnalysis.model_fields
+        captured.append("\n".join(message.content for message in messages))
         return SimpleNamespace(content=analysis.model_dump_json())
     monkeypatch.setattr(module.llm_router, "invoke", invoke)
     record = {
@@ -819,15 +819,17 @@ def test_query_context_is_saved_in_history(repositories):
     assert record["summary_skipped"] is True
 
 
-def test_feedback_analysis_receives_query_context(monkeypatch, analysis):
+def test_feedback_analysis_receives_only_collection_names_from_query_context(monkeypatch, analysis):
     import agents.feedback_analysis_agent as module
     context = {"complexity": "complex", "operation": "aggregate", "collections": ["orders"], "fields": {"orders": ["total"]}}
     captured = []
     monkeypatch.setattr(module.llm_router, "invoke", lambda role, messages, schema: (
-        captured.append(messages[0].content) or SimpleNamespace(content=analysis.model_dump_json())
+        captured.append(messages[-1].content) or SimpleNamespace(content=analysis.model_dump_json())
     ))
     FeedbackAnalysisAgent().analyze({"question": "Total spending", "query_context": context}, "Wrong total")
-    assert json.loads(captured[0].split("Context: ", 1)[1].split("\n", 1)[0])["query_context"] == context
+    compact = json.loads(captured[0])
+    assert compact["cols"] == ["orders"]
+    assert "query_context" not in compact and "complexity" not in captured[0]
 
 
 def test_executor_reports_actual_execution_latency(monkeypatch):

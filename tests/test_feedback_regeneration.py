@@ -362,7 +362,7 @@ def test_classifier_prompt_describes_reusable_source_rules_and_original_evidence
     import agents.feedback_analysis_agent as module
     captured = []
     monkeypatch.setattr(module.llm_router, "invoke", lambda role, messages, schema: (
-        captured.append(messages[0].content) or SimpleNamespace(content=one_off().model_dump_json())))
+        captured.append("\n".join(message.content for message in messages)) or SimpleNamespace(content=one_off().model_dump_json())))
     FeedbackAnalysisAgent().analyze({"question": QUESTION, "effective_question": "Earlier corrected request"}, COMMENT)
     prompt = captured[0]
     assert 'Users do not have to say "save this"' in prompt
