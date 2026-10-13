@@ -13,6 +13,7 @@ from database.mongo_client import get_database
 from database.storage_codec import decode_record
 from services.template_parameter_extractor import normalized_question
 from services.query_parameter_binder import bind_query_parameters
+from services.query_entity_guard import template_entity_mismatch
 from database.query_template_repository import QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,14 @@ class SemanticTemplateCache:
             logger.info("template_search_embedding_started request_id=%s", current_request_id())
             vector = llm_router.embed_query(normalized_question(question))
             logger.info("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
-            ranked = sorted(((cosine(vector, doc.get("embedding", [])), doc) for doc in documents),
+            eligible = []
+            for document in documents:
+                if template_entity_mismatch(document, question):
+                    logger.info("template_search_rejected request_id=%s template_id=%s reason=entity_mismatch",
+                                current_request_id(), document.get("template_id"))
+                else:
+                    eligible.append(document)
+            ranked = sorted(((cosine(vector, doc.get("embedding", [])), doc) for doc in eligible),
                             key=lambda item: item[0], reverse=True)[:SEMANTIC_TEMPLATE_TOP_K]
             metadata["best_similarity_score"] = ranked[0][0] if ranked else None
             metadata["miss_reason"] = "no_compatible_candidate_above_threshold"
@@ -160,6 +168,7 @@ class SemanticTemplateCache:
             if document.get("trusted") is False: return "untrusted_template"
             if document.get("success_count", 0) < 1: return "no_successful_execution"
             if document.get("positive_feedback_count", 0) < 1: return "no_positive_feedback"
+            if template_entity_mismatch(document, question): return "entity_mismatch"
             # A saved refinement is explicit user scope, not a general preference.
             # Parameter changes are allowed; omitted refinement requirements aren't.
             if document.get("scope_refined") and normalized_question(question) != normalized_question(document.get("source_question", "")):

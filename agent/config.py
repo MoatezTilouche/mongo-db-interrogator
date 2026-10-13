@@ -21,6 +21,53 @@ KNOWLEDGE_FEEDBACK_PRIORITY_BONUS = float(os.getenv("KNOWLEDGE_FEEDBACK_PRIORITY
 KNOWLEDGE_SCOPE_MATCH_BONUS = float(os.getenv("KNOWLEDGE_SCOPE_MATCH_BONUS", "0.02"))
 KNOWLEDGE_COLLECTION_MATCH_BONUS = float(os.getenv("KNOWLEDGE_COLLECTION_MATCH_BONUS", "0.05"))
 KNOWLEDGE_FIELD_MATCH_BONUS = float(os.getenv("KNOWLEDGE_FIELD_MATCH_BONUS", "0.05"))
+KNOWLEDGE_CONTEXT_MIN_SIMILARITY = float(os.getenv("KNOWLEDGE_CONTEXT_MIN_SIMILARITY", "0.75"))
+KNOWLEDGE_CONTEXT_TOP_K = max(0, int(os.getenv("KNOWLEDGE_CONTEXT_TOP_K", "3")))
+KNOWLEDGE_VALUE_RESOLUTION_ENABLED = os.getenv("KNOWLEDGE_VALUE_RESOLUTION_ENABLED", "true").lower() == "true"
+KNOWLEDGE_CATEGORICAL_MAX_DISTINCT = max(1, int(os.getenv("KNOWLEDGE_CATEGORICAL_MAX_DISTINCT", "30")))
+KNOWLEDGE_CATEGORICAL_SAMPLE_SIZE = max(1, int(os.getenv("KNOWLEDGE_CATEGORICAL_SAMPLE_SIZE", "50000")))
+KNOWLEDGE_VALUE_CATALOG_TTL_SECONDS = max(0, int(os.getenv("KNOWLEDGE_VALUE_CATALOG_TTL_SECONDS", "3600")))
+KNOWLEDGE_CASE_VARIANTS_POLICY = os.getenv("KNOWLEDGE_CASE_VARIANTS_POLICY", "merge").strip().lower()
+KNOWLEDGE_CASE_SENSITIVE_FIELDS = frozenset(value.strip() for value in os.getenv("KNOWLEDGE_CASE_SENSITIVE_FIELDS", "").split(",") if value.strip())
+KNOWLEDGE_VALUE_SUGGESTION_CUTOFF = float(os.getenv("KNOWLEDGE_VALUE_SUGGESTION_CUTOFF", "0.8"))
+if KNOWLEDGE_CASE_VARIANTS_POLICY not in {"merge", "exact"}:
+    raise ValueError("KNOWLEDGE_CASE_VARIANTS_POLICY must be merge or exact")
+if not 0 <= KNOWLEDGE_VALUE_SUGGESTION_CUTOFF <= 1:
+    raise ValueError("KNOWLEDGE_VALUE_SUGGESTION_CUTOFF must be between 0 and 1")
+KNOWLEDGE_CONTEXT_FLOOR = float(os.getenv("KNOWLEDGE_CONTEXT_FLOOR", "0.30"))
+KNOWLEDGE_RANK_SELECTION_ENABLED = os.getenv("KNOWLEDGE_RANK_SELECTION_ENABLED", "true").lower() == "true"
+KNOWLEDGE_KEYWORD_MATCHING_ENABLED = os.getenv("KNOWLEDGE_KEYWORD_MATCHING_ENABLED", "true").lower() == "true"
+KNOWLEDGE_KEYWORD_CACHE_TTL_SECONDS = max(0, int(os.getenv("KNOWLEDGE_KEYWORD_CACHE_TTL_SECONDS", "3600")))
+KNOWLEDGE_KEYWORD_MAX_RULE_FRACTION = float(os.getenv("KNOWLEDGE_KEYWORD_MAX_RULE_FRACTION", "0.30"))
+KNOWLEDGE_KEYWORD_MAX_EXTRA = max(0, int(os.getenv("KNOWLEDGE_KEYWORD_MAX_EXTRA", "2")))
+KNOWLEDGE_RULE_SUGGESTED_COLLECTIONS_ENABLED = os.getenv("KNOWLEDGE_RULE_SUGGESTED_COLLECTIONS_ENABLED", "true").lower() == "true"
+KNOWLEDGE_RULE_SUGGESTED_COLLECTIONS_MAX = max(0, int(os.getenv("KNOWLEDGE_RULE_SUGGESTED_COLLECTIONS_MAX", "2")))
+if not 0 <= KNOWLEDGE_CONTEXT_FLOOR <= 1:
+    raise ValueError("KNOWLEDGE_CONTEXT_FLOOR must be between 0 and 1")
+if not 0 <= KNOWLEDGE_KEYWORD_MAX_RULE_FRACTION <= 1:
+    raise ValueError("KNOWLEDGE_KEYWORD_MAX_RULE_FRACTION must be between 0 and 1")
+KNOWLEDGE_GENERATOR_TOP_K = max(1, int(os.getenv("KNOWLEDGE_GENERATOR_TOP_K", "8")))
+KNOWLEDGE_STATUS_TERMS = tuple(term.strip().casefold() for term in os.getenv(
+    "KNOWLEDGE_STATUS_TERMS",
+    "failed,failure,success,succeeded,successful,status,state,code,pending,cancelled,"
+    "completed,in progress,échoué,échouée,échec,réussi,réussie,succès,statut,état"
+).split(",") if term.strip())
+KNOWLEDGE_DATE_FIELD_PATTERN = os.getenv(
+    "KNOWLEDGE_DATE_FIELD_PATTERN",
+    r"(?:date|time|timestamp|created_?at|updated_?at|crt_dt|jour)"
+)
+KNOWLEDGE_TIME_EXPRESSION_PATTERN = os.getenv(
+    "KNOWLEDGE_TIME_EXPRESSION_PATTERN",
+    r"\b(?:today|yesterday|last\s+(?:week|month|year)|this\s+(?:week|month|year)|"
+    r"\d+\s+days?|aujourd['’]hui|hier|(?:cette|la)\s+semaine|ce\s+mois|"
+    r"(?:semaine|mois|année)\s+(?:derni[eè]re?|pass[eé]e?)|\d+\s+(?:derniers?\s+)?jours?|"
+    r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|"
+    r"(?:\d{1,2}\s+)?(?:january|february|march|april|may|june|july|august|"
+    r"september|october|november|december|janvier|février|mars|avril|mai|juin|"
+    r"juillet|août|septembre|octobre|novembre|décembre)\b)"
+)
+if not 0 <= KNOWLEDGE_CONTEXT_MIN_SIMILARITY <= 1:
+    raise ValueError("KNOWLEDGE_CONTEXT_MIN_SIMILARITY must be between 0 and 1")
 if not 0 <= KNOWLEDGE_MIN_SEMANTIC_SIMILARITY <= 1:
     raise ValueError("KNOWLEDGE_MIN_SEMANTIC_SIMILARITY must be between 0 and 1")
 if not all(0 <= value < float("inf") for value in (
@@ -55,6 +102,12 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
 SCHEMA_ENRICHMENT_MODEL = os.getenv("SCHEMA_ENRICHMENT_MODEL", OPENAI_MODEL)
 SCHEMA_EMBEDDING_MODEL = os.getenv("SCHEMA_EMBEDDING_MODEL", "text-embedding-3-small")
 KNOWLEDGE_EMBEDDING_MODEL = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", SCHEMA_EMBEDDING_MODEL)
+# Unset preserves the provider's existing default; query and rule vectors share it.
+_embedding_dimensions = os.getenv("SCHEMA_EMBEDDING_DIMENSIONS", "").strip()
+SCHEMA_EMBEDDING_DIMENSIONS = int(_embedding_dimensions) if _embedding_dimensions else None
+if SCHEMA_EMBEDDING_DIMENSIONS is not None and SCHEMA_EMBEDDING_DIMENSIONS <= 0:
+    raise ValueError("SCHEMA_EMBEDDING_DIMENSIONS must be positive when configured")
+KNOWLEDGE_EMBEDDING_DIMENSIONS = SCHEMA_EMBEDDING_DIMENSIONS
 if KNOWLEDGE_EMBEDDING_MODEL != SCHEMA_EMBEDDING_MODEL:
     raise ValueError("KNOWLEDGE_EMBEDDING_MODEL must match SCHEMA_EMBEDDING_MODEL for shared query embeddings")
 LLM_ROLE_CONFIG = {role: OPENAI_MODEL for role in (

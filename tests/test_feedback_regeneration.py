@@ -411,7 +411,8 @@ def test_raw_correction_reaches_both_agent_prompts_and_changes_validated_query(s
     app.preference_service = Mock(user_id=DEFAULT_USER_ID)
     app.preference_service.retrieve_for_query.return_value = []
     app.knowledge_retriever = Mock()
-    app.knowledge_retriever.retrieve.return_value = {"knowledge": [], "telemetry": {}}
+    app.knowledge_retriever.rules_for_context.return_value = {"knowledge": [], "telemetry": {}, "_active_rules": []}
+    app.knowledge_retriever.rules_for_generator.return_value = {"knowledge": [], "user_preferences": []}
     app.executor = Mock()
     app.executor.execute.return_value = {"ok": True, "row_count": 0, "all_rows": [], "sample_rows": []}
     monkeypatch.setattr(orchestrator.QueryCostGuard, "analyze", Mock(return_value={

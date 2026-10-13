@@ -10,6 +10,49 @@ from agent.llm import llm_router
 from agent.llm_structured import parse_json_from_text
 
 
+class TemplateParameterExtractionError(ValueError):
+    """A safe reason code, without questions or parameter values."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__("Could not safely extract template parameters: " + reason)
+
+
+def _example_text(spec):
+    value = spec.get("example")
+    if isinstance(value, dict) and set(value) in ({"$date"}, {"$oid"}):
+        value = next(iter(value.values()))
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return str(value)
+
+
+def _source_matches(source, spec):
+    text = _example_text(spec)
+    if not text:
+        return list(re.finditer(r'''(?<=")(?=")|(?<=')(?=')''', source))
+    # A numeric default is not visible just because its digits occur inside an
+    # identifier, date or decimal. Match the complete source literal instead.
+    if spec.get("type") in {"integer", "number"}:
+        pattern = r"(?<![\w-])(?<!\d[./:])" + re.escape(text) + r"(?!\w|[-./:]\d)"
+    else:
+        pattern = r"(?<!\w)" + re.escape(text) + r"(?!\w)"
+    return list(re.finditer(pattern, source, re.I))
+
+
+def _effective_specs(source, specifications):
+    """Infer missing source literals conservatively, without changing storage."""
+    specs = deepcopy(specifications)
+    for spec in specs.values():
+        if spec.get("user_variable") is False or spec.get("source_visible") is False or not _source_matches(source, spec):
+            spec.update(user_variable=False, source_visible=False)
+    return specs
+
+
 def normalized_question(question, parameters=None):
     text = question
     for name, value in sorted((parameters or {}).items(), key=lambda item: -len(str(item[1]))):
@@ -35,12 +78,10 @@ def describe_parameters(template, parameters, question):
     result = {}
     for name, value in parameters.items():
         example = value
-        text = str(value)
-        if isinstance(value, dict) and set(value) in ({"$date"}, {"$oid"}): text = str(next(iter(value.values())))
-        present = bool(re.search(r"(?<!\w)" + re.escape(text) + r"(?!\w)", question, flags=re.I))
-        result[name] = {**parameter_schema(value), "source_path": paths[name][0],
-            "source_paths": paths[name], "example": deepcopy(example), "user_variable": True,
-            "source_visible": present or name == "limit"}
+        spec = {**parameter_schema(value), "source_path": paths[name][0],
+                "source_paths": paths[name], "example": deepcopy(example)}
+        present = bool(_source_matches(question, spec))
+        result[name] = {**spec, "user_variable": present, "source_visible": present}
     return result
 
 
@@ -77,17 +118,23 @@ def coerce(value, specification):
 
 
 def extract_parameters(question, document):
-    specs = document["parameter_schema"]
+    from services.query_entity_guard import template_entity_mismatch
+    if template_entity_mismatch(document, question):
+        raise TemplateParameterExtractionError("entity_mismatch")
     source = document["source_question"]
+    specs = _effective_specs(source, document["parameter_schema"])
     # Identical wording with substituted literals is unambiguous and requires no LLM.
     spans = []
     for name, spec in specs.items():
-        value = spec.get("example")
-        if isinstance(value, dict) and len(value) == 1: value = next(iter(value.values()))
-        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-            for match in re.finditer(r"(?<!\w)" + re.escape(str(value)) + r"(?!\w)", source, re.I):
+        if spec.get("user_variable") is False:
+            continue
+        if spec["type"] in {"string", "integer", "number", "boolean", "null", "date", "objectId"}:
+            for match in _source_matches(source, spec):
                 spans.append((match.start(), match.end(), name))
     spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    ambiguous = any(start == other_start and end == other_end and name != other_name
+                    for index, (start, end, name) in enumerate(spans)
+                    for other_start, other_end, other_name in spans[index + 1:])
     pattern, last, names = [], 0, []
     for start, end, name in spans:
         if start < last: continue
@@ -97,25 +144,35 @@ def extract_parameters(question, document):
         elif kind == "number": capture = r"[+-]?\d+(?:\.\d+)?"
         elif kind == "date": capture = r"\d{4}-\d{2}-\d{2}(?:T[0-9:.+-]+Z?)?"
         elif kind == "objectId": capture = r"[a-fA-F0-9]{24}"
-        elif re.fullmatch(r"[A-Za-z]+[-_][A-Za-z0-9_-]+", example):
-            prefix = re.match(r"[A-Za-z]+[-_]", example).group()
-            capture = re.escape(prefix) + r"[A-Za-z0-9_-]+"
+        elif kind == "boolean": capture = r"true|false"
+        elif kind == "null": capture = r"null"
+        elif kind == "string" and start > 0 and end < len(source) and source[start - 1] == source[end] and source[end] in {'"', "'"}:
+            # Surrounding quotes bound multiword data without consuming prose.
+            capture = "[^" + re.escape(source[end]) + r"\r\n]*"
+        elif kind == "string" and re.fullmatch(r"[\w./:@+-]+", example):
+            # No field-specific or identifier-prefix branches: every plain string
+            # slot accepts a single replacement token of the same lexical form.
+            capture = r"[\w./:@+-]+"
         else:
-            # Free text is ambiguous without the small typed extraction fallback.
+            # Unquoted free text and structured values retain the typed fallback.
             capture = re.escape(example)
+        if names and specs[names[-1]]["type"] == kind == "string" and not re.search(r"\w|\s", source[last:start]):
+            ambiguous = True
         pattern.extend([re.escape(source[last:start]), "(" + capture + ")"])
         names.append(name); last = end
     pattern.append(re.escape(source[last:]))
-    match = re.fullmatch("".join(pattern), question, re.I)
+    match = None if ambiguous else re.fullmatch("".join(pattern), question, re.I)
     extracted = {}
     if match:
         for name, raw in zip(names, match.groups()):
             kind = specs[name]["type"]
             if kind == "integer" and re.fullmatch(r"[+-]?\d+", raw): value = int(raw)
             elif kind == "number" and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", raw): value = float(raw)
+            elif kind == "boolean": value = raw.casefold() == "true"
+            elif kind == "null": value = None
             else: value = raw
             value = coerce(value, specs[name])
-            if name in extracted and extracted[name] != value: raise ValueError("Ambiguous repeated parameter")
+            if name in extracted and extracted[name] != value: raise TemplateParameterExtractionError("ambiguous_value")
             extracted[name] = value
         for name, spec in specs.items():
             if name not in extracted and (spec.get("source_visible") is False or spec.get("user_variable") is False):
@@ -132,9 +189,10 @@ def extract_parameters(question, document):
     response = llm_router.invoke("template_parameters", [HumanMessage(content=prompt + json.dumps(
         {"question": question, "source_question": source, "parameter_schema": specs}, default=str))], output)
     parsed = output.model_validate(parse_json_from_text(response.content))
-    if not parsed.can_extract or parsed.parameters is None: raise ValueError("Could not safely extract all template parameters; regenerate the query")
+    if not parsed.can_extract or parsed.parameters is None:
+        raise TemplateParameterExtractionError("ambiguous_parameter_positions" if ambiguous else "unsafe_or_missing_parameter")
     values = parsed.parameters.model_dump()
     for name, spec in specs.items():
         if spec.get("user_variable") is False and values[name] != spec.get("example"):
-            raise ValueError("Extraction changed a fixed template value")
+            raise TemplateParameterExtractionError("fixed_parameter_changed")
     return {name: coerce(value, specs[name]) for name, value in values.items()}, "llm"

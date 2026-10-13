@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 import hashlib
 import json
 import logging
-import math
 import re
 from typing import Any
 
@@ -14,10 +14,15 @@ from agent.config import (
     KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS,
     KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE,
     KNOWLEDGE_EMBEDDING_MODEL,
+    KNOWLEDGE_EMBEDDING_DIMENSIONS,
     KNOWLEDGE_LEARNING_MODE,
 )
 from agent.llm import llm_router
 from database.knowledge_repository import KnowledgeRepository
+from database.query_history_repository import QueryHistoryRepository
+from database.record_safety import safe_record
+from services.knowledge_rule_policy import conflicts
+from services.knowledge_embeddings import definition_text, embedding_fields, stale_reason, vector_valid
 
 logger = logging.getLogger(__name__)
 _WORD = re.compile(r"[a-z0-9_]+")
@@ -58,13 +63,16 @@ def _polarity(text: str) -> str | None:
 
 class KnowledgeIngestionService:
     def __init__(self, repository: KnowledgeRepository | None = None,
-                 schema_provider=None, embedding_provider=None):
+                 schema_provider=None, embedding_provider=None, history_repository=None):
         self.repository = repository or KnowledgeRepository()
         if schema_provider is None:
             from services.schema_bootstrap_service import schema_bootstrap_service
             schema_provider = schema_bootstrap_service
         self.schema_provider = schema_provider
         self.embedding_provider = embedding_provider or llm_router
+        database = self.repository.database if isinstance(self.repository, KnowledgeRepository) else None
+        self.history_repository = (history_repository if history_repository is not None
+                                   else QueryHistoryRepository(database=database))
 
     def _verified_references(self, collections: list[str], fields: list[str]) -> tuple[list[str], list[str]]:
         try:
@@ -89,13 +97,84 @@ class KnowledgeIngestionService:
                 and left_polarity != right_polarity and similarity >= 0.45)
 
     def _embed(self, text: str) -> list[float]:
-        vectors = self.embedding_provider.embed_documents([text], model=KNOWLEDGE_EMBEDDING_MODEL)
-        if len(vectors) != 1 or not vectors[0] or not all(
-                isinstance(x, (int, float)) and math.isfinite(x) for x in vectors[0]) or not any(vectors[0]):
+        options = {"dimensions": KNOWLEDGE_EMBEDDING_DIMENSIONS} if KNOWLEDGE_EMBEDDING_DIMENSIONS is not None else {}
+        vectors = self.embedding_provider.embed_documents([text], model=KNOWLEDGE_EMBEDDING_MODEL, **options)
+        if len(vectors) != 1 or not vector_valid(vectors[0], KNOWLEDGE_EMBEDDING_DIMENSIONS):
             raise ValueError("Knowledge embedding provider returned an invalid vector")
         return [float(value) for value in vectors[0]]
 
-    def ingest(self, analysis: dict[str, Any], request_id: str, *, explicit: bool = False) -> dict[str, Any] | None:
+    def _source_question(self, record, supplied=None):
+        if not (record.get("created_from_feedback") or record.get("source") in {
+                "negative_feedback", "user_feedback", "standalone_feedback"}):
+            return None
+        contexts = [record.get("source_context"), record.get("context")]
+        values = [supplied, record.get("source_question")]
+        values.extend(context.get("question") for context in contexts if isinstance(context, dict))
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value
+        request_id = record.get("source_request_id")
+        # Standalone feedback IDs do not refer to a query-history record.
+        if not isinstance(request_id, str) or not request_id or request_id.startswith("fb_"):
+            return None
+        try:
+            history = self.history_repository.get_by_request_id(request_id)
+            question = history.get("question") if isinstance(history, dict) else None
+            return question if isinstance(question, str) and question.strip() else None
+        except Exception as exc:
+            logger.warning("knowledge_source_question_unavailable error_type=%s", type(exc).__name__)
+            return None
+
+    def ensure_embeddings(self, record, *, source_question=None, dimensions=None,
+                          persist=True, strict=False):
+        """Refresh stale vector data without changing rule text or confirmation time."""
+        result = deepcopy(record)
+        expected_dimensions = KNOWLEDGE_EMBEDDING_DIMENSIONS or dimensions
+        inputs = [("", definition_text(record))]
+        question = self._source_question(record, source_question)
+        if question is not None:
+            inputs.append(("source_question_", question))
+        elif record.get("source_question_embedding"):
+            # Without the original input its hash cannot be checked. Keep the
+            # stored vector intact, but use the definition only for this call.
+            result.pop("source_question_embedding", None)
+            logger.info("knowledge_source_question_unavailable knowledge_id=%s reason=missing_original_question",
+                        safe_record(str(record.get("_id", ""))))
+        updates = {}
+        for prefix, text in inputs:
+            reason = stale_reason(record, text, KNOWLEDGE_EMBEDDING_MODEL, expected_dimensions, prefix)
+            if reason is None:
+                continue
+            try:
+                vector = self._embed(text)
+                if expected_dimensions is not None and len(vector) != expected_dimensions:
+                    raise ValueError("Knowledge embedding dimensions differ from query dimensions")
+                fields = embedding_fields(vector, text, KNOWLEDGE_EMBEDDING_MODEL, prefix)
+                updates.update(fields)
+                result.update(fields)
+                logger.info("knowledge_embedding_refreshed knowledge_id=%s vector=%s reason=%s dimensions=%d",
+                            safe_record(str(record.get("_id", ""))), "source_question" if prefix else "definition", reason, len(vector))
+            except Exception as exc:
+                logger.warning("knowledge_embedding_failed knowledge_id=%s vector=%s reason=%s error_type=%s",
+                               safe_record(str(record.get("_id", ""))), "source_question" if prefix else "definition", reason,
+                               type(exc).__name__)
+                # An outdated vector is not evidence for the current input.
+                # Leave persistence intact so the next use can retry the refresh.
+                result.pop(prefix + "embedding", None)
+                if strict and not prefix:
+                    raise
+        if updates and persist:
+            try:
+                self.repository.save_embeddings(record["_id"], updates)
+            except Exception as exc:
+                logger.warning("knowledge_embedding_persistence_failed knowledge_id=%s error_type=%s",
+                               safe_record(str(record.get("_id", ""))), type(exc).__name__)
+                if strict:
+                    raise
+        return result
+
+    def ingest(self, analysis: dict[str, Any], request_id: str, *, explicit: bool = False,
+               source_question: str | None = None) -> dict[str, Any] | None:
         if analysis.get("scope") != "database" or not analysis.get("knowledge_candidate"):
             return None
         kind = analysis.get("knowledge_type")
@@ -112,18 +191,18 @@ class KnowledgeIngestionService:
         now = datetime.now(timezone.utc)
         key = _candidate_id(kind, text, collections, fields)
         existing = self.repository.get_by_key(key)
-        vector: list[float] = []
-        if existing is None or not existing.get("embedding"):
-            try:
-                vector = self._embed(text)
-                if existing is not None:
-                    self.repository.save_embedding_if_missing(key, vector, KNOWLEDGE_EMBEDDING_MODEL)
-            except Exception as exc:
-                logger.warning("knowledge_embedding_failed request_id=%s error_type=%s",
-                               request_id, type(exc).__name__)
-                if explicit:
-                    # An active rule without a vector would never pass retrieval.
-                    raise
+        if existing is None:
+            find_equivalent = getattr(self.repository, "find_equivalent", None)
+            if callable(find_equivalent):
+                match = find_equivalent({"type": kind, "text": text,
+                                         "collections": collections, "fields": fields})
+                if isinstance(match, dict):
+                    existing = match
+                    key = str(existing["_id"])
+                    kind = existing.get("type") or existing.get("knowledge_type")
+                    text = existing["text"]
+                    collections = list(existing.get("collections") or [])
+                    fields = list(existing.get("fields") or [])
         knowledge_metadata = {}
         if kind == "coded_value":
             coded = re.search(
@@ -132,6 +211,8 @@ class KnowledgeIngestionService:
             )
             if coded:
                 knowledge_metadata = {"value": coded.group(1), "meaning": coded.group(2).strip()[:200]}
+        if existing is not None:
+            knowledge_metadata = deepcopy(existing.get("metadata") or {})
         record = {
             "_id": key, "normalized_key": key, "type": kind, "text": text,
             "collections": collections, "fields": fields, "metadata": knowledge_metadata,
@@ -139,11 +220,21 @@ class KnowledgeIngestionService:
             "source_request_id": request_id,
             "source_request_ids": [request_id], "confidence": float(analysis.get("confidence", 0)),
             "confirmation_count": 1, "status": "candidate", "active": False,
-            "embedding": vector, "embedding_model": KNOWLEDGE_EMBEDDING_MODEL,
+            "embedding": [], "embedding_model": KNOWLEDGE_EMBEDDING_MODEL,
             "created_at": now, "updated_at": now,
         }
         if explicit:
             record["source_feedback_id"] = request_id
+        # On confirmation retain the original stored definition and source
+        # question, so case/paraphrase variants do not churn vector fingerprints.
+        embedding_record = existing if existing is not None else record
+        supplied_question = source_question if existing is None or existing.get("source_request_id") == request_id else None
+        refreshed = self.ensure_embeddings(embedding_record, source_question=supplied_question,
+                                           persist=existing is not None, strict=explicit)
+        record.update({key: value for key, value in refreshed.items() if key in {
+            "embedding", "embedding_model", "dimensions", "embedding_text_hash",
+            "source_question_embedding", "source_question_embedding_model",
+            "source_question_dimensions", "source_question_embedding_text_hash"}})
         action, saved = self.repository.add_or_confirm(record)
         logger.info("knowledge_candidate_%s request_id=%s knowledge_id=%s confirmation_count=%s",
                     action, request_id, key, saved.get("confirmation_count", 1))
@@ -152,6 +243,18 @@ class KnowledgeIngestionService:
         confidence = float(saved.get("confidence", 0))
         if saved.get("status") == "active" and saved.get("active"):
             return {"action": action, "knowledge_id": key, "status": "active", "active": True}
+        # Check every new/confirmed candidate, even when auto-promotion is off.
+        # status already exists in the schemaless stored record; no new fields.
+        find_overlapping = getattr(self.repository, "find_overlapping", self.repository.find_active_with_same_scope)
+        for other in find_overlapping(saved):
+            if conflicts(saved, other):
+                self.repository.mark_conflict(key, str(other.get("_id")))
+                self.repository.set_status(key, "needs_review", False)
+                logger.warning("knowledge_candidate_conflict_detected knowledge_id=%s conflict_with=%s reason=different_meaning",
+                               key, other.get("_id"))
+                return {"action": action, "knowledge_id": key, "status": "needs_review", "active": False}
+        if saved.get("status") == "needs_review":
+            return {"action": action, "knowledge_id": key, "status": "needs_review", "active": False}
         if explicit:
             # This endpoint is an explicit instruction to learn the supplied rule;
             # approval retains the existing conflict/rejection checks, independent
@@ -165,13 +268,6 @@ class KnowledgeIngestionService:
         required_confirmations = 1 if KNOWLEDGE_LEARNING_MODE == "immediate" else KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS
         if KNOWLEDGE_AUTO_PROMOTION_ENABLED and confirmations >= required_confirmations \
                 and confidence >= KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE:
-            for active in self.repository.find_active_with_same_scope(saved):
-                if self._is_contradiction(saved, active):
-                    self.repository.mark_conflict(key, str(active.get("_id")))
-                    saved["conflict_with"] = str(active.get("_id"))
-                    logger.warning("knowledge_candidate_conflict_detected knowledge_id=%s conflict_with=%s",
-                                   key, saved["conflict_with"])
-                    return {"action": action, "knowledge_id": key, "status": saved["status"], "active": False}
             self.repository.set_status(key, "active", True)
             logger.info("knowledge_candidate_promoted knowledge_id=%s confirmation_count=%d", key, confirmations)
             return {"action": action, "knowledge_id": key, "status": "active", "active": True}
@@ -184,8 +280,9 @@ class KnowledgeIngestionService:
                 or candidate.get("status") not in {"candidate", "confirmed"}):
             return False
         for active in self.repository.find_active_with_same_scope(candidate):
-            if self._is_contradiction(candidate, active):
+            if conflicts(candidate, active):
                 self.repository.mark_conflict(knowledge_id, str(active.get("_id")))
+                self.repository.set_status(knowledge_id, "needs_review", False)
                 logger.warning("knowledge_candidate_conflict_detected knowledge_id=%s conflict_with=%s",
                                knowledge_id, active.get("_id"))
                 return False

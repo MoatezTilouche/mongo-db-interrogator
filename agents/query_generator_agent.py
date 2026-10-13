@@ -16,7 +16,7 @@ from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 from services.mongo_capabilities import get_mongo_capabilities
 from agent.telemetry import current_request_id
-from services.prompt_context import compact_knowledge, compact_preferences
+from services.prompt_context import knowledge_texts, compact_preferences
 from services.query_prompt_instructions import normalize_operation, operation_instructions, output_contract
 import logging
 
@@ -62,7 +62,7 @@ class QueryGeneratorAgent:
             "operation_hint": operation,
             "constraints_json": json.dumps({"read_only": True, "default_limit": None, "preserve_requested_limit": True, "server_enforces_output_cap": True}),
             "user_preferences_json": json.dumps(compact_preferences(user_preferences), ensure_ascii=False, separators=(",", ":")),
-            "database_knowledge_json": json.dumps(compact_knowledge(database_knowledge), ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(knowledge_texts(database_knowledge), ensure_ascii=False, separators=(",", ":")),
             "operation_instructions": operation_instructions(operation),
             "output_contract": output_contract(operation),
         }), "query_generator", include_lookup_guidance=operation in {"aggregate", "unknown"})
@@ -83,7 +83,7 @@ class QueryGeneratorAgent:
                    "query_context": query_context, "selected_schema": compact_schema(schema_spec),
                    "previous_query": previous_query, "refinement": refinement,
                    "user_preferences": compact_preferences(user_preferences),
-                   "database_knowledge": compact_knowledge(database_knowledge)}
+                   "database_knowledge": knowledge_texts(database_knowledge)}
         operation = normalize_operation(previous_query.get("operation"))
         return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str), "query_generator",
                                  include_lookup_guidance=operation in {"aggregate", "unknown"})
@@ -124,7 +124,7 @@ class QueryGeneratorAgent:
             "query_json": json.dumps(previous_query, ensure_ascii=False, default=str),
             "error": error,
             "user_preferences_json": json.dumps(compact_preferences(user_preferences), ensure_ascii=False, separators=(",", ":")),
-            "database_knowledge_json": json.dumps(compact_knowledge(database_knowledge), ensure_ascii=False, separators=(",", ":")),
+            "database_knowledge_json": json.dumps(knowledge_texts(database_knowledge), ensure_ascii=False, separators=(",", ":")),
             "operation_instructions": operation_instructions(operation),
             "repair_instructions": (render_prompt("query_aggregate_repair", {"operation": operation})
                                     if operation in {"aggregate", "unknown"} else ""),

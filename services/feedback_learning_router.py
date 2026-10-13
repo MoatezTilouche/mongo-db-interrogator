@@ -20,7 +20,7 @@ class FeedbackLearningRouter:
               request_id: str, user_id: str) -> dict[str, Any]:
         if analysis.get("scope") == "database" and analysis.get("knowledge_candidate"):
             logger.info("feedback_classified_as_knowledge_candidate request_id=%s", request_id)
-            outcome = self.knowledge_service.ingest(analysis, request_id)
+            outcome = self.knowledge_service.ingest(analysis, request_id, source_question=history.get("question"))
             return {"route": "database_knowledge", "knowledge": outcome}
         if analysis.get("scope") == "user" and analysis.get("reusable_preference"):
             logger.info("feedback_classified_as_preference request_id=%s", request_id)

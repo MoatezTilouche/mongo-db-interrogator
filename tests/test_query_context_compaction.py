@@ -42,10 +42,8 @@ def test_knowledge_precedence_and_semantics_survive_but_bookkeeping_is_removed()
                     "condition": "failed orders", "apply_mode": "contextual"}]
     original = deepcopy((rules, preferences))
     result = QueryContextCompactor().build("Orders", catalog, rules, preferences)
-    assert [rule["text"] for rule in result["knowledge"]] == [rule["text"] for rule in rules]
-    assert result["knowledge"][0]["enforcement"] == rules[0]["enforcement"]
-    assert result["knowledge"][0]["mandatory"] is True
-    assert result["knowledge"][0]["operation"] == "find"
+    assert result["knowledge"] == [rule["text"] for rule in rules]
+    assert '"enforcement"' not in compact_json(result["knowledge"])
     assert result["preferences"][0]["direction"] == -1
     assert result["preferences"][0]["condition"] == "failed orders"
     assert "private-" not in compact_json(result)
@@ -72,7 +70,7 @@ def test_impossibly_small_budget_reports_overflow_without_cutting_rules_or_requi
     rules = [{"text": "A rule that must remain complete.", "collections": ["history"], "fields": ["status"]}]
     result = QueryContextCompactor(token_budget=1).build("Filter commandId", catalog, rules, [])
     assert result["telemetry"]["query_context_budget_exceeded"]
-    assert result["knowledge"][0]["text"] == rules[0]["text"]
+    assert result["knowledge"][0] == rules[0]["text"]
     assert set(result["schema"]["history"]["fields"]) == {"commandId", "status"}
 
 
@@ -121,11 +119,11 @@ def test_user_text_matching_tokenizer_special_tokens_is_plain_data():
     assert count_tokens("<|endoftext|>") > 0
 
 
-def test_business_metadata_survives_and_nested_field_leaf_names_are_protected():
+def test_only_rule_text_is_serialized_and_nested_field_leaf_names_are_protected():
     catalog = {"collections": {"orders": {"fields": {"customer.contact.email": ["string"],
                   "executionDate": ["date"], "unused": ["string"]}}}}
     rules = [{"text": "Use the supplied status meaning", "collections": ["orders"],
               "metadata": {"value": "X", "meaning": "cancelled", "excluded_collections": ["ordersHist"]}}]
     result = QueryContextCompactor(token_budget=1).build("Show email and execution date", catalog, rules, [])
-    assert result["knowledge"][0]["metadata"] == rules[0]["metadata"]
+    assert result["knowledge"] == [rules[0]["text"]]
     assert {"customer.contact.email", "executionDate"} <= set(result["schema"]["orders"]["fields"])

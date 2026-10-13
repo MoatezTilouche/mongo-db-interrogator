@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from copy import deepcopy
 from agent.progress import stage, emit
 import logging
 from agent.telemetry import capture_usage, totals
@@ -10,7 +11,11 @@ from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
-from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values, template_from_concrete
+from services.knowledge_collection_suggestions import apply_rule_suggestions
+from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query
+from services.query_entity_guard import rule_entity_mismatch
+from database.record_safety import safe_record
+from services.query_parameter_binder import bind_query_parameters, template_from_concrete
 from services.query_cost_guard import QueryCostGuard
 from services.aggregation_validation import normalize_lookups, normalization_context
 from services.optimization_advisor import OptimizationAdvisor
@@ -82,6 +87,7 @@ class OrchestratorAgent:
         cache_status: dict[str, Any] = {}
         retrieval_status: dict[str, Any] = {}
         knowledge_status: dict[str, Any] = {}
+        pending_knowledge_diagnostics = None
         applied_knowledge: list[dict[str, Any]] = []
         execution: dict[str, Any] = {}
         execution_time_ms = 0.0
@@ -113,10 +119,13 @@ class OrchestratorAgent:
             preferences = stage("PreferenceRetriever", self.preference_service.retrieve_for_query,
                 question, catalog, current_request_id(),
                 selected_collections=set(candidate_catalog.get("collections", {})))
-            knowledge_result = self.knowledge_retriever.retrieve(
-                question, candidate_catalog, retrieval.pop("_query_embedding", None), catalog,
+            question_embedding = retrieval.pop("_query_embedding", None)
+            knowledge_result = self.knowledge_retriever.rules_for_context(
+                question_embedding, candidate_catalog, catalog,
+                question=question, question_embedding_reused=bool(question_embedding), defer_diagnostics=True,
             )
             knowledge_candidates = knowledge_result["knowledge"]
+            pending_knowledge_diagnostics = knowledge_result.get("_context_diagnostics")
             knowledge_status = knowledge_result["telemetry"]
             context = self.context_builder.build(
                 question, candidate_catalog, knowledge_candidates, preferences, full_catalog=catalog,
@@ -127,6 +136,9 @@ class OrchestratorAgent:
             )
             retrieval_status.update(context_result.pop("_prompt_compaction", {}))
             if context_result.get("error"):
+                if "_context_diagnostics" in knowledge_result:
+                    self.knowledge_retriever.log_context_diagnostics(knowledge_result["_context_diagnostics"])
+                    pending_knowledge_diagnostics = None
                 return {
                     "execution_success": False,
                     "execution_error": context_result.get("detail"),
@@ -136,12 +148,45 @@ class OrchestratorAgent:
                 }
             query_context = context_result["query_context"]
             schema_spec = context_result["schema_spec"]
+            query_context, schema_spec, suggested_collections = apply_rule_suggestions(
+                query_context, schema_spec, knowledge_candidates, catalog,
+            )
+            if "_context_diagnostics" in knowledge_result:
+                self.knowledge_retriever.log_context_diagnostics(
+                    knowledge_result["_context_diagnostics"], suggested_collections,
+                )
+                pending_knowledge_diagnostics = None
             preferences = context_result.get("user_preferences", preferences)
             selected_collections = set(query_context.get("collections", []))
-            applied_knowledge = [
-                item for item in knowledge_candidates
-                if not item.get("collections") or selected_collections.intersection(item["collections"])
-            ]
+            applicable_records = []
+            for record in knowledge_result["_active_rules"]:
+                if rule_entity_mismatch(record, question):
+                    logging.getLogger(__name__).info(
+                        "knowledge_rule_dropped request_id=%s stage=generator knowledge_id=%s reason=entity_mismatch",
+                        safe_record(current_request_id()), safe_record(str(record.get("_id", ""))),
+                    )
+                else:
+                    applicable_records.append(record)
+            generator_rules = self.knowledge_retriever.rules_for_generator(
+                question, selected_collections, query_context.get("fields", {}),
+                full_schema=catalog, records=applicable_records, user_preferences=preferences,
+                context_rules=knowledge_candidates,
+            )
+            applied_knowledge = generator_rules["knowledge"]
+            preferences = generator_rules["user_preferences"]
+            # Restore catalog-owned rule fields within finalized collections.
+            schema_spec = self.context_builder.build(
+                question, schema_spec, [], preferences, full_catalog=catalog,
+            )["schema"]
+            for item in applied_knowledge:
+                for name in set(item.get("collections") or selected_collections) & selected_collections:
+                    available_fields = catalog["collections"][name].get("fields", {})
+                    for field in item.get("fields", []):
+                        if field in available_fields:
+                            schema_spec["collections"][name]["fields"][field] = deepcopy(available_fields[field])
+            query_context["fields"] = {
+                name: list(entry["fields"]) for name, entry in schema_spec["collections"].items()
+            }
             if applied_knowledge:
                 logging.getLogger(__name__).info(
                     "knowledge_applied_to_query request_id=%s count=%d",
@@ -183,12 +228,14 @@ class OrchestratorAgent:
                         raise
 
             assert validated_query is not None
-            generated_query = parameterize_filter_values(reconcile_template(generated_query, validated_query))
+            validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
+            generated_query = parameterize_resolved_query(generated_query, validated_query)
             cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
             learning_original, learning_cost = validated_query, cost
             validated_query, learned_optimization = stage("LearnedOptimization", LearnedOptimizationService().apply,
                 validated_query, cost, schema_spec, self.validator)
             if learned_optimization:
+                validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
                 intent = generated_query.get("semantic_intent")
                 generated_query = template_from_concrete(validated_query, "limit" in generated_query["parameters"])
                 if intent:
@@ -223,7 +270,8 @@ class OrchestratorAgent:
                     bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
                     with normalization_context():
                         validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
-                    generated_query = parameterize_filter_values(reconcile_template(repaired, validated_query))
+                    validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
+                    generated_query = parameterize_resolved_query(repaired, validated_query)
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
                     if cost["status"] == "heavy":
                         return {"status": "optimization_required", "question": question, "cost_analysis": cost,
@@ -288,6 +336,8 @@ class OrchestratorAgent:
                 "_knowledge_retrieval": knowledge_status,
             }
         except Exception as exc:
+            if pending_knowledge_diagnostics is not None:
+                self.knowledge_retriever.log_context_diagnostics(pending_knowledge_diagnostics)
             # Keep completed stages available for history even when a later stage fails.
             if isinstance(exc, QueryValidationError):
                 detail = exc.to_dict()

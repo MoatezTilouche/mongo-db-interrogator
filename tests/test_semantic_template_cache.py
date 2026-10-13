@@ -7,7 +7,7 @@ import json
 import pytest
 from fastapi import HTTPException
 from services.query_parameter_binder import parameterize_filter_values, bind_query_parameters
-from services.template_parameter_extractor import describe_parameters, extract_parameters, normalized_question
+from services.template_parameter_extractor import describe_parameters, extract_parameters, normalized_question, TemplateParameterExtractionError
 from services.semantic_template_cache import SemanticTemplateCache, cosine
 from database.query_template_repository import template_signature, QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
 from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, SCHEMA_EMBEDDING_MODEL
@@ -40,6 +40,82 @@ def test_command_id_extraction_has_no_llm(monkeypatch):
     assert parameters == {"filter_commandId": "CMD-000009999999"}
     assert bind_query_parameters(doc["template"], parameters)["filter"] == {"commandId": "CMD-000009999999"}
     invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("question", [
+    "give me status about this request REQ-220148108",
+    "give me status about this requestId: 220148108",
+    "affiche le statut de cette requête",
+    "status REQ-220148108",
+])
+def test_command_template_rejects_request_entity(question):
+    assert SemanticTemplateCache.compatibility_reason(document(), question, {"orders"}) == "entity_mismatch"
+
+
+@pytest.mark.parametrize("question", [
+    "give me status about this commandId: CMD-000012825058",
+    "I request the status of command CMD-000012825058",
+    "affiche le statut de cette commande",
+])
+def test_command_template_accepts_same_entity_changed_wording(question):
+    assert SemanticTemplateCache.compatibility_reason(document(), question, {"orders"}) is None
+
+
+def test_cross_entity_parameter_extraction_rejected_without_llm(monkeypatch):
+    from agent.llm import llm_router
+    invoke = Mock(side_effect=AssertionError("No extraction LLM for wrong entity"))
+    monkeypatch.setattr(llm_router, "invoke", invoke)
+    with pytest.raises(ValueError, match="entity_mismatch"):
+        extract_parameters("give me status about this request REQ-220148108", document())
+    invoke.assert_not_called()
+
+
+def test_legacy_corrected_question_does_not_allow_cross_entity_match():
+    from services.query_history_service import QueryHistoryService
+    doc = document()
+    doc["source_question"] = QueryHistoryService._corrected_question(
+        QueryHistoryService._corrected_question(SOURCE, "Status about commands comes from orders_proc_hist"),
+        "Show all details of the latest record")
+    assert SemanticTemplateCache.compatibility_reason(doc, "give me status about this request REQ-220148108", {"orders"}) == "entity_mismatch"
+    assert SemanticTemplateCache.compatibility_reason(doc, "give me status about this commandId: CMD-000012825058", {"orders"}) is None
+
+
+def test_incompatible_template_cannot_consume_top_k_slot(monkeypatch, caplog):
+    import services.semantic_template_cache as module
+    command = document()
+    request = deepcopy(command)
+    source = "give me status about this request REQ-220148107"
+    generated = parameterize_filter_values({"template": {"operation": "find", "collection": "requests",
+        "filter": {"requestId": "REQ-220148107"}, "limit": None}, "parameters": {}})
+    signature = template_signature(generated["template"])
+    request.update(template_id="tpl_" + signature, _id="tpl_" + signature, template_signature=signature,
+        source_question=source, semantic_text="Retrieve latest request status", collections=["requests"],
+        template=generated["template"], parameter_schema=describe_parameters(generated["template"], generated["parameters"], source),
+        embedding=[0.9, 0.435889894])
+    collection = Mock()
+    collection.find.return_value = [command, request]
+    db = Mock()
+    db.__getitem__ = Mock(return_value=collection)
+    db.list_collection_names.return_value = ["orders", "requests"]
+    monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_TOP_K", 1)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_MIN_THRESHOLD", 0.65)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD", 0.70)
+    monkeypatch.setattr(module.llm_router, "embed_query", Mock(return_value=[1., 0.]))
+    from services.schema_bootstrap_service import schema_bootstrap_service
+    monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
+    selected, metadata = SemanticTemplateCache(db).lookup("give me status about this request REQ-220148108")
+    assert selected["template_id"] == request["template_id"]
+    assert metadata["hit"]
+    assert "reason=entity_mismatch" in caplog.text
+
+
+def test_request_template_rejects_command_in_reverse_direction():
+    from services.query_entity_guard import template_entity_mismatch
+    doc = document()
+    doc["parameter_schema"] = {"id": {"source_path": "filter.requestId", "example": "REQ-220148108"}}
+    assert template_entity_mismatch(doc, "give me status about this commandId: CMD-000012825058")
+    assert not template_entity_mismatch(doc, "give me status about this request REQ-220148109")
 
 
 @pytest.mark.parametrize("score,hit,weak", [(0.64, False, False), (0.7, False, True), (0.91, True, False)])
@@ -308,6 +384,58 @@ def test_reuse_binds_new_id_and_skips_query_agents(monkeypatch):
     with pytest.raises(HTTPException) as failure: service.decide("req_test", payload)
     assert failure.value.status_code == 409
     executor.assert_called_once()
+
+
+def test_reuse_changes_multiple_string_parameters_and_keeps_legacy_default_without_llm(monkeypatch):
+    module, service, doc, save = decision_setup(monkeypatch)
+    source = "give me the order that have actionCode = Preactivated_SIM of this commandId CMD-000010284552"
+    question = "give me the order that have actionCode = customer_check of this commandId CMD-000012825058"
+    generated = parameterize_filter_values({"template": {"operation": "find", "collection": "orders",
+        "filter": {"actionCode": "Preactivated_SIM", "commandId": "CMD-000010284552"},
+        "projection": None, "sort": [["commandId", -1]], "limit": {"$param": "limit"}, "skip": 0},
+        "parameters": {"limit": 1}})
+    doc.update(source_question=source, template=generated["template"],
+        template_signature=template_signature(generated["template"]),
+        parameter_schema=describe_parameters(generated["template"], generated["parameters"], source))
+    doc["parameter_schema"]["limit"].update(source_visible=True, user_variable=True)
+    doc["schema_spec"]["collections"]["orders"]["fields"]["actionCode"] = ["string"]
+    original = deepcopy(doc)
+    service.collection().find_one_and_update.side_effect = [{"question": question, "template_id": doc["template_id"],
+        "cache": {"checked": True, "hit": True, "similarity_score": .95}}, None]
+    from agent.llm import llm_router
+    invoke = Mock(side_effect=AssertionError("Parameter changes need no model call"))
+    monkeypatch.setattr(llm_router, "invoke", invoke)
+    monkeypatch.setattr(module.QueryCostGuard, "analyze", Mock(return_value={"status": "safe", "query_signature": "fake"}))
+    monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
+    executor = Mock(return_value={"ok": True, "all_rows": [], "row_count": 0})
+    monkeypatch.setattr(module.ExecutorAgent, "execute", executor)
+    result = service.decide("req_test", SimpleNamespace(action="reuse", template_id=doc["template_id"]))
+    assert result["execution_success"]
+    assert result["telemetry"]["parameter_extraction_method"] == "deterministic"
+    bound = executor.call_args.args[-1]
+    assert bound["filter"] == {"actionCode": "customer_check", "commandId": "CMD-000012825058"}
+    assert bound["limit"] == 1
+    assert bound["sort"] == [["commandId", -1]]  # Reuse cannot rewrite trusted structure.
+    assert doc == original
+    invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("error,reason", [
+    (ValueError("sensitive source value"), "extraction_unavailable_or_invalid_output"),
+    (TemplateParameterExtractionError("unsafe_or_missing_parameter"), "unsafe_or_missing_parameter"),
+])
+def test_extraction_failure_logs_safe_reason_without_exception_data(monkeypatch, caplog, error, reason):
+    module, service, doc, _ = decision_setup(monkeypatch)
+    history = Mock()
+    module.get_database().__getitem__ = Mock(return_value=history)
+    monkeypatch.setattr(module, "extract_parameters", Mock(side_effect=error))
+    with pytest.raises(HTTPException) as failure:
+        service.decide("req_test", SimpleNamespace(action="reuse", template_id=doc["template_id"]))
+    assert failure.value.status_code == 422
+    assert "reason=" + reason in caplog.text
+    assert "sensitive source value" not in caplog.text
+    saved_cache = history.update_one.call_args.args[1]["$set"]["semantic_template_cache"]
+    assert saved_cache["template_parameter_extraction_failure_reason"] == reason
 
 
 def test_legacy_flat_schema_reuse_is_validated_without_generation(monkeypatch):

@@ -1,20 +1,30 @@
 {
   "embedding_model": "text-embedding-3-small",
-  "minimum_semantic_similarity": 0.5,
+  "minimum_semantic_similarity": 0.4,
   "scenarios": [
     {
       "scenario": "same_intent",
       "question": "show failed orders",
       "raw_similarities": {
-        "failed_feedback": 0.535869,
-        "manual": 0.424449,
-        "revenue_feedback": 0.477064
+        "failed_feedback": 0.535844,
+        "manual": 0.424446,
+        "revenue_feedback": 0.477149
       },
       "ordered_results": [
         {
           "knowledge_id": "failed_feedback",
-          "semantic_similarity": 0.535869,
-          "ranking_score": 0.805869
+          "semantic_similarity": 0.535844,
+          "ranking_score": 0.805844
+        },
+        {
+          "knowledge_id": "revenue_feedback",
+          "semantic_similarity": 0.477149,
+          "ranking_score": 0.747149
+        },
+        {
+          "knowledge_id": "manual",
+          "semantic_similarity": 0.424446,
+          "ranking_score": 0.544446
         }
       ]
     },
@@ -22,15 +32,20 @@
       "scenario": "close_paraphrase",
       "question": "list orders that failed",
       "raw_similarities": {
-        "failed_feedback": 0.536484,
-        "manual": 0.432302,
-        "revenue_feedback": 0.33782
+        "failed_feedback": 0.536427,
+        "manual": 0.43233,
+        "revenue_feedback": 0.33786
       },
       "ordered_results": [
         {
           "knowledge_id": "failed_feedback",
-          "semantic_similarity": 0.536484,
-          "ranking_score": 0.806484
+          "semantic_similarity": 0.536427,
+          "ranking_score": 0.806427
+        },
+        {
+          "knowledge_id": "manual",
+          "semantic_similarity": 0.43233,
+          "ranking_score": 0.55233
         }
       ]
     },
@@ -38,9 +53,9 @@
       "scenario": "unrelated",
       "question": "show customer contact details",
       "raw_similarities": {
-        "failed_feedback": 0.118748,
-        "manual": 0.152982,
-        "revenue_feedback": 0.254576
+        "failed_feedback": 0.118813,
+        "manual": 0.152956,
+        "revenue_feedback": 0.254677
       },
       "ordered_results": []
     },
@@ -48,21 +63,26 @@
       "scenario": "conflicting_rule",
       "question": "show failed orders, explicitly include retry status X",
       "raw_similarities": {
-        "failed_feedback": 0.803296,
-        "manual": 0.411379,
-        "revenue_feedback": 0.369849,
-        "conflicting_manual": 0.830675
+        "failed_feedback": 0.803315,
+        "manual": 0.411424,
+        "revenue_feedback": 0.370033,
+        "conflicting_manual": 0.830654
       },
       "ordered_results": [
         {
           "knowledge_id": "failed_feedback",
-          "semantic_similarity": 0.803296,
-          "ranking_score": 1.073296
+          "semantic_similarity": 0.803315,
+          "ranking_score": 1.073315
         },
         {
           "knowledge_id": "conflicting_manual",
-          "semantic_similarity": 0.830675,
-          "ranking_score": 0.950675
+          "semantic_similarity": 0.830654,
+          "ranking_score": 0.950654
+        },
+        {
+          "knowledge_id": "manual",
+          "semantic_similarity": 0.411424,
+          "ranking_score": 0.531424
         }
       ]
     },
@@ -70,27 +90,32 @@
       "scenario": "multiple_feedback_rules",
       "question": "show failed orders excluding retry status X and cancelled retries",
       "raw_similarities": {
-        "failed_feedback": 0.79222,
-        "manual": 0.391177,
-        "revenue_feedback": 0.403631,
-        "conflicting_manual": 0.741598,
-        "second_feedback": 0.723731
+        "failed_feedback": 0.792256,
+        "manual": 0.391186,
+        "revenue_feedback": 0.403732,
+        "conflicting_manual": 0.741651,
+        "second_feedback": 0.723811
       },
       "ordered_results": [
         {
           "knowledge_id": "failed_feedback",
-          "semantic_similarity": 0.79222,
-          "ranking_score": 1.06222
+          "semantic_similarity": 0.792256,
+          "ranking_score": 1.062256
         },
         {
           "knowledge_id": "second_feedback",
-          "semantic_similarity": 0.723731,
-          "ranking_score": 0.993731
+          "semantic_similarity": 0.723811,
+          "ranking_score": 0.993811
         },
         {
           "knowledge_id": "conflicting_manual",
-          "semantic_similarity": 0.741598,
-          "ranking_score": 0.861598
+          "semantic_similarity": 0.741651,
+          "ranking_score": 0.861651
+        },
+        {
+          "knowledge_id": "revenue_feedback",
+          "semantic_similarity": 0.403732,
+          "ranking_score": 0.673732
         }
       ]
     },
@@ -98,9 +123,9 @@
       "scenario": "multilingual_paraphrase",
       "question": "affiche les commandes en échec",
       "raw_similarities": {
-        "failed_feedback": 0.386892,
-        "manual": 0.35226,
-        "revenue_feedback": 0.292145
+        "failed_feedback": 0.386922,
+        "manual": 0.352261,
+        "revenue_feedback": 0.292184
       },
       "ordered_results": []
     }

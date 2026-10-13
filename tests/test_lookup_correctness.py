@@ -119,7 +119,8 @@ def fresh_pipeline(monkeypatch, generated, repaired=None):
     app.preference_service = Mock(user_id="test")
     app.preference_service.retrieve_for_query.return_value = []
     app.knowledge_retriever = Mock()
-    app.knowledge_retriever.retrieve.return_value = {"knowledge": [], "telemetry": {}}
+    app.knowledge_retriever.rules_for_context.return_value = {"knowledge": [], "telemetry": {}, "_active_rules": []}
+    app.knowledge_retriever.rules_for_generator.return_value = {"knowledge": [], "user_preferences": []}
     app.query_context_agent = Mock()
     app.query_context_agent.build.return_value = {"schema_spec": SCHEMA, "query_context": {
         "complexity": "complex", "operation": "aggregate", "collections": ["orders", "customers"]}}

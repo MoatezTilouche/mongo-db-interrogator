@@ -10,6 +10,7 @@ import pytest
 
 import services.knowledge_retriever as module
 from services.context_builder import ContextBuilder
+from services.knowledge_embeddings import definition_text, embedding_fields
 
 
 CATALOG = {"collections": {
@@ -27,11 +28,19 @@ def rule(key, similarity, source="manual", **changes):
               "status": "active", "active": True, "confidence": 0.98,
               "embedding": [similarity, math.sqrt(1 - similarity ** 2)],
               "embedding_model": module.KNOWLEDGE_EMBEDDING_MODEL}
-    return {**record, **changes}
+    record.update(changes)
+    try:
+        record.update(embedding_fields(record["embedding"], definition_text(record),
+                                      record.get("embedding_model", module.KNOWLEDGE_EMBEDDING_MODEL)))
+    except (TypeError, ValueError):
+        pass  # Deliberately malformed fixtures must reach the validity filter.
+    return record
 
 
 @pytest.fixture(autouse=True)
 def ranking_config(monkeypatch):
+    from agent.llm import llm_router
+    monkeypatch.setattr(llm_router, "embed_documents", Mock(side_effect=AssertionError("Embedding must be faked")))
     # Environment-independent contract; production values remain configurable.
     monkeypatch.setattr(module, "KNOWLEDGE_MIN_SEMANTIC_SIMILARITY", 0.65)
     monkeypatch.setattr(module, "KNOWLEDGE_FEEDBACK_PRIORITY_BONUS", 0.15)
@@ -82,7 +91,7 @@ def test_feedback_is_ranked_before_default_top_five_truncation():
     for index, record in enumerate(records):
         record["text"] = f"Distinct orders rule {index}"
     records.append(rule("feedback", 0.86, "negative_feedback"))
-    result = module.KnowledgeRetriever(SimpleNamespace(list_active=lambda: records)).retrieve(
+    result = module.KnowledgeRetriever(SimpleNamespace(list_active=lambda: records), top_k=5).retrieve(
         "show failed orders", CANDIDATES, [1.0, 0.0], CATALOG)
     assert ids(result) == ["feedback", "manual-0", "manual-1", "manual-2", "manual-3"]
     assert result["telemetry"]["knowledge_retrieval_top_k"] == 5
@@ -272,7 +281,7 @@ def test_logs_explain_scores_exclusions_and_final_order(caplog):
     assert "ordered_knowledge_ids=['feedback'] top_k=5 returned_count=1" in caplog.text
 
 
-def test_retrieval_order_reaches_both_actual_agent_prompts_and_orchestrator(monkeypatch):
+def test_conflict_winner_reaches_both_actual_agent_prompts_and_orchestrator(monkeypatch):
     import orchestrator
     from agent.llm import llm_router
     prompts = {}
@@ -289,6 +298,10 @@ def test_retrieval_order_reaches_both_actual_agent_prompts_and_orchestrator(monk
 
     records = [rule("a-manual", 0.90), rule("z-feedback", 0.86, "negative_feedback")]
     records[0]["text"] = "Failed orders must include retry status X"
+    records[0]["updated_at"] = "2026-10-12T00:00:00Z"
+    records[1]["updated_at"] = "2026-10-13T00:00:00Z"
+    for record in records:
+        record.update(embedding_fields(record["embedding"], definition_text(record), module.KNOWLEDGE_EMBEDDING_MODEL))
     monkeypatch.setattr(llm_router, "invoke", invoke)
     monkeypatch.setattr(orchestrator.schema_bootstrap_service, "get_catalog", lambda: CATALOG)
     monkeypatch.setattr(orchestrator.schema_bootstrap_service, "status", lambda: {})
@@ -307,14 +320,13 @@ def test_retrieval_order_reaches_both_actual_agent_prompts_and_orchestrator(monk
     assert result["execution_success"], result
     for role in ("query_context", "query_generator"):
         prompt = prompts[role]
-        # Selection omits provenance IDs; ordering must still preserve complete
-        # rule semantics through both real prompt boundaries.
-        assert prompt.index(records[1]["text"]) < prompt.index(records[0]["text"])
+        # The most recently confirmed fact is the only conflicting rule injected.
+        assert records[0]["text"] not in prompt
         assert prompt.count(records[1]["text"]) == 1
         assert "explicitly include retry status X" in prompt
         assert "explicit current request" in prompt
         assert "Do not merge contradictory rules" in prompt
-    assert result["telemetry"]["knowledge_candidates_returned"] == 2
+    assert result["telemetry"]["knowledge_candidates_returned"] == 1
     assert '"knowledge_id"' not in prompts["query_context"]
     assert '"knowledge_id"' not in prompts["query_generator"]
     assert result["telemetry"]["query_context_candidates_returned"] == 1

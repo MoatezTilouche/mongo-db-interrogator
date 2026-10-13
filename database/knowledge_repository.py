@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 class KnowledgeRepository:
     def __init__(self, database=None):
         self.database = database
-        self._active_index_ready = False
 
     def _collection(self):
         database = self.database if self.database is not None else get_database()
@@ -22,6 +21,16 @@ class KnowledgeRepository:
 
     def get_by_key(self, knowledge_id: str) -> dict[str, Any] | None:
         return self._collection().find_one({"_id": knowledge_id})
+
+    def find_equivalent(self, candidate: dict[str, Any]) -> dict[str, Any] | None:
+        """Use reviewed aliases, including their original type and scope."""
+        from services.knowledge_identity import equivalent_rule
+        records = self._collection().find({"status": {"$nin": ["rejected", "superseded"]}})
+        matches = [record for record in records if equivalent_rule(candidate, record)]
+        if len(matches) > 1:
+            # Ambiguous aliases must be repaired rather than arbitrarily merged.
+            raise ValueError("Multiple knowledge rules own the same reviewed alias")
+        return matches[0] if matches else None
 
     def add_or_confirm(self, record: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         collection = self._collection()
@@ -54,13 +63,7 @@ class KnowledgeRepository:
 
     def list_active(self, limit: int | None = None) -> list[dict[str, Any]]:
         collection = self._collection()
-        if not self._active_index_ready:
-            try:
-                collection.create_index([("status", 1), ("active", 1)], name="knowledge_active_lookup")
-            except Exception as exc:
-                # Retrieval remains correct without the optional performance index.
-                logger.warning("knowledge_index_creation_failed error_type=%s", type(exc).__name__)
-            self._active_index_ready = True
+        # Retrieval is read-only. Optional indexes belong in database administration.
         # Retrieval must rank the whole eligible population before top-k. An
         # arbitrary insertion-order cap can hide newer feedback corrections.
         cursor = collection.find({"status": "active", "active": True})
@@ -75,12 +78,28 @@ class KnowledgeRepository:
                       "updated_at": datetime.now(timezone.utc)}},
         )
 
+    def save_embeddings(self, knowledge_id: str, fields: dict[str, Any]) -> None:
+        # Refresh vector data only. updated_at represents rule confirmation;
+        # refreshing vectors must not change conflict precedence.
+        self._collection().update_one({"_id": knowledge_id}, {"$set": dict(fields)})
+
     def find_active_with_same_scope(self, record: dict[str, Any]) -> list[dict[str, Any]]:
         candidates = self._collection().find({
-            "status": "active", "active": True, "type": record["type"],
-            "collections": record["collections"], "fields": record["fields"],
-        }).limit(100)
+            "status": "active", "active": True,
+            "$or": [{"type": record["type"]}, {"knowledge_type": record["type"]}],
+            "collections": {"$in": record["collections"]},
+            "fields": {"$in": record["fields"]},
+        })
         return [active for active in candidates if active.get("_id") != record.get("_id")]
+
+    def find_overlapping(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        """Creation checks include inactive candidates, not just active facts."""
+        candidates = self._collection().find({
+            "$or": [{"type": record["type"]}, {"knowledge_type": record["type"]}],
+            "collections": {"$in": record["collections"]},
+            "fields": {"$in": record["fields"]},
+        })
+        return [candidate for candidate in candidates if candidate.get("_id") != record.get("_id")]
 
     def mark_conflict(self, knowledge_id: str, conflicting_id: str) -> None:
         self._collection().update_one(

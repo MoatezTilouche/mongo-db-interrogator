@@ -13,6 +13,12 @@ _BOOKKEEPING_KEYS = {"_id", "knowledge_id", "source_request_id", "source_request
                      "embedding_model", "created_from_feedback", "confirmation_count", "normalized_key"}
 
 
+def knowledge_texts(rules: list[dict[str, Any]] | None) -> list[str]:
+    """Only short stored rule text enters query agent prompts."""
+    return [" ".join(rule["text"].split()) for rule in rules or []
+            if isinstance(rule.get("text"), str) and rule["text"].strip()]
+
+
 def compact_knowledge(rules: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Retain complete ordered rules, including enforcement and business metadata.
 
