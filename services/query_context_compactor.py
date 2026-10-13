@@ -12,11 +12,11 @@ import tiktoken
 from agent.config import QUERY_CONTEXT_MAX_RELATIONSHIPS, QUERY_CONTEXT_TOKEN_BUDGET
 from database.schema_inspector import compact_schema
 from services.schema_retriever import _phrase_present, _tokens
-from services.prompt_context import compact_knowledge, compact_preferences
+from services.prompt_context import knowledge_texts, compact_preferences
 
 
 def compact_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
 @lru_cache(maxsize=1)
@@ -46,7 +46,7 @@ class QueryContextCompactor:
         original = {"schema": compact_schema(catalog), "knowledge": knowledge, "preferences": preferences}
         before = count_tokens(compact_json(original))
         words = _tokens(question)
-        rules = compact_knowledge(knowledge)
+        rules = knowledge_texts(knowledge)
         defaults = compact_preferences(preferences)
         schema = deepcopy(original["schema"])
         required = {name: {field for field in entry["fields"] if _field_mentioned(words, field)}

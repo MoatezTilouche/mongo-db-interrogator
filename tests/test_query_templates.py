@@ -176,7 +176,8 @@ def test_pipeline_concrete_boundaries(monkeypatch):
     app = module.OrchestratorAgent()
     app.preference_service.retrieve_for_query = Mock(return_value=[])
     app.knowledge_retriever = Mock()
-    app.knowledge_retriever.retrieve.return_value = {"knowledge": [], "telemetry": {}}
+    app.knowledge_retriever.rules_for_context.return_value = {"knowledge": [], "telemetry": {}, "_active_rules": []}
+    app.knowledge_retriever.rules_for_generator.return_value = {"knowledge": [], "user_preferences": []}
     app.query_context_agent.build = Mock(return_value={"query_context": {"complexity": "simple", "operation": "find", "collections": ["orders"]}, "schema_spec": schema})
     app.query_generator.generate = Mock(return_value=parameterize_filter_values(generated()))
     validate = app.validator.validate

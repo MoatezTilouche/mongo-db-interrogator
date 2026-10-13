@@ -21,6 +21,30 @@ KNOWLEDGE_FEEDBACK_PRIORITY_BONUS = float(os.getenv("KNOWLEDGE_FEEDBACK_PRIORITY
 KNOWLEDGE_SCOPE_MATCH_BONUS = float(os.getenv("KNOWLEDGE_SCOPE_MATCH_BONUS", "0.02"))
 KNOWLEDGE_COLLECTION_MATCH_BONUS = float(os.getenv("KNOWLEDGE_COLLECTION_MATCH_BONUS", "0.05"))
 KNOWLEDGE_FIELD_MATCH_BONUS = float(os.getenv("KNOWLEDGE_FIELD_MATCH_BONUS", "0.05"))
+KNOWLEDGE_CONTEXT_MIN_SIMILARITY = float(os.getenv("KNOWLEDGE_CONTEXT_MIN_SIMILARITY", "0.75"))
+KNOWLEDGE_CONTEXT_TOP_K = max(0, int(os.getenv("KNOWLEDGE_CONTEXT_TOP_K", "3")))
+KNOWLEDGE_GENERATOR_TOP_K = max(1, int(os.getenv("KNOWLEDGE_GENERATOR_TOP_K", "8")))
+KNOWLEDGE_STATUS_TERMS = tuple(term.strip().casefold() for term in os.getenv(
+    "KNOWLEDGE_STATUS_TERMS",
+    "failed,failure,success,succeeded,successful,status,state,code,pending,cancelled,"
+    "completed,in progress,échoué,échouée,échec,réussi,réussie,succès,statut,état"
+).split(",") if term.strip())
+KNOWLEDGE_DATE_FIELD_PATTERN = os.getenv(
+    "KNOWLEDGE_DATE_FIELD_PATTERN",
+    r"(?:date|time|timestamp|created_?at|updated_?at|crt_dt|jour)"
+)
+KNOWLEDGE_TIME_EXPRESSION_PATTERN = os.getenv(
+    "KNOWLEDGE_TIME_EXPRESSION_PATTERN",
+    r"\b(?:today|yesterday|last\s+(?:week|month|year)|this\s+(?:week|month|year)|"
+    r"\d+\s+days?|aujourd['’]hui|hier|(?:cette|la)\s+semaine|ce\s+mois|"
+    r"(?:semaine|mois|année)\s+(?:derni[eè]re?|pass[eé]e?)|\d+\s+(?:derniers?\s+)?jours?|"
+    r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|"
+    r"(?:\d{1,2}\s+)?(?:january|february|march|april|may|june|july|august|"
+    r"september|october|november|december|janvier|février|mars|avril|mai|juin|"
+    r"juillet|août|septembre|octobre|novembre|décembre)\b)"
+)
+if not 0 <= KNOWLEDGE_CONTEXT_MIN_SIMILARITY <= 1:
+    raise ValueError("KNOWLEDGE_CONTEXT_MIN_SIMILARITY must be between 0 and 1")
 if not 0 <= KNOWLEDGE_MIN_SEMANTIC_SIMILARITY <= 1:
     raise ValueError("KNOWLEDGE_MIN_SEMANTIC_SIMILARITY must be between 0 and 1")
 if not all(0 <= value < float("inf") for value in (

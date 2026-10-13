@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from copy import deepcopy
 from agent.progress import stage, emit
 import logging
 from agent.telemetry import capture_usage, totals
@@ -113,8 +114,8 @@ class OrchestratorAgent:
             preferences = stage("PreferenceRetriever", self.preference_service.retrieve_for_query,
                 question, catalog, current_request_id(),
                 selected_collections=set(candidate_catalog.get("collections", {})))
-            knowledge_result = self.knowledge_retriever.retrieve(
-                question, candidate_catalog, retrieval.pop("_query_embedding", None), catalog,
+            knowledge_result = self.knowledge_retriever.rules_for_context(
+                retrieval.pop("_query_embedding", None), candidate_catalog, catalog,
             )
             knowledge_candidates = knowledge_result["knowledge"]
             knowledge_status = knowledge_result["telemetry"]
@@ -138,10 +139,25 @@ class OrchestratorAgent:
             schema_spec = context_result["schema_spec"]
             preferences = context_result.get("user_preferences", preferences)
             selected_collections = set(query_context.get("collections", []))
-            applied_knowledge = [
-                item for item in knowledge_candidates
-                if not item.get("collections") or selected_collections.intersection(item["collections"])
-            ]
+            generator_rules = self.knowledge_retriever.rules_for_generator(
+                question, selected_collections, query_context.get("fields", {}),
+                full_schema=catalog, records=knowledge_result["_active_rules"], user_preferences=preferences,
+            )
+            applied_knowledge = generator_rules["knowledge"]
+            preferences = generator_rules["user_preferences"]
+            # Restore catalog-owned rule fields within finalized collections.
+            schema_spec = self.context_builder.build(
+                question, schema_spec, [], preferences, full_catalog=catalog,
+            )["schema"]
+            for item in applied_knowledge:
+                for name in set(item.get("collections") or selected_collections) & selected_collections:
+                    available_fields = catalog["collections"][name].get("fields", {})
+                    for field in item.get("fields", []):
+                        if field in available_fields:
+                            schema_spec["collections"][name]["fields"][field] = deepcopy(available_fields[field])
+            query_context["fields"] = {
+                name: list(entry["fields"]) for name, entry in schema_spec["collections"].items()
+            }
             if applied_knowledge:
                 logging.getLogger(__name__).info(
                     "knowledge_applied_to_query request_id=%s count=%d",

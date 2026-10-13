@@ -226,7 +226,8 @@ def pipeline(monkeypatch, generator):
     app.preference_service = Mock(user_id="default")
     app.preference_service.retrieve_for_query.return_value = []
     app.knowledge_retriever = Mock()
-    app.knowledge_retriever.retrieve.return_value = {"knowledge": [], "telemetry": {}}
+    app.knowledge_retriever.rules_for_context.return_value = {"knowledge": [], "telemetry": {}, "_active_rules": []}
+    app.knowledge_retriever.rules_for_generator.return_value = {"knowledge": [], "user_preferences": []}
     app.query_context_agent = Mock()
     app.query_context_agent.build.return_value = {
         "query_context": {"collections": ["orders_proc_hist"], "complexity": "simple",

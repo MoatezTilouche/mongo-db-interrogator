@@ -60,7 +60,7 @@ def test_in_progress_source_missing_from_shortlist_reaches_both_prompts(monkeypa
     from agent.llm import llm_router
     import services.knowledge_retriever as retrieval
 
-    monkeypatch.setattr(retrieval, "KNOWLEDGE_MIN_SEMANTIC_SIMILARITY", 0.50)
+    monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_MIN_SIMILARITY", 0.50)
     full_catalog = {"collections": {
         "orders": {"fields": {"commandId": ["string"]}},
         "orders_proc_hist": {"fields": {"commandId": ["string"]}},
@@ -118,9 +118,10 @@ def test_in_progress_source_missing_from_shortlist_reaches_both_prompts(monkeypa
     assert result["validated_query"]["filter"] == {"statusOrder": "In Progress"}
     assert len(result["applied_knowledge"]) == 2
     for role in ("query_context", "query_generator"):
-        for record in records:
+        for record in (records[:1] if role == "query_context" else records):
             # JSON encodes the quotes inside the complete status rule.
             assert json.dumps(record["text"])[1:-1] in prompts[role]
         assert '"knowledge_id"' not in prompts[role]
         assert '"semantic_similarity"' not in prompts[role]
+    assert json.dumps(records[1]["text"])[1:-1] not in prompts["query_context"]
     assert (full_catalog, candidates, records) == originals

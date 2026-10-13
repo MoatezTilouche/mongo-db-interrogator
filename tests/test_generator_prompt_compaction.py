@@ -115,7 +115,7 @@ def learned_context():
 
 
 @pytest.mark.parametrize("method", ["generate", "repair", "optimize"])
-def test_all_generator_paths_receive_full_business_rules_without_ids_or_scores(monkeypatch, method):
+def test_all_generator_paths_receive_only_rule_text_without_ids_or_scores(monkeypatch, method):
     agent, invoke = capture(monkeypatch)
     rules, preferences = learned_context()
     original = deepcopy((rules, preferences))
@@ -132,7 +132,8 @@ def test_all_generator_paths_receive_full_business_rules_without_ids_or_scores(m
     assert '"knowledge_id"' not in prompt and '"source_request_id"' not in prompt
     assert '"confidence"' not in prompt and '"ranking_score"' not in prompt and '"semantic_similarity"' not in prompt
     assert prompt.index(rules[0]["text"]) < prompt.index(rules[1]["text"])
-    assert all(name in prompt for name in ("orders_proc_hist", "executionDate", "excluded_collections", "required_filters"))
+    assert all(name in prompt for name in ("orders_proc_hist", "executionDate"))
+    assert '"excluded_collections"' not in prompt and '"required_filters"' not in prompt
     assert preferences[0]["preference"] in prompt
     assert "Failed-order requests" in prompt
     assert (rules, preferences) == original

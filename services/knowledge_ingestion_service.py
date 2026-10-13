@@ -18,6 +18,7 @@ from agent.config import (
 )
 from agent.llm import llm_router
 from database.knowledge_repository import KnowledgeRepository
+from services.knowledge_rule_policy import conflicts
 
 logger = logging.getLogger(__name__)
 _WORD = re.compile(r"[a-z0-9_]+")
@@ -152,6 +153,18 @@ class KnowledgeIngestionService:
         confidence = float(saved.get("confidence", 0))
         if saved.get("status") == "active" and saved.get("active"):
             return {"action": action, "knowledge_id": key, "status": "active", "active": True}
+        # Check every new/confirmed candidate, even when auto-promotion is off.
+        # status already exists in the schemaless stored record; no new fields.
+        find_overlapping = getattr(self.repository, "find_overlapping", self.repository.find_active_with_same_scope)
+        for other in find_overlapping(saved):
+            if conflicts(saved, other):
+                self.repository.mark_conflict(key, str(other.get("_id")))
+                self.repository.set_status(key, "needs_review", False)
+                logger.warning("knowledge_candidate_conflict_detected knowledge_id=%s conflict_with=%s reason=different_meaning",
+                               key, other.get("_id"))
+                return {"action": action, "knowledge_id": key, "status": "needs_review", "active": False}
+        if saved.get("status") == "needs_review":
+            return {"action": action, "knowledge_id": key, "status": "needs_review", "active": False}
         if explicit:
             # This endpoint is an explicit instruction to learn the supplied rule;
             # approval retains the existing conflict/rejection checks, independent
@@ -165,13 +178,6 @@ class KnowledgeIngestionService:
         required_confirmations = 1 if KNOWLEDGE_LEARNING_MODE == "immediate" else KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIRMATIONS
         if KNOWLEDGE_AUTO_PROMOTION_ENABLED and confirmations >= required_confirmations \
                 and confidence >= KNOWLEDGE_AUTO_PROMOTION_MIN_CONFIDENCE:
-            for active in self.repository.find_active_with_same_scope(saved):
-                if self._is_contradiction(saved, active):
-                    self.repository.mark_conflict(key, str(active.get("_id")))
-                    saved["conflict_with"] = str(active.get("_id"))
-                    logger.warning("knowledge_candidate_conflict_detected knowledge_id=%s conflict_with=%s",
-                                   key, saved["conflict_with"])
-                    return {"action": action, "knowledge_id": key, "status": saved["status"], "active": False}
             self.repository.set_status(key, "active", True)
             logger.info("knowledge_candidate_promoted knowledge_id=%s confirmation_count=%d", key, confirmations)
             return {"action": action, "knowledge_id": key, "status": "active", "active": True}
@@ -184,8 +190,9 @@ class KnowledgeIngestionService:
                 or candidate.get("status") not in {"candidate", "confirmed"}):
             return False
         for active in self.repository.find_active_with_same_scope(candidate):
-            if self._is_contradiction(candidate, active):
+            if conflicts(candidate, active):
                 self.repository.mark_conflict(knowledge_id, str(active.get("_id")))
+                self.repository.set_status(knowledge_id, "needs_review", False)
                 logger.warning("knowledge_candidate_conflict_detected knowledge_id=%s conflict_with=%s",
                                knowledge_id, active.get("_id"))
                 return False
