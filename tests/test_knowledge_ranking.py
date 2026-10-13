@@ -10,6 +10,7 @@ import pytest
 
 import services.knowledge_retriever as module
 from services.context_builder import ContextBuilder
+from services.knowledge_embeddings import definition_text, embedding_fields
 
 
 CATALOG = {"collections": {
@@ -27,11 +28,19 @@ def rule(key, similarity, source="manual", **changes):
               "status": "active", "active": True, "confidence": 0.98,
               "embedding": [similarity, math.sqrt(1 - similarity ** 2)],
               "embedding_model": module.KNOWLEDGE_EMBEDDING_MODEL}
-    return {**record, **changes}
+    record.update(changes)
+    try:
+        record.update(embedding_fields(record["embedding"], definition_text(record),
+                                      record.get("embedding_model", module.KNOWLEDGE_EMBEDDING_MODEL)))
+    except (TypeError, ValueError):
+        pass  # Deliberately malformed fixtures must reach the validity filter.
+    return record
 
 
 @pytest.fixture(autouse=True)
 def ranking_config(monkeypatch):
+    from agent.llm import llm_router
+    monkeypatch.setattr(llm_router, "embed_documents", Mock(side_effect=AssertionError("Embedding must be faked")))
     # Environment-independent contract; production values remain configurable.
     monkeypatch.setattr(module, "KNOWLEDGE_MIN_SEMANTIC_SIMILARITY", 0.65)
     monkeypatch.setattr(module, "KNOWLEDGE_FEEDBACK_PRIORITY_BONUS", 0.15)
@@ -291,6 +300,8 @@ def test_conflict_winner_reaches_both_actual_agent_prompts_and_orchestrator(monk
     records[0]["text"] = "Failed orders must include retry status X"
     records[0]["updated_at"] = "2026-10-12T00:00:00Z"
     records[1]["updated_at"] = "2026-10-13T00:00:00Z"
+    for record in records:
+        record.update(embedding_fields(record["embedding"], definition_text(record), module.KNOWLEDGE_EMBEDDING_MODEL))
     monkeypatch.setattr(llm_router, "invoke", invoke)
     monkeypatch.setattr(orchestrator.schema_bootstrap_service, "get_catalog", lambda: CATALOG)
     monkeypatch.setattr(orchestrator.schema_bootstrap_service, "status", lambda: {})

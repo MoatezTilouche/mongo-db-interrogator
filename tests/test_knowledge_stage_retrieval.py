@@ -11,6 +11,7 @@ import pytest
 
 from services.knowledge_retriever import KnowledgeRetriever
 import services.knowledge_retriever as module
+from services.knowledge_embeddings import definition_text, embedding_fields
 
 
 NOW = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
@@ -36,6 +37,8 @@ def offline(monkeypatch):
     monkeypatch.setattr(llm_router, "embed_documents", forbidden)
     monkeypatch.setattr(module, "KNOWLEDGE_CONTEXT_MIN_SIMILARITY", 0.75)
     monkeypatch.setattr(module, "KNOWLEDGE_CONTEXT_TOP_K", 3)
+    monkeypatch.setattr(module, "KNOWLEDGE_RANK_SELECTION_ENABLED", False)
+    monkeypatch.setattr(module, "KNOWLEDGE_KEYWORD_MATCHING_ENABLED", False)
     monkeypatch.setattr(module, "KNOWLEDGE_GENERATOR_TOP_K", 8)
     monkeypatch.setattr(module, "KNOWLEDGE_STATUS_TERMS", ("failed", "success", "succeeded", "échoué", "réussi"))
 
@@ -48,10 +51,12 @@ def offline(monkeypatch):
 
 
 def rule(key, kind="business_rule", **changes):
-    return {"_id": key, "type": kind, "text": f"Rule {key}", "collections": ["orders"],
+    record = {"_id": key, "type": kind, "text": f"Rule {key}", "collections": ["orders"],
             "fields": ["status"], "scope": "database", "active": True, "status": "active",
             "confidence": 0.9, "created_at": NOW, "updated_at": NOW,
             "embedding": [0.9, math.sqrt(1 - 0.9 ** 2)], **changes}
+    record.update(embedding_fields(record["embedding"], definition_text(record), module.KNOWLEDGE_EMBEDDING_MODEL))
+    return record
 
 
 def generator(records, question="Show orders", fields=None, preferences=None):
@@ -175,6 +180,85 @@ def test_conflicts_use_database_scope_then_confirmation_time_and_log_drops(caplo
         assert ids(generator(records)) == ["new"]
     assert "knowledge_id=old kept_id=new reason=most_recent_confirmation" in caplog.text
     assert "knowledge_id=preference kept_id=new reason=database_scope_precedence" in caplog.text
+
+
+def test_context_latest_record_rule_survives_newer_case_insensitive_rule(caplog):
+    latest = rule("latest", text="Evaluate only the latest record per commandId, ordered by executionDate.",
+                  fields=["id", "executionDate", "status"], confidence=0.5)
+    case = rule("case", text="Text search is case-insensitive for status.", fields=["status"],
+                updated_at="2026-10-15T12:00:00Z", confidence=1.0)
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: [latest, case])).rules_for_generator(
+        "Show command status", ["orders"], {"orders": ["id", "executionDate", "status"]},
+        full_schema=CATALOG, context_rules=[latest])
+    assert ids(result) == ["latest"]
+    assert result["knowledge"][0]["text"] == latest["text"]
+    assert "context_selected" in result["knowledge"][0]["inclusion_reasons"]
+    assert "knowledge_id=case reason=not_selected_in_context" in caplog.text
+    assert "knowledge_id=latest kept_id=" not in caplog.text
+
+
+def test_context_order_and_rules_survive_small_generator_cap(monkeypatch, caplog):
+    monkeypatch.setattr(module, "KNOWLEDGE_GENERATOR_TOP_K", 1)
+    records = [rule("relationship", "relationship", fields=[], confidence=0.1),
+               rule("business", fields=[], confidence=0.99),
+               rule("date", "field_definition", fields=["executionDate"])]
+    selected = [records[0], records[1]]
+    original = deepcopy((records, selected))
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: records)).rules_for_generator(
+        "orders", ["orders"], {"orders": ["executionDate"]}, full_schema=CATALOG, context_rules=selected)
+    assert ids(result) == ["relationship", "business"]
+    assert "effective_cap=2" in caplog.text
+    assert (records, selected) == original
+
+
+def test_context_rules_can_coexist_despite_overlapping_fields_and_different_confirmation_times():
+    records = [rule("latest", fields=["status"], text="Only latest records", updated_at="2025-01-01"),
+               rule("case", fields=["status"], text="Case-insensitive status", updated_at="2026-01-01")]
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: records)).rules_for_generator(
+        "status", ["orders"], {"orders": ["status"]}, full_schema=CATALOG, context_rules=records)
+    assert ids(result) == ["latest", "case"]
+
+
+def test_context_handoff_keeps_applicable_definitions_and_codes_but_excludes_recharge(caplog):
+    source = rule("source", fields=[], text="Command status comes from orders")
+    records = [source,
+        rule("date", "field_definition", fields=["executionDate"], text="executionDate is an ISO string"),
+        rule("status", "coded_value", fields=["status"], text="Failed means status Failed"),
+        rule("recharge", "coded_value", fields=["code"], text="Recharge orders have code = 'Recharge'"),
+        rule("unselected-business", fields=[], text="Use a date range for today")]
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: records)).rules_for_generator(
+        "give me status about this commandId: CMD-123", ["orders"],
+        {"orders": ["id", "executionDate", "status", "code"]}, full_schema=CATALOG, context_rules=[source])
+    assert ids(result) == ["source", "date", "status"]
+    assert "knowledge_id=recharge reason=not_applicable_to_question" in caplog.text
+    assert "knowledge_id=unselected-business reason=not_selected_in_context" in caplog.text
+
+
+@pytest.mark.parametrize("question", ["Show Recharge orders", "Filter code Recharge", "Show code values"])
+def test_context_handoff_includes_explicitly_requested_code_rules(question):
+    records = [rule("recharge", "coded_value", fields=["code"], text="Recharge orders have code = 'Recharge'")]
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: records)).rules_for_generator(
+        question, ["orders"], {"orders": ["id", "code"]}, full_schema=CATALOG, context_rules=[])
+    assert ids(result) == ["recharge"]
+
+
+def test_context_rules_are_not_duplicated_and_conflicting_preferences_cannot_replace_them():
+    source = rule("source", fields=["status"], text="Use latest records")
+    preference = {"_id": "preference", "collection": "orders", "field": "status",
+                  "type": "sorting_preference", "preference": "Sort status alphabetically"}
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: [source])).rules_for_generator(
+        "status", ["orders"], {"orders": ["status"]}, full_schema=CATALOG,
+        context_rules=[source, source], user_preferences=[preference])
+    assert ids(result) == ["source"]
+    assert result["user_preferences"] == []
+
+
+@pytest.mark.parametrize("changes", [{"active": False}, {"collections": ["missing"]}, {"fields": ["missing"]}])
+def test_preserved_context_rules_still_require_active_valid_schema_references(changes):
+    bad = rule("bad", **changes)
+    result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: [])).rules_for_generator(
+        "orders", ["orders"], {"orders": ["id"]}, full_schema=CATALOG, context_rules=[bad])
+    assert ids(result) == []
 
 
 def test_partial_scope_conflicts_and_empty_triggered_scope_are_resolved(caplog):

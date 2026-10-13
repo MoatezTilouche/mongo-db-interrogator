@@ -68,6 +68,11 @@ class KnowledgeRepository:
                       "updated_at": datetime.now(timezone.utc)}},
         )
 
+    def save_embeddings(self, knowledge_id: str, fields: dict[str, Any]) -> None:
+        # Refresh vector data only. updated_at represents rule confirmation;
+        # refreshing vectors must not change conflict precedence.
+        self._collection().update_one({"_id": knowledge_id}, {"$set": dict(fields)})
+
     def find_active_with_same_scope(self, record: dict[str, Any]) -> list[dict[str, Any]]:
         candidates = self._collection().find({
             "status": "active", "active": True,

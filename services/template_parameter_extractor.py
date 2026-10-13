@@ -77,6 +77,9 @@ def coerce(value, specification):
 
 
 def extract_parameters(question, document):
+    from services.query_entity_guard import template_entity_mismatch
+    if template_entity_mismatch(document, question):
+        raise ValueError("Template entity does not match the question; regenerate the query")
     specs = document["parameter_schema"]
     source = document["source_question"]
     # Identical wording with substituted literals is unambiguous and requires no LLM.

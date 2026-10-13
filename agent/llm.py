@@ -12,6 +12,7 @@ from agent.config import (
     LLM_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
     SCHEMA_EMBEDDING_MODEL,
+    SCHEMA_EMBEDDING_DIMENSIONS,
 )
 from agent.llm_structured import parse_json_from_text
 from agent.token_usage import get_token_usage_callback
@@ -38,7 +39,7 @@ class StructuredOutputError(ValueError):
 class LLMRouter:
     def __init__(self) -> None:
         self._clients: dict[str, Any] = {}
-        self._embedding_clients: dict[str, Any] = {}
+        self._embedding_clients: dict[tuple[str, int | None], Any] = {}
 
     def _client(self, model: str) -> Any:
         if model in self._clients:
@@ -60,22 +61,26 @@ class LLMRouter:
         self._clients[model] = client
         return client
 
-    def _embedding_client(self, model: str | None = None) -> Any:
+    def _embedding_client(self, model: str | None = None, dimensions: int | None = None) -> Any:
         model = model or SCHEMA_EMBEDDING_MODEL
-        if model in self._embedding_clients:
-            return self._embedding_clients[model]
+        dimensions = SCHEMA_EMBEDDING_DIMENSIONS if dimensions is None else dimensions
+        identity = (model, dimensions)
+        if identity in self._embedding_clients:
+            return self._embedding_clients[identity]
         if not OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is required")
         from langchain_openai import OpenAIEmbeddings
 
-        client = OpenAIEmbeddings(model=model, api_key=OPENAI_API_KEY)
-        self._embedding_clients[model] = client
+        options = {"dimensions": dimensions} if dimensions is not None else {}
+        client = OpenAIEmbeddings(model=model, api_key=OPENAI_API_KEY, **options)
+        self._embedding_clients[identity] = client
         return client
 
-    def embed_documents(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+    def embed_documents(self, texts: list[str], model: str | None = None,
+                        dimensions: int | None = None) -> list[list[float]]:
         model = model or SCHEMA_EMBEDDING_MODEL
         started = time.perf_counter()
-        vectors = self._embedding_client(model).embed_documents(texts)
+        vectors = self._embedding_client(model, dimensions).embed_documents(texts)
         try:
             import tiktoken
             try:

@@ -42,6 +42,82 @@ def test_command_id_extraction_has_no_llm(monkeypatch):
     invoke.assert_not_called()
 
 
+@pytest.mark.parametrize("question", [
+    "give me status about this request REQ-220148108",
+    "give me status about this requestId: 220148108",
+    "affiche le statut de cette requête",
+    "status REQ-220148108",
+])
+def test_command_template_rejects_request_entity(question):
+    assert SemanticTemplateCache.compatibility_reason(document(), question, {"orders"}) == "entity_mismatch"
+
+
+@pytest.mark.parametrize("question", [
+    "give me status about this commandId: CMD-000012825058",
+    "I request the status of command CMD-000012825058",
+    "affiche le statut de cette commande",
+])
+def test_command_template_accepts_same_entity_changed_wording(question):
+    assert SemanticTemplateCache.compatibility_reason(document(), question, {"orders"}) is None
+
+
+def test_cross_entity_parameter_extraction_rejected_without_llm(monkeypatch):
+    from agent.llm import llm_router
+    invoke = Mock(side_effect=AssertionError("No extraction LLM for wrong entity"))
+    monkeypatch.setattr(llm_router, "invoke", invoke)
+    with pytest.raises(ValueError, match="Template entity"):
+        extract_parameters("give me status about this request REQ-220148108", document())
+    invoke.assert_not_called()
+
+
+def test_legacy_corrected_question_does_not_allow_cross_entity_match():
+    from services.query_history_service import QueryHistoryService
+    doc = document()
+    doc["source_question"] = QueryHistoryService._corrected_question(
+        QueryHistoryService._corrected_question(SOURCE, "Status about commands comes from orders_proc_hist"),
+        "Show all details of the latest record")
+    assert SemanticTemplateCache.compatibility_reason(doc, "give me status about this request REQ-220148108", {"orders"}) == "entity_mismatch"
+    assert SemanticTemplateCache.compatibility_reason(doc, "give me status about this commandId: CMD-000012825058", {"orders"}) is None
+
+
+def test_incompatible_template_cannot_consume_top_k_slot(monkeypatch, caplog):
+    import services.semantic_template_cache as module
+    command = document()
+    request = deepcopy(command)
+    source = "give me status about this request REQ-220148107"
+    generated = parameterize_filter_values({"template": {"operation": "find", "collection": "requests",
+        "filter": {"requestId": "REQ-220148107"}, "limit": None}, "parameters": {}})
+    signature = template_signature(generated["template"])
+    request.update(template_id="tpl_" + signature, _id="tpl_" + signature, template_signature=signature,
+        source_question=source, semantic_text="Retrieve latest request status", collections=["requests"],
+        template=generated["template"], parameter_schema=describe_parameters(generated["template"], generated["parameters"], source),
+        embedding=[0.9, 0.435889894])
+    collection = Mock()
+    collection.find.return_value = [command, request]
+    db = Mock()
+    db.__getitem__ = Mock(return_value=collection)
+    db.list_collection_names.return_value = ["orders", "requests"]
+    monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_TOP_K", 1)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_MIN_THRESHOLD", 0.65)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD", 0.70)
+    monkeypatch.setattr(module.llm_router, "embed_query", Mock(return_value=[1., 0.]))
+    from services.schema_bootstrap_service import schema_bootstrap_service
+    monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
+    selected, metadata = SemanticTemplateCache(db).lookup("give me status about this request REQ-220148108")
+    assert selected["template_id"] == request["template_id"]
+    assert metadata["hit"]
+    assert "reason=entity_mismatch" in caplog.text
+
+
+def test_request_template_rejects_command_in_reverse_direction():
+    from services.query_entity_guard import template_entity_mismatch
+    doc = document()
+    doc["parameter_schema"] = {"id": {"source_path": "filter.requestId", "example": "REQ-220148108"}}
+    assert template_entity_mismatch(doc, "give me status about this commandId: CMD-000012825058")
+    assert not template_entity_mismatch(doc, "give me status about this request REQ-220148109")
+
+
 @pytest.mark.parametrize("score,hit,weak", [(0.64, False, False), (0.7, False, True), (0.91, True, False)])
 def test_similarity_thresholds(monkeypatch, score, hit, weak, caplog):
     import services.semantic_template_cache as module
