@@ -22,6 +22,16 @@ class KnowledgeRepository:
     def get_by_key(self, knowledge_id: str) -> dict[str, Any] | None:
         return self._collection().find_one({"_id": knowledge_id})
 
+    def find_equivalent(self, candidate: dict[str, Any]) -> dict[str, Any] | None:
+        """Use reviewed aliases, including their original type and scope."""
+        from services.knowledge_identity import equivalent_rule
+        records = self._collection().find({"status": {"$nin": ["rejected", "superseded"]}})
+        matches = [record for record in records if equivalent_rule(candidate, record)]
+        if len(matches) > 1:
+            # Ambiguous aliases must be repaired rather than arbitrarily merged.
+            raise ValueError("Multiple knowledge rules own the same reviewed alias")
+        return matches[0] if matches else None
+
     def add_or_confirm(self, record: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         collection = self._collection()
         source_id = record["source_request_id"]

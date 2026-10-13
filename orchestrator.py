@@ -12,9 +12,10 @@ from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
 from services.knowledge_collection_suggestions import apply_rule_suggestions
+from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query
 from services.query_entity_guard import rule_entity_mismatch
 from database.record_safety import safe_record
-from services.query_parameter_binder import bind_query_parameters, reconcile_template, parameterize_filter_values, template_from_concrete
+from services.query_parameter_binder import bind_query_parameters, template_from_concrete
 from services.query_cost_guard import QueryCostGuard
 from services.aggregation_validation import normalize_lookups, normalization_context
 from services.optimization_advisor import OptimizationAdvisor
@@ -227,12 +228,14 @@ class OrchestratorAgent:
                         raise
 
             assert validated_query is not None
-            generated_query = parameterize_filter_values(reconcile_template(generated_query, validated_query))
+            validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
+            generated_query = parameterize_resolved_query(generated_query, validated_query)
             cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
             learning_original, learning_cost = validated_query, cost
             validated_query, learned_optimization = stage("LearnedOptimization", LearnedOptimizationService().apply,
                 validated_query, cost, schema_spec, self.validator)
             if learned_optimization:
+                validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
                 intent = generated_query.get("semantic_intent")
                 generated_query = template_from_concrete(validated_query, "limit" in generated_query["parameters"])
                 if intent:
@@ -267,7 +270,8 @@ class OrchestratorAgent:
                     bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
                     with normalization_context():
                         validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
-                    generated_query = parameterize_filter_values(reconcile_template(repaired, validated_query))
+                    validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
+                    generated_query = parameterize_resolved_query(repaired, validated_query)
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)
                     if cost["status"] == "heavy":
                         return {"status": "optimization_required", "question": question, "cost_analysis": cost,

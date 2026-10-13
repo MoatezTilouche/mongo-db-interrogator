@@ -191,6 +191,18 @@ class KnowledgeIngestionService:
         now = datetime.now(timezone.utc)
         key = _candidate_id(kind, text, collections, fields)
         existing = self.repository.get_by_key(key)
+        if existing is None:
+            find_equivalent = getattr(self.repository, "find_equivalent", None)
+            if callable(find_equivalent):
+                match = find_equivalent({"type": kind, "text": text,
+                                         "collections": collections, "fields": fields})
+                if isinstance(match, dict):
+                    existing = match
+                    key = str(existing["_id"])
+                    kind = existing.get("type") or existing.get("knowledge_type")
+                    text = existing["text"]
+                    collections = list(existing.get("collections") or [])
+                    fields = list(existing.get("fields") or [])
         knowledge_metadata = {}
         if kind == "coded_value":
             coded = re.search(
@@ -199,6 +211,8 @@ class KnowledgeIngestionService:
             )
             if coded:
                 knowledge_metadata = {"value": coded.group(1), "meaning": coded.group(2).strip()[:200]}
+        if existing is not None:
+            knowledge_metadata = deepcopy(existing.get("metadata") or {})
         record = {
             "_id": key, "normalized_key": key, "type": kind, "text": text,
             "collections": collections, "fields": fields, "metadata": knowledge_metadata,

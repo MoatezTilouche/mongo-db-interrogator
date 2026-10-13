@@ -28,6 +28,12 @@ def overlaps(left, right):
 
 
 def conflicts(left, right):
+    # Reviewed facts can share a field (e.g. date storage and date filtering).
+    # Their identities are curated metadata, never inferred from model wording.
+    left_fact = (left.get("metadata") or {}).get("fact_key")
+    right_fact = (right.get("metadata") or {}).get("fact_key")
+    if left_fact and right_fact and left_fact != right_fact:
+        return False
     # Conservative: different normalized text requires review, even if it may
     # be a paraphrase. Code cannot reliably establish semantic equivalence.
     return overlaps(left, right) and meaning(left) != meaning(right)

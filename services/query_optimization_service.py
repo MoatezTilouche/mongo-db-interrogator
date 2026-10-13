@@ -22,6 +22,7 @@ from agents.results_summary_agent import ResultsSummaryAgent
 from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
 from services.optimization_intent import effective_question
+from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query, active_resolution_rules
 logger = logging.getLogger(__name__)
 
 def is_new_intent(refinement):
@@ -143,10 +144,12 @@ class QueryOptimizationService:
                 generated = parameterize_filter_values(reconcile_template(generated, query))
                 query = stage("QueryParameterBinder", bind_query_parameters, generated["template"], generated["parameters"])
                 logger.info("query_optimization_query_changed request_id=%s changed=%s", request_id, query != previous)
+                resolution_rules = active_resolution_rules()
                 def validate_candidate(candidate):
                     candidate = stage("AggregationNormalizer", normalize_lookups, candidate)
                     with normalization_context():
-                        return stage("ValidatorAgent", ValidatorAgent().validate, candidate, result["schema_spec"])
+                        validated = stage("ValidatorAgent", ValidatorAgent().validate, candidate, result["schema_spec"])
+                    return apply_value_resolution(validated, result["schema_spec"], resolution_rules)
 
                 def repair_candidate(candidate, error):
                     nonlocal generated, repairs
@@ -175,7 +178,7 @@ class QueryOptimizationService:
                         raise
                     query = repair_candidate(query, str(exc))
                 logger.info("query_optimization_validation_completed request_id=%s", request_id)
-                generated = parameterize_filter_values(reconcile_template(generated, query))
+                generated = parameterize_resolved_query(generated, query)
                 scoped_question = effective_question(prior_question, choice, query, intent if natural else None, payload.page)
                 cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                 cost["previous_estimated_rows"] = previous_cost.get("estimated_rows")
@@ -212,7 +215,7 @@ class QueryOptimizationService:
                 PerformanceLogger().record(query, cost, execution, optimization)
                 if not execution.get("ok") and execution.get("repairable") and repairs == 0:
                     query = repair_candidate(query, str(execution.get("error") or "MongoDB structural error"))
-                    generated = parameterize_filter_values(reconcile_template(generated, query))
+                    generated = parameterize_resolved_query(generated, query)
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                     cost["previous_estimated_rows"] = previous_cost.get("estimated_rows")
                     optimization["new_estimated_rows"] = cost.get("estimated_rows")

@@ -10,7 +10,7 @@ from agent.telemetry import request_context, capture_usage, totals
 from database.mongo_client import get_database
 from database.query_template_repository import QueryTemplateRepository, template_validation_schema
 from services.semantic_template_cache import SemanticTemplateCache
-from services.template_parameter_extractor import extract_parameters
+from services.template_parameter_extractor import extract_parameters, TemplateParameterExtractionError
 from services.query_parameter_binder import bind_query_parameters
 from agents.validator_agent import ValidatorAgent, QueryValidationError
 from agents.executor_agent import ExecutorAgent
@@ -18,6 +18,7 @@ from agents.results_summary_agent import ResultsSummaryAgent
 from services.query_cost_guard import QueryCostGuard
 from services.query_performance_memory import PerformanceLogger
 from services.optimization_advisor import OptimizationAdvisor
+from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query, active_resolution_rules
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,13 @@ class TemplateDecisionService:
                     logger.info("template_parameter_extraction_started request_id=%s", request_id)
                     try:
                         parameters, method = stage("TemplateParameterExtractor", extract_parameters, pending["question"], document)
-                    except Exception:
+                    except Exception as exc:
                         cache["template_parameter_extraction_failed"] = True
+                        reason = exc.reason if isinstance(exc, TemplateParameterExtractionError) else "extraction_unavailable_or_invalid_output"
+                        cache["template_parameter_extraction_failure_reason"] = reason
                         cache["parameter_extraction_ms"] = round((perf_counter() - extraction_started) * 1000, 2)
-                        logger.warning("template_parameter_extraction_failed request_id=%s", request_id)
+                        logger.warning("template_parameter_extraction_failed request_id=%s reason=%s error_type=%s",
+                                       request_id, reason, type(exc).__name__)
                         raise HTTPException(422, "Could not safely extract the new parameters. Choose Regenerate.") from None
                     extraction_ms = round((perf_counter() - extraction_started) * 1000, 2)
                     cache["parameter_extraction_ms"] = extraction_ms
@@ -95,12 +99,20 @@ class TemplateDecisionService:
                         logger.warning("template_reuse_validation_failed request_id=%s", request_id)
                         repository.record_failure(payload.template_id)
                         raise HTTPException(422, "Template failed validation. Choose Regenerate.") from None
+                    resolution_rules = active_resolution_rules()
+                    resolved_query = apply_value_resolution(query, schema_spec, resolution_rules)
+                    values_changed = resolved_query != query
+                    query = resolved_query
+                    if values_changed:
+                        generated = parameterize_resolved_query(generated, query)
+                        parameters = generated["parameters"]
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                     from services.learned_optimization_service import LearnedOptimizationService
                     from services.query_parameter_binder import template_from_concrete
                     learning_original, learning_cost = query, cost
                     query, learned = stage("LearnedOptimization", LearnedOptimizationService().apply, query, cost, schema_spec)
                     if learned:
+                        query = apply_value_resolution(query, schema_spec, resolution_rules)
                         intent = generated.get("semantic_intent")
                         generated = template_from_concrete(query, "limit" in generated["parameters"])
                         if intent:
@@ -112,7 +124,7 @@ class TemplateDecisionService:
                         "learned_optimization": learned,
                         "semantic_template_cache": cache, "generated_query": generated, "validated_query": query,
                         "schema_spec": schema_spec, "query_parameters": parameters,
-                        "query_template_id": None if learned else payload.template_id, "cost_analysis": cost, "query_signature": cost["query_signature"],
+                        "query_template_id": None if learned or values_changed else payload.template_id, "cost_analysis": cost, "query_signature": cost["query_signature"],
                         "applied_preferences": applied_preferences, "applied_knowledge": [],
                         "execution_path": {"route": "template_reuse", "agents_called": [], "summary_skipped": True, "repair_used": False}}
                     if cost["status"] == "heavy":
@@ -142,7 +154,7 @@ class TemplateDecisionService:
                             result["results_summary_agent_output"] = summary
                             result["final_response"] = summary.get("summary_text")
                         else:
-                            if not learned:
+                            if not learned and not values_changed:
                                 repository.record_failure(payload.template_id)
                     result["telemetry"] = {**totals(usage), "parameter_extraction_ms": extraction_ms,
                         "semantic_cache_lookup_ms": cache.get("semantic_cache_lookup_ms", 0), "parameter_extraction_method": method,
