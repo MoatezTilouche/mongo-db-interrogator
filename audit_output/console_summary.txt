@@ -1,0 +1,62 @@
+PROFILE USAGE AUDIT - source + synthetic probes; no live deployment assertion.
+A. Storage: SCHEMA_CACHE_COLLECTION (default _system_schema_cache); collections.<name>.facts/generated.
+   Apply preserves facts; bootstrap projects fields/types + relationships/confidence and description/aliases.
+   Evidence: database/schema_cache_repository.py:68; services/profiling/enrichment.py:13.
+   JSON export alone has no runtime loader found: scripts/scan_database.py:31; services/schema/bootstrap.py:158.
+B. Stage | verdict | evidence | fallback
+1 Context collection retrieval | USED | services/schema/bootstrap.py:79 | existing schema/labels/ranking
+2 Description generation | USED | services/schema/bootstrap.py:239 | old collection/fields input
+3 Query-generator prompt | PARTIAL | agents/query_context_agent.py:109 | selected schema + knowledge text
+4 Post-generation validation | PARTIAL | agents/validator_agent.py:48 | root/syntax checks
+5 Dates / plausibility | PARTIAL | services/knowledge/retrieval/generator.py:42 | LLM + Today + generic wrappers
+6 Value resolution | USED | services/query/values/catalog.py:48 | DB sample/TTL if no profile
+7 Coded-value triggers/index | PARTIAL | services/knowledge/retrieval/generator.py:39 | env terms/rule text
+8 Parameterization | NOT USED | services/query/parameters.py:118 | literal/path metadata
+9 Join/lookup validation | NOT USED | services/query/aggregation_validation.py:81 | collection/syntax/capabilities
+10 Cost/index awareness | NOT USED | services/query/optimization/cost_guard.py:24 | independent count/explain/history
+11 Zero-result diagnostics | NOT BUILT | orchestrator.py:292 | generic empty-result message
+12 PII throughout prompts | PARTIAL | services/profiling/prompt.py:10 | no global redaction
+13 Staleness / rescan | PARTIAL | services/profiling/enrichment.py:8 | old fingerprint/startup only
+C. Probes | result | observed behavior (synthetic): audit_output/probe_results.json:1
+P1 FAIL | Generator lacks categorical spellings/date format; its selected schema contains only fields/types.
+P2 PASS | Unknown root is rejected before execution; unknown nested sibling and aggregate predicate are accepted.
+P3 PASS | Case/accent variant becomes the exact stored spellings under the enabled merge policy.
+P4 NOT BUILT | No deterministic date-formatting hook; canned strings and an incorrect native Date wrapper all pass.
+P5 FAIL | A 2099 date outside the synthetic 2026 profile range is accepted without a range diagnostic.
+P6 FAIL | Syntactically valid lookup with nonexistent endpoints is accepted despite the idZ relationship.
+P7 FAIL | Ten-million estimated rows and missing filter index do not change guard output; separate live count/explain are attempted.
+P8 FAIL | Zero rows produce only 'No matching data was found.'; no per-condition diagnostic reads occur.
+P9 FAIL | PII names remain in five schema prompts and a synthetic PII value reaches summary; compact profile/value accessor exclude it.
+P10 PASS | Same-process apply republishes categories immediately; changed hash regenerates on explicit refresh, not automatically.
+D. UNUSED accessor: get_relationships; no non-test caller (services/profiling/accessors.py:57).
+   UNUSED at query time: date_min/max, pattern, presence, distinct_estimate, category counts, checked_values.
+   Scan/hash/description-only: in_array, date_range_source, indexes, sortable_as_string, categorical digest.
+   Metadata-only: scanned_at/sample_size/warnings; count/partial used only for empty handling.
+   Evidence: services/profiling/models.py:9; services/profiling/prompt.py:12; services/schema/bootstrap.py:223.
+E. Hardcoded source facts/heuristics/policies/examples (top 15; NOT live data):
+Status/code spellings | agent/config.py:50 | Runtime env default list | profile: fields.values
+Date-like field-name regex | agent/config.py:55 | Runtime env default heuristic | profile: kind/date_format/types
+fail/success/pending/refunded/etc. | agents/query_context_agent.py:25 | Runtime question vocabulary | profile: values + user-language knowledge
+executiondate/createdat/creationdate/timestamp/etc. | agents/query_context_agent.py:28 | Runtime date-name allowlist | profile: kind/date_format/types
+status/state field-word retention | agents/query_context_agent.py:36 | Runtime field heuristic | profile: categorical kind/values + meaning from knowledge
+Latest-date field-name allowlist | services/preferences/normalization.py:91 | Runtime preference normalization | profile: kind/date_format/types + latest preference
+Latest-date field-name allowlist | services/preferences/service.py:154 | Runtime preference repair | profile: kind/date_format/types
+Latest-date names plus _id fallback | services/preferences/service.py:169 | Runtime preference repair | profile: kind/date_format/types; _id is protocol
+status|state|statut|etat | services/knowledge/retrieval/generator.py:184 | Runtime coded-rule supplement heuristic | profile: categorical fields/values
+id|key|code|cd suffix / singular collection stem | services/schema/relationships.py:30; services/schema/relationships.py:48 | Runtime legacy relationship heuristic | profile: kind + verified relationships
+CMD/REQ prefixes and commandId/requestId | services/query/entity_guard.py:19; services/query/entity_guard.py:21 | Runtime entity vocabulary | profile: identifier pattern/kind; semantics not in facts
+commands/orders vs requests/requetes/demandes | services/query/entity_guard.py:26; services/query/entity_guard.py:28 | Runtime synonym sets | profile: no facts-only substitute; aliases/knowledge
+Day/month/year for all question dates | prompts/query_generator.txt:3 | Active prompt policy | profile: stored date_format cannot set question locale
+ISO-only cached typed date extraction | services/query/templates/parameter_extractor.py:151; services/query/templates/parameter_extractor.py:194 | Runtime template date policy | profile: date_format for stored strings
+orders_proc_hist / actionCode / Recharge | prompts/feedback_analysis.txt:18; prompts/feedback_analysis.txt:19 | Active prompt examples, NOT an enforced collection/value branch | profile: paths/values; business meaning requires knowledge
+F. Wiring gaps (impact order):
+1. PII policy does not govern all prompts: flagged names survive base schemas, and synthetic flagged values pass to the result-summary prompt. [agents/schema_enrichment_agent.py:21]
+2. Generator handoff drops categorical values/date formats/identifier kinds and context relationship metadata; only field names/type names survive normal selection. [agents/query_context_agent.py:109]
+3. Date formats/sortability and profile date_min/date_max are not used to construct, type-check or range-check date predicates. [services/knowledge/retrieval/generator.py:42]
+4. Verified relationship endpoints are retrieval hints only; lookup field existence/relationship compatibility and exact nested/aggregate paths are not enforced. [services/query/aggregation_validation.py:88]
+5. Profile index keys/uniqueness and estimated_count do not inform the cost guard; it performs independent count/explain queries. [services/query/optimization/cost_guard.py:38]
+6. External apply and JSON export do not automatically refresh a running process; same-process accessors and cached schema may differ until explicit bootstrap/refresh. [database/schema_cache_repository.py:75]
+7. No per-condition zero-result diagnostic exists, despite available categorical/date facts. [orchestrator.py:306]
+8. Identifier patterns, presence/distinct statistics, category counts and relationship checked_values have no query-time consumer; parameterization ignores profile kinds. [services/profiling/models.py:11]
+9. scanned_at/warnings/sample metadata do not drive age or completeness policy; no automatic profiling rescan caller was found. [scripts/scan_database.py:28]
+Integrity: unchanged existing files; no network/API/scanner calls. audit_output/final_integrity_check.json:1

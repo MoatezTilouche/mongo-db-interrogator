@@ -41,6 +41,9 @@ from services.schema.fingerprints import _canonical_hash, schema_fingerprint, _c
 from services.schema.relationships import _field_types_compatible, _relationships
 from services.schema.enrichment_text import _fallback_description, _is_fallback_enrichment, _search_text
 from services.schema.errors import SchemaBootstrapError, SchemaEnrichmentError
+from services.profiling.accessors import publish_profiles
+from services.profiling.enrichment import apply_facts, generated_fresh, save_generated
+from services.profiling.prompt import profile_to_prompt_view
 
 
 class SchemaBootstrapService:
@@ -93,6 +96,7 @@ class SchemaBootstrapService:
                  enrichment_calls: int = 0, embedding_calls: int = 0) -> None:
         with self._lock:
             self._catalog = deepcopy(catalog)
+            publish_profiles(catalog.get("database"), catalog.get("collections", {}))
             self._retriever = SchemaRetriever(self._catalog)
             self._state = {
                 "schema_ready": True, "schema_source": source, "schema_version": version,
@@ -179,10 +183,13 @@ class SchemaBootstrapService:
             raw_collections = raw.get("collections", {})
             cached_collections = cached.get("collections", {}) if cached else {}
             cache_complete = bool(cached and set(cached_collections) == set(raw_collections) and all(
-                cached_collections[name].get("fields") == entry.get("fields")
+                (cached_collections[name].get("fields") == entry.get("fields")
+                 or bool(cached_collections[name].get("facts")))
                 and cached_collections[name].get("search_text")
                 and cached_collections[name].get("embedding")
                 and not _is_fallback_enrichment(name, cached_collections[name])
+                and (not cached_collections[name].get("facts")
+                     or generated_fresh(cached_collections[name], SCHEMA_ENRICHMENT_MODEL))
                 for name, entry in raw_collections.items()
             ))
             models_match = bool(cached and all(
@@ -211,6 +218,26 @@ class SchemaBootstrapService:
             for name, raw_entry in sorted(raw_collections.items()):
                 collection_hash = _collection_fingerprint(name, raw_entry)
                 old_entry = old_collections.get(name)
+                facts = old_entry.get("facts") if old_entry else None
+                if facts:
+                    if facts.get("estimated_count") == 0 and not facts.get("sampled_count") and not facts.get("partial"):
+                        enriched = deepcopy(old_entry)
+                        enriched.update(description="", aliases=[], enrichment_status="empty",
+                                        enrichment_model=SCHEMA_ENRICHMENT_MODEL, fingerprint=collection_hash,
+                                        embedding_model=SCHEMA_EMBEDDING_MODEL)
+                        apply_facts(enriched, facts)
+                        save_generated(enriched, facts, SCHEMA_ENRICHMENT_MODEL, "empty")
+                        stale_collections[name] = enriched
+                    elif generated_fresh(old_entry, SCHEMA_ENRICHMENT_MODEL):
+                        enriched = deepcopy(old_entry)
+                        enriched.update(description=old_entry["generated"].get("description", ""),
+                                        aliases=old_entry["generated"].get("aliases", []), fingerprint=collection_hash)
+                        apply_facts(enriched, facts)
+                        stale_collections[name] = enriched
+                    else:
+                        to_enrich.append({"collection": name, "fields": raw_entry.get("fields", {}),
+                                          "profile": profile_to_prompt_view(facts)})
+                    continue
                 if (old_entry and old_entry.get("fingerprint") == collection_hash
                         and old_entry.get("enrichment_model") == SCHEMA_ENRICHMENT_MODEL
                         and not _is_fallback_enrichment(name, old_entry) and not rebuild):
@@ -257,6 +284,9 @@ class SchemaBootstrapService:
                     "embedding_model": SCHEMA_EMBEDDING_MODEL,
                     "enrichment_status": enrichment.get("enrichment_status", "enriched"),
                 }
+                if old_entry and old_entry.get("facts"):
+                    apply_facts(entry, old_entry["facts"])
+                    save_generated(entry, old_entry["facts"], SCHEMA_ENRICHMENT_MODEL)
                 entry["search_text"] = _search_text(name, entry)
                 if (old_entry and schema_embedding_fresh(old_entry, SCHEMA_EMBEDDING_MODEL,
                                                         SCHEMA_EMBEDDING_DIMENSIONS, entry["search_text"])):
@@ -333,6 +363,7 @@ class SchemaBootstrapService:
         invalidate_cache(database_name or None)
         with self._lock:
             self._catalog = None
+            publish_profiles(database_name, {})
             self._retriever = None
             self._state = {"schema_ready": False, "schema_source": None, "schema_version": None,
                            "error_type": None, "enrichment_calls": 0, "embedding_calls": 0}

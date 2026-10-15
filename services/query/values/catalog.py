@@ -18,6 +18,7 @@ from agent.config import (
 )
 from database.mongo_client import get_database
 from database.record_safety import safe_record
+from services.profiling import get_profile, get_categorical_values
 
 logger = logging.getLogger("services.value_catalog")
 logger.setLevel(logging.INFO)
@@ -44,6 +45,11 @@ class ValueCatalog:
     def get(self, collection, field):
         if not KNOWLEDGE_VALUE_RESOLUTION_ENABLED:
             return None
+        profile = get_profile(collection)
+        if profile is not None:
+            # An existing profile is authoritative, including redacted fields and
+            # disabled value storage. Do not re-sample to bypass those choices.
+            return get_categorical_values(collection, field) or None
         key = (collection, field, KNOWLEDGE_CATEGORICAL_MAX_DISTINCT, KNOWLEDGE_CATEGORICAL_SAMPLE_SIZE)
         with self._lock:
             entry = self._cache.get(key)
@@ -79,6 +85,8 @@ class ValueCatalog:
             return set(values) if values is not None else None
 
     def status(self, collection, field):
+        if get_profile(collection) is not None:
+            return "available" if get_categorical_values(collection, field) else "not_categorical"
         key = (collection, field, KNOWLEDGE_CATEGORICAL_MAX_DISTINCT, KNOWLEDGE_CATEGORICAL_SAMPLE_SIZE)
         with self._lock:
             entry = self._cache.get(key)

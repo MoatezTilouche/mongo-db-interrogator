@@ -28,8 +28,20 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
     names = set(selected_collections) & set(catalog)
     date_pattern = re.compile(KNOWLEDGE_DATE_FIELD_PATTERN, re.I)
     date_targets = set()
+    from services.profiling import get_profile, get_date_format, get_categorical_values
+    profile_terms = set()
+    has_unprofiled = not names
     for name in sorted(names):
+        profile = get_profile(name)
+        has_unprofiled |= profile is None
+        if profile:
+            for path in profile.get("fields", {}):
+                profile_terms.update(get_categorical_values(name, path) or ())
         for field, spec in catalog[name].get("fields", {}).items():
+            if profile is not None:
+                if get_date_format(name, field):
+                    date_targets.add((name, field))
+                continue
             types = spec.get("types", spec.get("type", [])) if isinstance(spec, dict) else spec
             types = [types] if isinstance(types, str) else (types or [])
             if date_pattern.search(field.rsplit(".", 1)[-1]) or any(
@@ -40,7 +52,8 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
     time_trigger = bool(re.search(KNOWLEDGE_TIME_EXPRESSION_PATTERN, question, re.I))
     date_trigger = time_trigger or bool(date_targets & selected_targets)
     status_trigger = any(re.search(r"(?<!\w)" + re.escape(term.casefold()) + r"(?!\w)", question.casefold())
-                         for term in KNOWLEDGE_STATUS_TERMS)
+                         for term in (profile_terms | set(KNOWLEDGE_STATUS_TERMS)
+                                      if has_unprofiled else profile_terms))
     preserved = []
     preserved_ids = set()
     for record in context_rules or []:

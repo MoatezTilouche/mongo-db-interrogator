@@ -39,6 +39,10 @@ def terms_for_rule(rule):
     phrases += re.findall(r"(?:=|\bmeans\b|\bis\b)\s*([^\n.;]+)", text)
     phrases += [normalize(name) for name in _collection_names(rule)]
     terms = {word for word in re.findall(r"\w+", text) if len(word) >= 3 and word not in STOPWORDS}
+    from services.profiling import get_categorical_values
+    for collection in _collection_names(rule):
+        for path in rule.get("fields", []):
+            terms.update(normalize(value) for value in get_categorical_values(collection, path) or ())
     for phrase in phrases:
         words = re.findall(r"\w+", phrase)
         terms.update(word for word in words if len(word) >= 3 and word not in STOPWORDS)
@@ -69,7 +73,7 @@ class KeywordIndex:
                     and rule.get("scope", "database") == "database"]
         snapshot = sorted((str(rule.get("_id", "")), rule_type(rule),
                            str(rule.get("corrected_meaning") or rule.get("text") or ""),
-                           sorted(_collection_names(rule))) for rule in eligible)
+                           sorted(_collection_names(rule)), sorted(terms_for_rule(rule))) for rule in eligible)
         signature = hashlib.sha256(json.dumps([snapshot, max_fraction, ttl], ensure_ascii=True).encode()).digest()
         now = time.monotonic()
         with self._lock:

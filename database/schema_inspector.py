@@ -57,14 +57,19 @@ def _walk(value: Any, prefix: str, out: dict[str, set[str]]) -> None:
                 out[prefix].add(f"array<{_type_name(child)}>")
 
 
-def _inspect_database_schema() -> dict[str, Any]:
-    db = get_database()
+def excluded_collection(name: str) -> bool:
+    """Shared application metadata exclusions (also used by opt-in profiling)."""
     internal = {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
                 DATABASE_KNOWLEDGE_COLLECTION,
                 SCHEMA_CACHE_COLLECTION, QUERY_PERFORMANCE_COLLECTION, QUERY_TEMPLATES_COLLECTION}
+    return name in internal or name.startswith("_system_")
+
+
+def _inspect_database_schema() -> dict[str, Any]:
+    db = get_database()
     collection_names = sorted(
         name for name in db.list_collection_names()
-        if name not in internal and not name.startswith("_system_")
+        if not excluded_collection(name)
     )[:MONGO_MAX_COLLECTIONS]
     collections: dict[str, Any] = {}
 

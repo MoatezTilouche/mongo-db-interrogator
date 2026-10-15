@@ -19,6 +19,7 @@ class SchemaEnrichmentAgent:
         compact = [{
             "collection": item["collection"],
             "fields": item["fields"],
+            **({"profile": item["profile"]} if "profile" in item else {}),
         } for item in collections]
         prompt = render_prompt("schema_enrichment", {
             "collections_json": json.dumps(compact, ensure_ascii=False, separators=(",", ":")),
