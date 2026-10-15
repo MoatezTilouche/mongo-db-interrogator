@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "languages": {
+    "en": {
+      "months": [["january", "jan"], ["february", "feb"], ["march", "mar"], ["april", "apr"], ["may"], ["june", "jun"], ["july", "jul"], ["august", "aug"], ["september", "sep", "sept"], ["october", "oct"], ["november", "nov"], ["december", "dec"]],
+      "explicit_patterns": ["(?P<day>\\d{1,2})\\s+(?P<month>{months})\\s+(?P<year>\\d{4})", "(?P<month>{months})\\s+(?P<day>\\d{1,2}),?\\s+(?P<year>\\d{4})"],
+      "relative": [
+        {"pattern": "\\btoday\\b", "unit": "day", "offset": 0, "length": 1},
+        {"pattern": "\\byesterday\\b", "unit": "day", "offset": -1, "length": 1},
+        {"pattern": "\\bthis\\s+week\\b", "unit": "week", "offset": 0, "length": 1, "calendar": true},
+        {"pattern": "\\blast\\s+week\\b", "unit": "day", "offset": -7, "length": 7},
+        {"pattern": "\\bthis\\s+month\\b", "unit": "month", "offset": 0, "length": 1, "calendar": true},
+        {"pattern": "\\blast\\s+month\\b", "unit": "month", "offset": -1, "length": 1, "calendar": true},
+        {"pattern": "\\blast\\s+(?P<n>\\d+)\\s+days?\\b", "unit": "day", "offset": "-n", "length": "n"}
+      ],
+      "connectors": {
+        "range": [{"prefix": "\\bbetween", "separator": "and"}, {"prefix": "\\bfrom", "separator": "to|through"}],
+        "open_end": [{"prefix": "\\b(?:since|from)", "inclusive": true}],
+        "open_start": [{"prefix": "\\b(?:until|through)", "inclusive": true}, {"prefix": "\\bbefore", "inclusive": false}]
+      }
+    },
+    "fr": {
+      "months": [["janvier", "janv"], ["février", "fevrier", "févr", "fevr"], ["mars"], ["avril", "avr"], ["mai"], ["juin"], ["juillet", "juil"], ["août", "aout"], ["septembre", "sept"], ["octobre", "oct"], ["novembre", "nov"], ["décembre", "decembre", "déc", "dec"]],
+      "explicit_patterns": ["(?P<day>\\d{1,2})\\s+(?P<month>{months})\\s+(?P<year>\\d{4})"],
+      "relative": [
+        {"pattern": "\\baujourd['’]hui\\b", "unit": "day", "offset": 0, "length": 1},
+        {"pattern": "\\bhier\\b", "unit": "day", "offset": -1, "length": 1},
+        {"pattern": "\\bcette\\s+semaine\\b", "unit": "week", "offset": 0, "length": 1, "calendar": true},
+        {"pattern": "\\b(?:la\\s+)?semaine\\s+derni[eè]re\\b", "unit": "day", "offset": -7, "length": 7},
+        {"pattern": "\\bce\\s+mois\\b", "unit": "month", "offset": 0, "length": 1, "calendar": true},
+        {"pattern": "\\b(?:le\\s+)?mois\\s+dernier\\b", "unit": "month", "offset": -1, "length": 1, "calendar": true},
+        {"pattern": "\\b(?:les\\s+)?(?P<n>\\d+)\\s+derniers?\\s+jours?\\b", "unit": "day", "offset": "-n", "length": "n"}
+      ],
+      "connectors": {
+        "range": [{"prefix": "\\bentre", "separator": "et"}, {"prefix": "\\b(?:du|de)", "separator": "au|à"}],
+        "open_end": [{"prefix": "\\b(?:depuis|à\\s+partir\\s+du)", "inclusive": true}],
+        "open_start": [{"prefix": "\\bjusqu['’](?:au|à)", "inclusive": true}, {"prefix": "\\bavant", "inclusive": false}]
+      }
+    }
+  }
+}

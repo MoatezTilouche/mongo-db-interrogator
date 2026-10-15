@@ -18,6 +18,7 @@ from services.mongo_capabilities import get_mongo_capabilities
 from agent.telemetry import current_request_id
 from services.prompt_context import knowledge_texts, compact_preferences
 from services.query_prompt_instructions import normalize_operation, operation_instructions, output_contract
+from services.query.profile_view import profile_to_generator_view
 import logging
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class QueryGeneratorAgent:
             "database_knowledge_json": json.dumps(knowledge_texts(database_knowledge), ensure_ascii=False, separators=(",", ":")),
             "operation_instructions": operation_instructions(operation),
             "output_contract": output_contract(operation),
-        }), "query_generator", include_lookup_guidance=operation in {"aggregate", "unknown"})
+        }) + profile_to_generator_view(schema_spec, question), "query_generator", include_lookup_guidance=operation in {"aggregate", "unknown"})
 
     @traceable(name="query_generator.optimize")
     def optimize(self, original_question, query_context, schema_spec, previous_query,
@@ -85,7 +86,9 @@ class QueryGeneratorAgent:
                    "user_preferences": compact_preferences(user_preferences),
                    "database_knowledge": knowledge_texts(database_knowledge)}
         operation = normalize_operation(previous_query.get("operation"))
-        return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str), "query_generator",
+        return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str)
+                                 + profile_to_generator_view(schema_spec, refinement or original_question,
+                                                             fallback_question=original_question), "query_generator",
                                  include_lookup_guidance=operation in {"aggregate", "unknown"})
 
     @traceable(name="query_generator.repair")
@@ -129,4 +132,4 @@ class QueryGeneratorAgent:
             "repair_instructions": (render_prompt("query_aggregate_repair", {"operation": operation})
                                     if operation in {"aggregate", "unknown"} else ""),
             "output_contract": output_contract(operation),
-        }), "repair", include_lookup_guidance=operation in {"aggregate", "unknown"})
+        }) + profile_to_generator_view(schema_spec, question), "repair", include_lookup_guidance=operation in {"aggregate", "unknown"})

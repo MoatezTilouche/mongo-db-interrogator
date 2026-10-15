@@ -29,6 +29,10 @@ from services.optimization_advisor import OptimizationAdvisor
 from services.query_performance_memory import PerformanceLogger
 from services.optimization_intent import effective_question
 from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query, active_resolution_rules
+from services.query.dates.normalization import apply_date_normalization
+from services.query.dates.resolver import resolve_question_dates
+from services.query.profile_config import RuntimeProfileConfig
+from services.query.profile_facts import safe_profile
 logger = logging.getLogger("services.query_optimization_service")
 
 def is_new_intent(refinement):
@@ -151,10 +155,16 @@ class QueryOptimizationService:
                 query = stage("QueryParameterBinder", bind_query_parameters, generated["template"], generated["parameters"])
                 logger.info("query_optimization_query_changed request_id=%s changed=%s", request_id, query != previous)
                 resolution_rules = active_resolution_rules()
+                date_question = prior_question
+                date_config = RuntimeProfileConfig.from_env()
+                if natural and date_config.date_enabled and safe_profile(previous.get("collection")) is not None:
+                    if resolve_question_dates(intent, datetime.now(timezone.utc), date_config.zone(), date_config.day_first):
+                        date_question = intent
                 def validate_candidate(candidate):
                     candidate = stage("AggregationNormalizer", normalize_lookups, candidate)
                     with normalization_context():
                         validated = stage("ValidatorAgent", ValidatorAgent().validate, candidate, result["schema_spec"])
+                    validated = apply_date_normalization(validated, question=date_question)
                     return apply_value_resolution(validated, result["schema_spec"], resolution_rules)
 
                 def repair_candidate(candidate, error):

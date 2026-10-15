@@ -75,7 +75,7 @@ class ValidatorAgent:
         self.capabilities = capabilities or get_mongo_capabilities()
 
     @traceable(name="validator.validate")
-    def validate(self, query: dict[str, Any], schema_spec: dict[str, Any]) -> dict[str, Any]:
+    def validate(self, query: dict[str, Any], schema_spec: dict[str, Any], profile_lookup=None) -> dict[str, Any]:
         if not isinstance(query, dict):
             raise QueryValidationError("Query must be a JSON object")
         normalized = deepcopy(query)
@@ -101,6 +101,15 @@ class ValidatorAgent:
                 if isinstance(target, str) and (target in internal or target.split(".")[-1].startswith("_system_")):
                     raise QueryValidationError("Internal learning collections are not queryable")
         known_fields = _known_fields(schema_spec, collection)
+        from services.query.profile_config import RuntimeProfileConfig
+        from services.query.profile_facts import safe_profile
+        from services.query.profile_validation import validate_profile_query
+        profile_active = (RuntimeProfileConfig.from_env().validation_mode != "off"
+                          and safe_profile(collection, profile_lookup) is not None)
+        # The profile layer owns paths when available, including partial-profile
+        # warning policy. Preserve the legacy schema checks without a profile.
+        if profile_active:
+            known_fields = set()
 
         if operation == "find":
             normalized.setdefault("filter", {})
@@ -122,7 +131,8 @@ class ValidatorAgent:
 
         elif operation == "aggregate":
             pipeline = normalized.get("pipeline")
-            validate_pipeline(pipeline, ALLOWED_STAGES, known_collections, self.capabilities)
+            stages = ALLOWED_STAGES | {"$unionWith"} if profile_active else ALLOWED_STAGES
+            validate_pipeline(pipeline, stages, known_collections, self.capabilities)
 
         elif operation == "count_documents":
             normalized.setdefault("filter", {})
@@ -137,4 +147,4 @@ class ValidatorAgent:
             normalized.setdefault("filter", {})
             _validate_filter_fields(normalized["filter"], known_fields)
 
-        return normalized
+        return validate_profile_query(normalized, profile_lookup)

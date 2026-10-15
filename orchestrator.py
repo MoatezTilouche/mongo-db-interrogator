@@ -13,6 +13,7 @@ from services.context_builder import ContextBuilder
 from services.knowledge_retriever import KnowledgeRetriever
 from services.knowledge_collection_suggestions import apply_rule_suggestions
 from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query
+from services.query.dates.normalization import apply_date_normalization
 from services.query_entity_guard import rule_entity_mismatch
 from database.record_safety import safe_record
 from services.query_parameter_binder import bind_query_parameters, template_from_concrete
@@ -212,6 +213,7 @@ class OrchestratorAgent:
                     bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
                     with normalization_context():
                         validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
+                    validated_query = apply_date_normalization(validated_query, question=question)
                     break
                 except QueryValidationError as exc:
                     validation_errors.append(exc.to_dict())
@@ -234,6 +236,12 @@ class OrchestratorAgent:
             learning_original, learning_cost = validated_query, cost
             validated_query, learned_optimization = stage("LearnedOptimization", LearnedOptimizationService().apply,
                 validated_query, cost, schema_spec, self.validator)
+            if learned_optimization:
+                try:
+                    validated_query = apply_date_normalization(validated_query, question=question)
+                except QueryValidationError:
+                    logging.getLogger(__name__).info("learned_optimization_skipped reason=date_validation")
+                    validated_query, learned_optimization = learning_original, None
             if learned_optimization:
                 validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
                 intent = generated_query.get("semantic_intent")
@@ -270,6 +278,7 @@ class OrchestratorAgent:
                     bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
                     with normalization_context():
                         validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
+                    validated_query = apply_date_normalization(validated_query, question=question)
                     validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
                     generated_query = parameterize_resolved_query(repaired, validated_query)
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)

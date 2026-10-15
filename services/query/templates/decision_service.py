@@ -25,6 +25,7 @@ from services.query_cost_guard import QueryCostGuard
 from services.query_performance_memory import PerformanceLogger
 from services.optimization_advisor import OptimizationAdvisor
 from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query, active_resolution_rules
+from services.query.dates.normalization import apply_date_normalization
 
 logger = logging.getLogger("services.template_decision_service")
 
@@ -100,6 +101,9 @@ class TemplateDecisionService:
                             query, preferences, DEFAULT_USER_ID, pending["question"],
                         )
                         query = stage("ValidatorAgent", ValidatorAgent().validate, query, schema_spec)
+                        before_dates = query
+                        query = apply_date_normalization(query, question=pending["question"])
+                        dates_changed = query != before_dates
                     except QueryValidationError:
                         cache["template_reuse_validation_failed"] = True
                         logger.warning("template_reuse_validation_failed request_id=%s", request_id)
@@ -107,7 +111,7 @@ class TemplateDecisionService:
                         raise HTTPException(422, "Template failed validation. Choose Regenerate.") from None
                     resolution_rules = active_resolution_rules()
                     resolved_query = apply_value_resolution(query, schema_spec, resolution_rules)
-                    values_changed = resolved_query != query
+                    values_changed = dates_changed or resolved_query != query
                     query = resolved_query
                     if values_changed:
                         generated = parameterize_resolved_query(generated, query)
@@ -117,6 +121,12 @@ class TemplateDecisionService:
                     from services.query_parameter_binder import template_from_concrete
                     learning_original, learning_cost = query, cost
                     query, learned = stage("LearnedOptimization", LearnedOptimizationService().apply, query, cost, schema_spec)
+                    if learned:
+                        try:
+                            query = apply_date_normalization(query, question=pending["question"])
+                        except QueryValidationError:
+                            logger.info("learned_optimization_skipped request_id=%s reason=date_validation", request_id)
+                            query, learned = learning_original, None
                     if learned:
                         query = apply_value_resolution(query, schema_spec, resolution_rules)
                         intent = generated.get("semantic_intent")

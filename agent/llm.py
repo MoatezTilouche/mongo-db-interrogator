@@ -214,6 +214,13 @@ class LLMRouter:
                 return response
             except Exception as exc:
                 status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+                http_status = status if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599 else None
+                # Provider exception messages can contain credentials, request
+                # bodies and URLs. Keep startup diagnostics useful without them.
+                logger.warning("llm_request_failed role=%s model=%s error_type=%s status_code=%s "
+                               "retry_count=%d timeout_seconds=%s request_id=%s",
+                               role, model, type(exc).__name__, http_status, attempt,
+                               config.timeout, current_request_id())
                 if using_schema and not structured_fallback and (
                         isinstance(exc, StructuredOutputError) or status in {400, 415, 422}):
                     structured_fallback = True

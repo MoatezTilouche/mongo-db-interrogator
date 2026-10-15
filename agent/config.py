@@ -30,6 +30,7 @@ KNOWLEDGE_VALUE_CATALOG_TTL_SECONDS = max(0, int(os.getenv("KNOWLEDGE_VALUE_CATA
 KNOWLEDGE_CASE_VARIANTS_POLICY = os.getenv("KNOWLEDGE_CASE_VARIANTS_POLICY", "merge").strip().lower()
 KNOWLEDGE_CASE_SENSITIVE_FIELDS = frozenset(value.strip() for value in os.getenv("KNOWLEDGE_CASE_SENSITIVE_FIELDS", "").split(",") if value.strip())
 KNOWLEDGE_VALUE_SUGGESTION_CUTOFF = float(os.getenv("KNOWLEDGE_VALUE_SUGGESTION_CUTOFF", "0.8"))
+VALUE_SEPARATOR_MATCHING_ENABLED = os.getenv("VALUE_SEPARATOR_MATCHING_ENABLED", "true").lower() == "true"
 if KNOWLEDGE_CASE_VARIANTS_POLICY not in {"merge", "exact"}:
     raise ValueError("KNOWLEDGE_CASE_VARIANTS_POLICY must be merge or exact")
 if not 0 <= KNOWLEDGE_VALUE_SUGGESTION_CUTOFF <= 1:
@@ -101,7 +102,7 @@ def _client_number(name, default, convert):
     except ValueError:
         return default
 
-LLM_TIMEOUT_SECONDS = _client_number("LLM_TIMEOUT_SECONDS", 30, float)
+LLM_TIMEOUT_SECONDS = _client_number("LLM_TIMEOUT_SECONDS", 530, float)
 LLM_MAX_RETRIES = _client_number("LLM_MAX_RETRIES", 1, int)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 

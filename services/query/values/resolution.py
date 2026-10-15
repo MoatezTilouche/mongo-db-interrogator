@@ -17,9 +17,12 @@ import unicodedata
 from agent.config import (
     KNOWLEDGE_VALUE_RESOLUTION_ENABLED, KNOWLEDGE_CASE_VARIANTS_POLICY,
     KNOWLEDGE_CASE_SENSITIVE_FIELDS, KNOWLEDGE_VALUE_SUGGESTION_CUTOFF,
+    VALUE_SEPARATOR_MATCHING_ENABLED,
 )
 from database.record_safety import safe_record
 from services.value_catalog import get_value_catalog, get_value_catalog_status
+from services.profiling.accessors import get_profile, get_categorical_values, safe_field
+from services.query.values.matching import normalize_for_match
 
 logger = logging.getLogger("services.filter_value_resolution")
 logger.setLevel(logging.INFO)
@@ -73,6 +76,27 @@ def resolve_filter_value(collection, field, user_value, rules):
             _log(collection, field, user_value, [user_value], reason)
         return [user_value], reason
     variants = sorted(value for value in values if _normalize(value) == _normalize(user_value))
+    separator_variant = False
+    if not variants and VALUE_SEPARATOR_MATCHING_ENABLED:
+        profile = get_profile(collection)
+        if (profile is not None and safe_field(profile, field)
+                and profile.get("fields", {}).get(field, {}).get("kind") == "categorical"):
+            stored = get_categorical_values(collection, field) or set()
+            groups = {}
+            for value in sorted(stored):
+                groups.setdefault(normalize_for_match(value)[0], []).append(value)
+            key = normalize_for_match(user_value)[0]
+            variants = groups.get(key, [])
+            if variants and len({_normalize(value) for value in variants}) != 1:
+                _log(collection, field, user_value, [user_value], "ambiguous_separator_variant")
+                return [user_value], "ambiguous_separator_variant"
+            if not variants:
+                matches = difflib.get_close_matches(key, sorted(groups), n=1,
+                                                   cutoff=KNOWLEDGE_VALUE_SUGGESTION_CUTOFF)
+                _log(collection, field, user_value, [user_value], "not_in_catalog_closest",
+                     groups[matches[0]][0] if matches else None)
+                return [user_value], "not_in_catalog_closest"
+            separator_variant = True
     if not variants:
         normalized = {_normalize(value): value for value in reversed(sorted(values))}
         matches = difflib.get_close_matches(_normalize(user_value), sorted(normalized), n=1,
@@ -92,6 +116,8 @@ def resolve_filter_value(collection, field, user_value, rules):
         resolved, reason = variants, "case_variant"
     else:
         resolved, reason = variants, "accent_variant"
+    if separator_variant:
+        reason = "separator_variant"
     if resolved != [user_value]:
         _log(collection, field, user_value, resolved, reason)
     return resolved, reason

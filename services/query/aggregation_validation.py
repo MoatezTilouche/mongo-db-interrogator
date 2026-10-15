@@ -104,6 +104,15 @@ def validate_pipeline(pipeline, allowed_stages, known_collections, capabilities=
             for name, child in value.items():
                 validate_pipeline(child, allowed_stages - {"$facet"}, known_collections, capabilities,
                                   f"{path}[{index}].$facet.{name}", normalization_attempted)
+        elif operator == "$unionWith":
+            target = value.get("coll") if isinstance(value, dict) else value
+            if not isinstance(target, str) or target not in known_collections:
+                fail("Unknown $unionWith collection", index, operator)
+            if isinstance(value, dict):
+                if set(value) - {"coll", "pipeline"}:
+                    fail("$unionWith contains unsupported arguments", index, operator)
+                validate_pipeline(value.get("pipeline", []), allowed_stages, known_collections, capabilities,
+                                  f"{path}[{index}].$unionWith.pipeline", normalization_attempted)
 
 
 def plain_field(value):
