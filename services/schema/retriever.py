@@ -21,6 +21,7 @@ from agent.config import (
     SCHEMA_EMBEDDING_MODEL, QUERY_TEMPLATES_COLLECTION,
 )
 from agent.llm import llm_router
+from agent.client_factory import custom_endpoint_active
 
 logger = logging.getLogger("services.schema_retriever")
 _STOP_WORDS = {"a", "an", "the", "show", "give", "me", "find", "get", "list", "all", "of", "for", "in", "on", "to", "by", "with", "and", "or", "that", "which"}
@@ -59,7 +60,16 @@ class SchemaRetriever:
         field_text = " ".join(entry.get("fields", {}))
         document_tokens = _tokens(f"{text} {field_text}")
         lexical = len(question_tokens & document_tokens) / max(1, len(question_tokens))
-        semantic = max(0.0, _cosine(query_vector or [], entry.get("embedding", [])))
+        vector = entry.get("embedding", [])
+        reason = None
+        stored_model = entry.get("embedding_model")
+        if stored_model != SCHEMA_EMBEDDING_MODEL and (stored_model is not None or custom_endpoint_active()):
+            reason = "model_mismatch"
+        elif query_vector and vector and len(vector) != len(query_vector):
+            reason = "length_mismatch"
+        if reason:
+            logger.info("schema_embedding_skipped collection=%s reason=%s", name, reason)
+        semantic = 0.0 if reason else max(0.0, _cosine(query_vector or [], vector))
         score = 0.68 * semantic + 0.32 * lexical
 
         explicit_collection = _phrase_present(question_tokens, name)

@@ -93,20 +93,37 @@ DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT", "100"))
 MAX_LIMIT = int(os.getenv("MAX_LIMIT", "500"))
 
 # LLM routing
-LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
-LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
+# Defer invalid client settings to the factory's first-use, redacted validation.
+def _client_number(name, default, convert):
+    raw = os.getenv(name, "").strip()
+    try:
+        return convert(raw) if raw else default
+    except ValueError:
+        return default
+
+LLM_TIMEOUT_SECONDS = _client_number("LLM_TIMEOUT_SECONDS", 30, float)
+LLM_MAX_RETRIES = _client_number("LLM_MAX_RETRIES", 1, int)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # One OpenAI model for every active agent; no provider or per-role fallback.
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
-SCHEMA_ENRICHMENT_MODEL = os.getenv("SCHEMA_ENRICHMENT_MODEL", OPENAI_MODEL)
-SCHEMA_EMBEDDING_MODEL = os.getenv("SCHEMA_EMBEDDING_MODEL", "text-embedding-3-small")
-KNOWLEDGE_EMBEDDING_MODEL = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", SCHEMA_EMBEDDING_MODEL)
+OPENAI_MODEL = os.getenv("LLM_MODEL", "").strip() or os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
+SCHEMA_ENRICHMENT_MODEL = os.getenv("LLM_MODEL", "").strip() or os.getenv("SCHEMA_ENRICHMENT_MODEL", OPENAI_MODEL)
+SCHEMA_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "").strip() or os.getenv("SCHEMA_EMBEDDING_MODEL", "text-embedding-3-small")
+KNOWLEDGE_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "").strip() or os.getenv("KNOWLEDGE_EMBEDDING_MODEL", SCHEMA_EMBEDDING_MODEL)
 # Unset preserves the provider's existing default; query and rule vectors share it.
-_embedding_dimensions = os.getenv("SCHEMA_EMBEDDING_DIMENSIONS", "").strip()
-SCHEMA_EMBEDDING_DIMENSIONS = int(_embedding_dimensions) if _embedding_dimensions else None
+_local_embedding_dimensions = os.getenv("EMBEDDING_DIMENSIONS", "").strip()
+_embedding_dimensions = _local_embedding_dimensions or os.getenv("SCHEMA_EMBEDDING_DIMENSIONS", "").strip()
+_dimensions_variable = "EMBEDDING_DIMENSIONS" if _local_embedding_dimensions else "SCHEMA_EMBEDDING_DIMENSIONS"
+try:
+    SCHEMA_EMBEDDING_DIMENSIONS = int(_embedding_dimensions) if _embedding_dimensions else None
+except ValueError:
+    if not _local_embedding_dimensions:
+        raise ValueError(f"{_dimensions_variable} must be a positive integer") from None
+    SCHEMA_EMBEDDING_DIMENSIONS = None  # Factory validates the override on first use.
 if SCHEMA_EMBEDDING_DIMENSIONS is not None and SCHEMA_EMBEDDING_DIMENSIONS <= 0:
-    raise ValueError("SCHEMA_EMBEDDING_DIMENSIONS must be positive when configured")
+    if not _local_embedding_dimensions:
+        raise ValueError(f"{_dimensions_variable} must be positive when configured")
+    SCHEMA_EMBEDDING_DIMENSIONS = None
 KNOWLEDGE_EMBEDDING_DIMENSIONS = SCHEMA_EMBEDDING_DIMENSIONS
 if KNOWLEDGE_EMBEDDING_MODEL != SCHEMA_EMBEDDING_MODEL:
     raise ValueError("KNOWLEDGE_EMBEDDING_MODEL must match SCHEMA_EMBEDDING_MODEL for shared query embeddings")

@@ -75,6 +75,7 @@ For the full setup, frontend build, Docker usage, and configuration details, con
 - [API reference](#api-reference)
 - [Architecture and workflows](#architecture-and-workflows)
 - [Configuration reference](#configuration-reference)
+- [Local model server](#local-model-server)
 - [Security](#security)
 - [Storage, privacy, and access](#storage-privacy-and-access)
 - [Project structure](#project-structure)
@@ -1648,3 +1649,55 @@ For internal ownership, deployment access, or architecture questions, use the ma
 **Internal proprietary software. Not for external distribution unless explicitly authorized by the organization.**
 
 Replace this notice with the organization-approved license or legal statement if a formal internal licensing policy applies.
+## Local model server
+
+All chat/JSON and embedding calls can use Ollama or another OpenAI-compatible server.
+Install/pull a chat model and an embedding model on your server, then copy the commented
+local example from `.env.example` into your runtime `.env`. Set `LLM_BASE_URL` (including
+the API prefix), `LLM_MODEL`, `EMBEDDING_MODEL`, and `EMBEDDING_DIMENSIONS` to your installed
+models' values. `EMBEDDING_BASE_URL` defaults to the chat URL. For Docker Desktop, use
+`host.docker.internal` instead of `localhost` to reach a server running on the host.
+Restart the backend after changing configuration.
+
+No public API key is required with a custom base URL. Missing local keys use a placeholder;
+an old `OPENAI_API_KEY` is never forwarded to custom servers. Set `LLM_API_KEY` and/or
+`EMBEDDING_API_KEY` only if your internal server requires authentication. Both routes use
+the configured endpoints, with no public endpoint fallback. External tracing is disabled
+automatically. An embedding-only custom URL is rejected until a chat URL is supplied.
+
+`LLM_EXTRA_BODY` must be a JSON object and is merged into every chat body.
+`LLM_DROP_PARAMS` removes comma-separated parameter names at the final request boundary.
+Use these only for options supported by your server; thinking controls vary between servers.
+`EMBEDDING_SEND_DIMENSIONS=false` supports fixed-size embedding models while still validating
+the returned length. Local requests send strings directly and batch at `EMBEDDING_BATCH_SIZE`.
+`LLM_STRUCTURED_OUTPUT=true` requests JSON schemas where available; rejection or invalid
+JSON falls back once to the existing parser within the configured retry budget. With zero
+retries, rejection fails without a second model call. `false` uses the existing local
+parsers without sending response formats; unset retains today's formats and validators.
+
+Run these commands from `mongo-db-interrogator` in PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_local_llm
+.\.venv\Scripts\python.exe -m scripts.reembed_knowledge
+# After reviewing the dry-run, explicitly apply the embedding refresh:
+.\.venv\Scripts\python.exe -m scripts.reembed_knowledge --apply
+```
+
+The health check contacts the configured model server only and never accesses MongoDB.
+It checks model availability, JSON (and schemas when enabled), bilingual embedding quality,
+vector lengths, and streamed latency. The re-embedding dry-run reads stored rules and schema
+descriptions and reports model/dimension/hash changes; it calls no models and writes nothing.
+`--apply` refreshes stale definition, original source-question, and collection-description
+vectors in batches without changing rule text/status or confirmation timestamps. Use
+`--force` with either mode to include all current vectors. Back up stored vectors before applying.
+Rules refresh on next context use and descriptions on schema bootstrap; incompatible vectors
+are excluded from similarity comparisons with `model_mismatch` / `length_mismatch` diagnostics.
+
+After changing the embedding model, re-tune similarity thresholds and the context floor
+(`KNOWLEDGE_MIN_SEMANTIC_SIMILARITY`, `KNOWLEDGE_CONTEXT_MIN_SIMILARITY`, `KNOWLEDGE_CONTEXT_FLOOR`,
+and semantic template thresholds), because model score scales differ. This change does not
+alter those settings. Unset options retain the existing chat timeout of 30 seconds and
+one router retry. See [the implementation report](docs/local-model-support.md) for the audit,
+complete configuration defaults, migration list, and offline tests.
+

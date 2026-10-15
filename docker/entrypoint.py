@@ -4,7 +4,10 @@ import sys
 
 
 def main():
-    required = ("OPENAI_API_KEY", "MONGODB_URI", "MONGODB_DATABASE")
+    required = ("MONGODB_URI", "MONGODB_DATABASE")
+    # Keep legacy startup requirements; custom endpoints can use a placeholder.
+    if not any(os.environ.get(name, "").strip() for name in ("LLM_BASE_URL", "OPENAI_BASE_URL", "LLM_API_KEY")):
+        required = ("OPENAI_API_KEY", *required)
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         print("Missing required runtime variables: " + ", ".join(missing), file=sys.stderr)

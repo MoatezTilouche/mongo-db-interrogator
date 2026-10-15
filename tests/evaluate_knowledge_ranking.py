@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agent.config import KNOWLEDGE_EMBEDDING_MODEL, KNOWLEDGE_MIN_SEMANTIC_SIMILARITY, OPENAI_API_KEY
-from langchain_openai import OpenAIEmbeddings
+from agent.config import KNOWLEDGE_EMBEDDING_MODEL, KNOWLEDGE_MIN_SEMANTIC_SIMILARITY
+from agent.client_factory import get_embedding_client
 from services.knowledge_retriever import KnowledgeRetriever, _cosine
 
 
@@ -32,8 +32,9 @@ def evaluate():
         "multiple_feedback_rules": "show failed orders excluding retry status X and cancelled retries",
         "multilingual_paraphrase": "affiche les commandes en échec",
     }
-    provider = OpenAIEmbeddings(model=KNOWLEDGE_EMBEDDING_MODEL, api_key=OPENAI_API_KEY,
-                               request_timeout=20, max_retries=0)
+    provider = get_embedding_client(KNOWLEDGE_EMBEDDING_MODEL,
+                                   legacy_options={"request_timeout": 20, "max_retries": 0},
+                                   purpose="knowledge_ranking_evaluation")
     vectors = provider.embed_documents([*texts.values(), *questions.values()])
     records = []
     for index, (key, text) in enumerate(texts.items()):

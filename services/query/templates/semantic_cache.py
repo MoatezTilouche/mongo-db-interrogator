@@ -129,7 +129,13 @@ class SemanticTemplateCache:
             logger.info("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
             eligible = []
             for document in documents:
-                if template_entity_mismatch(document, question):
+                if document.get("embedding_model") != SCHEMA_EMBEDDING_MODEL:
+                    logger.info("template_search_rejected request_id=%s template_id=%s reason=model_mismatch",
+                                current_request_id(), document.get("template_id"))
+                elif len(document.get("embedding") or []) != len(vector):
+                    logger.info("template_search_rejected request_id=%s template_id=%s reason=length_mismatch",
+                                current_request_id(), document.get("template_id"))
+                elif template_entity_mismatch(document, question):
                     logger.info("template_search_rejected request_id=%s template_id=%s reason=entity_mismatch",
                                 current_request_id(), document.get("template_id"))
                 else:

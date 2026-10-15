@@ -25,7 +25,7 @@ class SchemaCacheRepository:
         # which would corrupt vectors and schemas with more than 200 fields.
         entry_keys = {"fingerprint", "fields", "description", "aliases", "relationships",
                       "search_text", "embedding", "embedding_model", "enrichment_model",
-                      "enrichment_status"}
+                      "enrichment_status", "dimensions", "embedding_text_hash"}
         return {
             "database": record.get("database"),
             "schema_version": record.get("schema_version"),
@@ -46,12 +46,16 @@ class SchemaCacheRepository:
             raise ValueError("Unexpected schema cache document key")
         allowed_entry_keys = {"fingerprint", "fields", "description", "aliases", "relationships",
                               "search_text", "embedding", "embedding_model", "enrichment_model",
-                              "enrichment_status"}
+                              "enrichment_status", "dimensions", "embedding_text_hash"}
         for entry in (document.get("collections") or {}).values():
             if not isinstance(entry, dict) or not set(entry) <= allowed_entry_keys:
                 raise ValueError("Unexpected schema cache collection metadata")
         document["_id"] = database_name
         self._collection().replace_one({"_id": database_name}, encode_record(document), upsert=True)
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """Read all stored database description indexes for operator re-embedding."""
+        return [decode_record(record) for record in self._collection().find({})]
 
     def invalidate(self, database_name: str | None = None) -> int:
         collection = self._collection()

@@ -55,3 +55,14 @@ def stale_reason(record, text, model, dimensions=None, prefix=""):
     if record[keys[2]] != text_hash(text):
         return "text_hash_changed"
     return None
+
+
+def schema_embedding_fresh(entry, model, dimensions=None, text=None):
+    """Legacy schema records use search_text itself as their text fingerprint."""
+    vector = entry.get("embedding") or []
+    return (bool(vector) and entry.get("embedding_model") == model
+            and (dimensions is None or len(vector) == dimensions)
+            and entry.get("dimensions", len(vector)) == len(vector)
+            and (text is None or entry.get("search_text") == text)
+            and (not entry.get("embedding_text_hash")
+                 or entry["embedding_text_hash"] == text_hash(text if text is not None else entry.get("search_text", ""))))

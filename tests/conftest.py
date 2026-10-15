@@ -17,3 +17,12 @@ def block_external_learning_services(monkeypatch):
 
     monkeypatch.setattr(mongo, "get_client", forbidden)
     monkeypatch.setattr(llm_router, "_embedding_client", forbidden)
+    # Block HTTP transports, preserving TestClient's in-process ASGI transport
+    # and Windows asyncio's internal socketpair setup.
+    import httpx
+    import requests
+    import urllib.request
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", forbidden)
+    monkeypatch.setattr(requests.sessions.Session, "request", forbidden)
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden)

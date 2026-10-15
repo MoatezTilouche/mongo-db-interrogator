@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from typing import Any
 from pydantic import ValidationError
@@ -17,6 +18,8 @@ from agent.config import (
 from agent.llm_structured import parse_json_from_text
 from agent.token_usage import get_token_usage_callback
 from agent.telemetry import record_attempt, current_request_id
+from agent.client_factory import (get_chat_client, get_embedding_client, get_config,
+                                  schema_response_format, backoff, custom_endpoint_active, cache_identity, EmbeddingClient)
 
 logger = logging.getLogger(__name__)
 
@@ -38,50 +41,51 @@ class StructuredOutputError(ValueError):
 
 class LLMRouter:
     def __init__(self) -> None:
-        self._clients: dict[str, Any] = {}
-        self._embedding_clients: dict[tuple[str, int | None], Any] = {}
+        self._clients: dict[tuple, Any] = {}
+        self._embedding_clients: dict[tuple, Any] = {}
 
     def _client(self, model: str) -> Any:
-        if model in self._clients:
-            return self._clients[model]
+        identity = (model, cache_identity(get_config(api_key=OPENAI_API_KEY,
+                    timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES)))
+        if identity in self._clients:
+            return self._clients[identity]
 
         callback = get_token_usage_callback()
         callbacks = [callback] if callback else None
-        if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required")
-        from langchain_openai import ChatOpenAI
-
-        client = ChatOpenAI(
-            model=model,
-            api_key=OPENAI_API_KEY,
-            timeout=LLM_TIMEOUT_SECONDS,
-            max_retries=0,
-            callbacks=callbacks,
-        )
-        self._clients[model] = client
+        client = get_chat_client(model, api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS,
+                                 retries=LLM_MAX_RETRIES, callbacks=callbacks)
+        self._clients[identity] = client
         return client
 
     def _embedding_client(self, model: str | None = None, dimensions: int | None = None) -> Any:
         model = model or SCHEMA_EMBEDDING_MODEL
         dimensions = SCHEMA_EMBEDDING_DIMENSIONS if dimensions is None else dimensions
-        identity = (model, dimensions)
+        identity = (model, dimensions, cache_identity(get_config(api_key=OPENAI_API_KEY, dimensions=dimensions)))
         if identity in self._embedding_clients:
             return self._embedding_clients[identity]
-        if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required")
-        from langchain_openai import OpenAIEmbeddings
-
-        options = {"dimensions": dimensions} if dimensions is not None else {}
-        client = OpenAIEmbeddings(model=model, api_key=OPENAI_API_KEY, **options)
+        client = get_embedding_client(model, dimensions, api_key=OPENAI_API_KEY)
         self._embedding_clients[identity] = client
         return client
 
     def embed_documents(self, texts: list[str], model: str | None = None,
                         dimensions: int | None = None) -> list[list[float]]:
         model = model or SCHEMA_EMBEDDING_MODEL
+        config = get_config(api_key=OPENAI_API_KEY, dimensions=dimensions)
+        model = config.embedding_model or model
         started = time.perf_counter()
-        vectors = self._embedding_client(model, dimensions).embed_documents(texts)
+        client = self._embedding_client(model, dimensions)
+        caller = sys._getframe(1)
+        if caller.f_code.co_name == "embed_query" and caller.f_globals.get("__name__") == __name__:
+            caller = caller.f_back
+        purpose = caller.f_globals.get("__name__", "schema_embedding")
+        if isinstance(client, EmbeddingClient):
+            vectors = client.embed_documents(texts, purpose=purpose)
+        else:
+            vectors = client.embed_documents(texts)
         try:
+            if custom_endpoint_active():
+                # Token estimates must not trigger tokenizer downloads in local mode.
+                raise LookupError
             import tiktoken
             try:
                 encoding = tiktoken.encoding_for_model(model)
@@ -91,9 +95,7 @@ class LLMRouter:
         except Exception:
             input_tokens = sum(max(1, len(text) // 4) for text in texts)
         from agent.telemetry import record_embedding
-        record = record_embedding(model, input_tokens, (time.perf_counter() - started) * 1000)
-        logger.info("embedding model=%s input_tokens=%d latency_ms=%.1f request_id=%s",
-                    model, input_tokens, record["latency_ms"], current_request_id())
+        record_embedding(model, input_tokens, (time.perf_counter() - started) * 1000)
         return vectors
 
     def embed_query(self, text: str, model: str | None = None) -> list[float]:
@@ -176,19 +178,30 @@ class LLMRouter:
         except KeyError as exc:
             raise ValueError(f"Unknown LLM role: {role}") from exc
 
+        config = get_config(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES)
+        model = config.chat_model or model
+
         from agent.output_schemas import GeneratedQuery, QueryContext
         query_contract = role in {"query_generator", "repair"} and structured_output_schema is GeneratedQuery
         context_contract = role == "query_context" and structured_output_schema is QueryContext
         request_messages = list(messages)
         format_retries = 0
         retry_count = 0
-        for attempt in range(LLM_MAX_RETRIES + 1):
+        structured_fallback = False
+        for attempt in range(config.retries + 1):
             retry_count = attempt
             started = time.perf_counter()
             response = None
+            using_schema = False
             try:
                 client = self._client(model)
-                if role == "feedback_analysis" and hasattr(structured_output_schema, "feedback_response_format"):
+                response_format = schema_response_format(structured_output_schema) if config.structured_output is True else None
+                if structured_fallback or config.structured_output is False:
+                    pass  # Existing local parser/validators handle the plain response.
+                elif response_format:
+                    client = client.bind(response_format=response_format)
+                    using_schema = "response_format" not in config.drop_params
+                elif role == "feedback_analysis" and hasattr(structured_output_schema, "feedback_response_format"):
                     # Bind per invocation, leaving other roles' settings intact.
                     client = client.bind(response_format=structured_output_schema.feedback_response_format())
                 elif query_contract or context_contract:
@@ -198,19 +211,31 @@ class LLMRouter:
                 response = client.invoke(request_messages)
                 if structured_output_schema is not None:
                     self._validate_structured(getattr(response, "content", "") or "", structured_output_schema)
-                logger.info(
-                    "llm role=%s model=%s fallback_used=%s retry_count=%d latency_ms=%.1f request_id=%s",
-                    role, model, False, retry_count,
-                    (time.perf_counter() - started) * 1000,
-                    current_request_id(),
-                )
                 return response
             except Exception as exc:
+                status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+                if using_schema and not structured_fallback and (
+                        isinstance(exc, StructuredOutputError) or status in {400, 415, 422}):
+                    structured_fallback = True
+                    logger.warning("structured_output_fallback role=%s model=%s retry_count=%d request_id=%s",
+                                   role, model, attempt, current_request_id())
+                    # Reparse the same response first, with the existing repair parser.
+                    # Rejection/invalid output consumes a retry, never an extra call.
+                    if response is not None:
+                        try:
+                            self._validate_structured(getattr(response, "content", "") or "", structured_output_schema)
+                            return response
+                        except StructuredOutputError:
+                            pass
+                    if attempt < config.retries:
+                        continue
+                    if not isinstance(exc, StructuredOutputError):
+                        raise LLMRouterError(f"LLM structured output rejected for {role}", role=role) from None
                 recoverable = self._is_recoverable(exc)
                 if not recoverable:
                     raise
                 if isinstance(exc, StructuredOutputError) and (query_contract or context_contract) and format_retries == 0 \
-                        and attempt < LLM_MAX_RETRIES and self._finish_reason(response) != "content_filter" \
+                        and attempt < config.retries and self._finish_reason(response) != "content_filter" \
                         and not (getattr(response, "additional_kwargs", None) or {}).get("refusal"):
                     from langchain_core.messages import HumanMessage
                     format_retries += 1
@@ -237,14 +262,9 @@ class LLMRouter:
                     logger.warning("llm structured_retry role=%s model=%s retry_count=%d detail=%s request_id=%s",
                                    role, model, attempt + 1, str(exc), current_request_id())
                     continue
-                if attempt < LLM_MAX_RETRIES and not isinstance(exc, StructuredOutputError):
+                if attempt < config.retries and not isinstance(exc, StructuredOutputError):
+                    backoff(attempt)
                     continue
-                logger.warning(
-                    "llm failure role=%s model=%s fallback_used=%s retry_count=%d latency_ms=%.1f reason=%s request_id=%s",
-                    role, model, False, retry_count,
-                    (time.perf_counter() - started) * 1000, type(exc).__name__,
-                    current_request_id(),
-                )
                 message = f"OpenAI request failed for {role} ({type(exc).__name__})"
                 if isinstance(exc, StructuredOutputError):
                     finish_reason = self._finish_reason(response)
@@ -263,7 +283,11 @@ class LLMRouter:
                 record["finish_reason"] = self._finish_reason(response)
                 record["retry_count"] = attempt
                 record["structured_output_retries"] = format_retries
-                logger.debug("llm telemetry=%s", record)
+                record["structured_output_fallback"] = structured_fallback
+                logger.info("llm role=%s purpose=%s model=%s host=%s latency_ms=%.1f prompt_tokens=%s "
+                            "completion_tokens=%s retry_count=%d fallback_used=False structured_output_fallback=%s request_id=%s",
+                            role, role, model, config.host(), record["latency_ms"], record["input_tokens"],
+                            record["output_tokens"], attempt, structured_fallback, current_request_id())
         raise LLMRouterError(f"OpenAI request failed for {role}")
 
 

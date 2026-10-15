@@ -71,6 +71,10 @@ class KnowledgeRepository:
             cursor = cursor.limit(limit)
         return list(cursor)
 
+    def list_all(self) -> list[dict[str, Any]]:
+        """Operator re-embedding includes inactive candidates without changing status."""
+        return list(self._collection().find({}))
+
     def save_embedding_if_missing(self, knowledge_id: str, vector: list[float], model: str) -> None:
         self._collection().update_one(
             {"_id": knowledge_id, "$or": [{"embedding": {"$exists": False}}, {"embedding": []}]},

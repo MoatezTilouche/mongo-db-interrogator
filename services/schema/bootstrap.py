@@ -22,6 +22,7 @@ from agent.config import (
     SCHEMA_ENRICHMENT_BATCH_SIZE,
     SCHEMA_ENRICHMENT_MODEL,
     SCHEMA_EMBEDDING_MODEL,
+    SCHEMA_EMBEDDING_DIMENSIONS,
     SCHEMA_REBUILD_ON_STARTUP,
 )
 from agents.schema_enrichment_agent import SchemaEnrichmentAgent
@@ -31,6 +32,7 @@ from database.schema_cache_repository import SchemaCacheRepository
 from database.schema_inspector import inspect_database_schema, invalidate_cache
 from services.schema_indexer import SchemaIndexer
 from services.schema_retriever import SchemaRetriever
+from services.knowledge_embeddings import schema_embedding_fresh, embedding_fields
 
 logger = logging.getLogger("services.schema_bootstrap_service")
 
@@ -185,8 +187,9 @@ class SchemaBootstrapService:
             ))
             models_match = bool(cached and all(
                 item.get("enrichment_model") == SCHEMA_ENRICHMENT_MODEL
-                and item.get("embedding_model") == SCHEMA_EMBEDDING_MODEL
-                for item in cached.get("collections", {}).values()
+                and schema_embedding_fresh(item, SCHEMA_EMBEDDING_MODEL, SCHEMA_EMBEDDING_DIMENSIONS,
+                                           _search_text(name, item))
+                for name, item in cached.get("collections", {}).items()
             ))
             if cached_valid and cache_complete and models_match and not rebuild:
                 catalog = {"database": database_name, "schema_version": version,
@@ -255,9 +258,8 @@ class SchemaBootstrapService:
                     "enrichment_status": enrichment.get("enrichment_status", "enriched"),
                 }
                 entry["search_text"] = _search_text(name, entry)
-                if (old_entry and old_entry.get("search_text") == entry["search_text"]
-                        and old_entry.get("embedding_model") == SCHEMA_EMBEDDING_MODEL
-                        and old_entry.get("embedding")):
+                if (old_entry and schema_embedding_fresh(old_entry, SCHEMA_EMBEDDING_MODEL,
+                                                        SCHEMA_EMBEDDING_DIMENSIONS, entry["search_text"])):
                     entry["embedding"] = old_entry["embedding"]
                 else:
                     entry["embedding"] = []
@@ -268,9 +270,8 @@ class SchemaBootstrapService:
             for name, entry in list(stale_collections.items()):
                 entry["search_text"] = _search_text(name, entry)
                 old_entry = old_collections.get(name)
-                if (old_entry and old_entry.get("search_text") == entry["search_text"]
-                        and old_entry.get("embedding_model") == SCHEMA_EMBEDDING_MODEL
-                        and old_entry.get("embedding")):
+                if (old_entry and schema_embedding_fresh(old_entry, SCHEMA_EMBEDDING_MODEL,
+                                                        SCHEMA_EMBEDDING_DIMENSIONS, entry["search_text"])):
                     entry["embedding"] = old_entry["embedding"]
                 elif not any(candidate[0] == name for candidate in embedding_items):
                     entry["embedding"] = []
@@ -280,7 +281,8 @@ class SchemaBootstrapService:
             try:
                 vectors, embedding_calls = self.schema_indexer.build(embedding_items)
                 for name, vector in vectors.items():
-                    stale_collections[name]["embedding"] = vector
+                    stale_collections[name].update(embedding_fields(vector, stale_collections[name]["search_text"],
+                                                                    SCHEMA_EMBEDDING_MODEL))
                 if embedding_items:
                     logger.info("schema_embeddings_created collections=%d calls=%d model=%s",
                                 len(embedding_items), embedding_calls, SCHEMA_EMBEDDING_MODEL)

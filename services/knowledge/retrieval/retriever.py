@@ -33,6 +33,7 @@ from agent.config import (
 )
 from database.knowledge_repository import KnowledgeRepository
 from agent.telemetry import current_request_id
+from agent.client_factory import custom_endpoint_active
 from database.record_safety import safe_record
 from services.knowledge_embeddings import vector_valid
 from services.knowledge_keywords import KeywordIndex, normalize
@@ -88,7 +89,14 @@ class KnowledgeRetriever:
         for record in records:
             knowledge_id = str(record.get("_id", ""))
             source = record.get("source") or "manual"
-            semantic = _cosine(query_embedding or [], record.get("embedding") or [])
+            vector = record.get("embedding") or []
+            stored_model = record.get("embedding_model")
+            vector_reason = None
+            if stored_model != KNOWLEDGE_EMBEDDING_MODEL and (stored_model is not None or custom_endpoint_active()):
+                vector_reason = "model_mismatch"
+            elif query_embedding and isinstance(vector, (list, tuple)) and vector and len(vector) != len(query_embedding):
+                vector_reason = "length_mismatch"
+            semantic = None if vector_reason else _cosine(query_embedding or [], vector)
             collections = _references(record.get("collections", []))
             fields = _references(record.get("fields", []))
             rejection = None
@@ -112,8 +120,8 @@ class KnowledgeRetriever:
                 compatible_names = overlap if collections else candidate_names
                 if fields - allowed_fields:
                     rejection = "unknown_field"
-                elif record.get("embedding_model") not in (None, KNOWLEDGE_EMBEDDING_MODEL):
-                    rejection = "embedding_model_mismatch"
+                elif vector_reason:
+                    rejection = vector_reason
                 elif semantic is None:
                     rejection = "embedding_unavailable"
                 elif semantic < KNOWLEDGE_MIN_SEMANTIC_SIMILARITY:

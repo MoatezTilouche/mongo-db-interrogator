@@ -1,6 +1,7 @@
 """Knowledge selection and diagnostics for query context."""
 from __future__ import annotations
 from typing import Any
+from agent.client_factory import custom_endpoint_active
 
 def rules_for_context(self, question_embedding, schema_candidates, full_schema=None, *,
                       records=None, threshold=None, top_k=None, question=None,
@@ -76,7 +77,10 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
                 continue
             vector = record.get(prefix + "embedding")
             reason = None
-            if record.get(prefix + "embedding_model") not in (None, KNOWLEDGE_EMBEDDING_MODEL):
+            stored_model = record.get(prefix + "embedding_model")
+            original_model = original_record.get(prefix + "embedding_model")
+            if (stored_model != KNOWLEDGE_EMBEDDING_MODEL and (stored_model is not None or custom_endpoint_active())) \
+                    or (not vector and original_model is not None and original_model != KNOWLEDGE_EMBEDDING_MODEL):
                 reason = "model_mismatch"
             elif not isinstance(vector, (list, tuple)) or not vector or not question_embedding:
                 original_vector = original_record.get(prefix + "embedding")
