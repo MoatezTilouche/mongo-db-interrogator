@@ -9,12 +9,26 @@ from services.profiling.config import excluded_field
 
 _lock = RLock()
 _profiles = {}
+_profile_labels = {}
 
 
 def publish_profiles(database_name, collections):
     with _lock:
         _profiles[database_name] = {name: deepcopy(entry["facts"]) for name, entry in collections.items()
                                     if entry.get("facts")}
+        _profile_labels[database_name] = {name: {
+            "description": (entry.get("generated") or {}).get("description", entry.get("description", "")),
+            "aliases": deepcopy((entry.get("generated") or {}).get("aliases", entry.get("aliases", [])))}
+            for name, entry in collections.items() if entry.get("facts")}
+
+
+def get_profile_prompt_metadata(collection):
+    """Already-published generated labels for prompt collection selection only."""
+    from agent.config import MONGODB_DATABASE
+    with _lock:
+        if collection not in _profiles.get(MONGODB_DATABASE, {}):
+            return {}
+        return deepcopy(_profile_labels.get(MONGODB_DATABASE, {}).get(collection, {}))
 
 
 def get_profile(collection):

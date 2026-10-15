@@ -102,7 +102,7 @@ def _client_number(name, default, convert):
     except ValueError:
         return default
 
-LLM_TIMEOUT_SECONDS = _client_number("LLM_TIMEOUT_SECONDS", 530, float)
+LLM_TIMEOUT_SECONDS = _client_number("LLM_TIMEOUT_SECONDS", 150, float)
 LLM_MAX_RETRIES = _client_number("LLM_MAX_RETRIES", 1, int)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 

@@ -20,6 +20,11 @@ SECRET = "svq_secret_859"
 
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
+    # These assertions cover the legacy facts presentation and its switches.
+    # Per-question defaults have their own synthetic prompt-selection suite.
+    monkeypatch.setenv("SCHEMA_PRUNE_ENABLED", "false")
+    monkeypatch.setenv("RULE_GATING_MODE", "off")
+    monkeypatch.setenv("GENERATOR_COLLECTION_GATE", "off")
     import services.profiling.accessors as accessors
     import services.value_catalog as catalog
     import agent.config as config

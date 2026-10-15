@@ -147,4 +147,6 @@ class ValidatorAgent:
             normalized.setdefault("filter", {})
             _validate_filter_fields(normalized["filter"], known_fields)
 
-        return validate_profile_query(normalized, profile_lookup)
+        validated = validate_profile_query(normalized, profile_lookup)
+        from services.query.prompt_selection.pruning import log_fields_outside_prompt
+        return log_fields_outside_prompt(validated, schema_spec)

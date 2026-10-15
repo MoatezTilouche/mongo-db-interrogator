@@ -172,6 +172,7 @@ class OrchestratorAgent:
                 question, selected_collections, query_context.get("fields", {}),
                 full_schema=catalog, records=applicable_records, user_preferences=preferences,
                 context_rules=knowledge_candidates,
+                **({"question_embedding": question_embedding} if question_embedding is not None else {}),
             )
             applied_knowledge = generator_rules["knowledge"]
             preferences = generator_rules["user_preferences"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 def rules_for_generator(self, question, selected_collections, selected_fields, *,
-                        full_schema, records=None, user_preferences=None, context_rules=None):
+                        full_schema, records=None, user_preferences=None, context_rules=None, question_embedding=None):
     """Preserve context selections, then add applicable scoped supplements."""
     from services.knowledge.retrieval.retriever import (
         Counter,
@@ -133,6 +133,37 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         pool = filtered
     ordered = sorted(self._resolve(pool), key=lambda item: (
         priority(item), -confidence(item), -recency(item), item["knowledge_id"]))
+    from services.query.prompt_selection.config import PromptSelectionConfig
+    prompt_config = PromptSelectionConfig.from_env()
+    gate_order = None
+    if prompt_config.rule_mode != "off" and any(get_profile(name) is not None for name in names):
+        from services.query.prompt_selection.builder import prepare_relevance
+        from services.query.prompt_selection.gates import gate_rules
+        from services.query.values.matching import normalize_for_match
+        from services.knowledge.retrieval.retriever import _cosine, KNOWLEDGE_EMBEDDING_MODEL, custom_endpoint_active
+        originals = {str(record.get("_id", record.get("knowledge_id", ""))): record
+                     for record in [*(records or []), *(context_rules or [])]}
+        candidates = [*preserved, *ordered]
+        for item in candidates:
+            record = originals.get(item["knowledge_id"], {})
+            scores = []
+            for prefix in ("", "source_question_"):
+                stored_model = record.get(prefix + "embedding_model", record.get("embedding_model"))
+                if stored_model == KNOWLEDGE_EMBEDDING_MODEL or (stored_model is None and not custom_endpoint_active()):
+                    score = _cosine(question_embedding, record.get(prefix + "embedding"))
+                    if score is not None:
+                        scores.append(score)
+            if scores:
+                item["_gate_similarity"] = max(scores)
+        profiles, constraints, _, relevance = prepare_relevance(
+            question, sorted(names), candidates, user_preferences or [], config=prompt_config)
+        kept = gate_rules(candidates, question, sorted(names), relevance, profiles, prompt_config, constraints)
+        preserved = [item for item in preserved if any(item is rule for rule in kept)]
+        ordered = [item for item in kept if not any(item is rule for rule in preserved)]
+        if prompt_config.rule_mode == "on":
+            gate_order = {id(item): index for index, item in enumerate(kept)}
+            for item in [*preserved, *ordered]:
+                item["_prompt_gate_question"] = normalize_for_match(question)[0]
     counts = Counter()
     selected = list(preserved)
     effective_limit = max(KNOWLEDGE_GENERATOR_TOP_K, len(preserved))
@@ -154,6 +185,8 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         selected.append(item)
         if rule_type(item) == "coded_value":
             counts.update(coded_targets)
+    if gate_order is not None:
+        selected.sort(key=lambda item: gate_order[id(item)])
     self._log_selected("generator", selected)
     for item in selected:
         item.pop("_resolved_targets", None)

@@ -1,0 +1,50 @@
+{
+  "baseline": {
+    "passed": 1006,
+    "failed": 20
+  },
+  "full_suite": {
+    "passed": 1049,
+    "failed": 20,
+    "note": "Precedes final refinement-reference refactor"
+  },
+  "final_focused": {
+    "passed": 236,
+    "failed": 0,
+    "new_selection_tests": 44
+  },
+  "failed_tests": [
+    "tests.test_feedback_learning.test_learned_sort_is_passed_to_agents_applied_and_saved_in_history",
+    "tests.test_feedback_learning.test_feedback_agent_never_promotes_potential_global_rule",
+    "tests.test_feedback_learning.test_potential_global_is_stored_without_changing_business_data",
+    "tests.test_feedback_learning.test_query_context_failure_is_persisted",
+    "tests.test_knowledge_context_embeddings.test_query_and_rule_embedding_clients_share_configured_dimensions",
+    "tests.test_llm_router.test_openai_client_does_not_set_an_output_token_cap",
+    "tests.test_pipeline.test_simple_uses_two_agents_and_skips_summary[Give me 2 customers-find]",
+    "tests.test_pipeline.test_simple_uses_two_agents_and_skips_summary[Find customers from Tunisia-find]",
+    "tests.test_pipeline.test_simple_uses_two_agents_and_skips_summary[Count all customers-count]",
+    "tests.test_pipeline.test_simple_uses_two_agents_and_skips_summary[Show the 5 most expensive products-find]",
+    "tests.test_pipeline.test_complex_uses_context_and_generator_without_planner[Top customers by spending across orders]",
+    "tests.test_pipeline.test_complex_uses_context_and_generator_without_planner[Join customers and orders with $lookup]",
+    "tests.test_pipeline.test_connection_error_does_not_repair",
+    "tests.test_pipeline.test_validation_repair_is_bounded",
+    "tests.test_pipeline.test_generated_aggregation_does_not_invoke_planner",
+    "tests.test_pipeline.test_complex_context_can_select_multiple_collections_without_planner",
+    "tests.test_pipeline.test_deterministic_limit_correction_skips_repair",
+    "tests.test_prompt_output_examples.test_json_examples_match_strict_output_contracts[feedback_analysis-FeedbackAnalysis-2]",
+    "tests.test_structured_diagnostics.test_invalid_plan_collection_fails_before_query_generation",
+    "tests.test_structured_diagnostics.test_valid_plan_collection_is_accepted"
+  ],
+  "existing_prompt_files_unchanged": true,
+  "inline_optimization_instructions_unchanged": true,
+  "flags_off_golden_paths": [
+    "generate",
+    "repair",
+    "optimize"
+  ],
+  "no_profile_golden_paths": [
+    "generate",
+    "repair",
+    "optimize"
+  ]
+}

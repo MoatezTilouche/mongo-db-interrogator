@@ -10,7 +10,7 @@ from services.query.profile_facts import is_date_field, is_safe_path, safe_profi
 from services.query.values.matching import normalize_for_match
 
 
-def profile_to_generator_view(selected_schema, question, profile_lookup=None, now=None, fallback_question=None):
+def _legacy_profile_to_generator_view(selected_schema, question, profile_lookup=None, now=None, fallback_question=None):
     config = RuntimeProfileConfig.from_env()
     if not config.facts_enabled or not config.max_chars:
         return ""
@@ -77,3 +77,9 @@ def profile_to_generator_view(selected_schema, question, profile_lookup=None, no
         if len(block) + len(line) + 1 <= config.max_chars:
             block += line + "\n"
     return block if len(block) <= config.max_chars and block != "\nProfile facts:\n" else ""
+
+
+def profile_to_generator_view(selected_schema, question, profile_lookup=None, now=None, fallback_question=None):
+    from services.query.prompt_selection.builder import build_prompt_inputs
+    return build_prompt_inputs(selected_schema, question, profile_lookup=profile_lookup,
+                               now=now, fallback_question=fallback_question)["facts"]

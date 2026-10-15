@@ -1,0 +1,3 @@
+{
+  "aliases": ["string", "str", "text", "number", "numeric", "int", "integer", "int32", "long", "int64", "double", "float", "decimal", "decimal128", "bool", "boolean", "object", "document", "array", "list", "date", "datetime", "timestamp", "objectId", "objectid", "oid", "null", "undefined", "missing", "binary", "binData", "regex", "regexp", "javascript", "symbol", "minKey", "maxKey"]
+}
