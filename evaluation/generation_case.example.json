@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "label_source": "Fictional example of the input format; replace with reviewed questions from your own database.",
+  "now": "2026-10-16T12:00:00+00:00",
+  "timezone": "Europe/Paris",
+  "cases": [
+    {
+      "id": "example_failed_jobs_yesterday",
+      "category": "dates",
+      "question": "Show the latest five failed job events yesterday, returning jobId and createdAt, breaking time ties by jobId ascending.",
+      "required_collections": ["job_events"],
+      "verified": false,
+      "reviewed_by": "",
+      "reviewed_at": "",
+      "review_note": "Fictional: failure is F, createdAt is BSON Date, the day uses Europe/Paris. Do not apply these assumptions to production.",
+      "reference_query": {
+        "operation": "find", "collection": "job_events",
+        "filter": {"status": "F", "createdAt": {"$gte": {"$date": "2026-10-14T22:00:00Z"}, "$lt": {"$date": "2026-10-15T22:00:00Z"}}},
+        "projection": {"_id": 0, "jobId": 1, "createdAt": 1},
+        "sort": [["createdAt", -1], ["jobId", 1]], "limit": 5
+      },
+      "checks": [
+        {"name":"read events","dimension":"shape","any_of":[{"path":"/operation","equals":"find"}]},
+        {"name":"only failure code F","dimension":"filters","any_of":[{"path":"/filter/status","equals":"F"},{"path":"/filter/status","equals":{"$eq":"F"}}]},
+        {"name":"Paris yesterday exact bounds","dimension":"dates","any_of":[{"path":"/filter/createdAt","equals":{"$gte":{"$date":"2026-10-14T22:00:00Z"},"$lt":{"$date":"2026-10-15T22:00:00Z"}}}]},
+        {"name":"only intended predicates","dimension":"filters","any_of":[{"path":"/filter","equals":{"status":"F","createdAt":{"$gte":{"$date":"2026-10-14T22:00:00Z"},"$lt":{"$date":"2026-10-15T22:00:00Z"}}}}]},
+        {"name":"requested projection","dimension":"shape","any_of":[{"path":"/projection","equals":{"_id":0,"jobId":1,"createdAt":1}}]},
+        {"name":"latest first with stable ties","dimension":"shape","any_of":[{"path":"/sort","equals":[["createdAt",-1],["jobId",1]]}]},
+        {"name":"five rows","dimension":"shape","any_of":[{"path":"/limit","equals":5}]}
+      ],
+      "result_order": "ordered",
+      "allow_empty_result": false
+    }
+  ]
+}

@@ -106,11 +106,19 @@ LLM_TIMEOUT_SECONDS = _client_number("LLM_TIMEOUT_SECONDS", 150, float)
 LLM_MAX_RETRIES = _client_number("LLM_MAX_RETRIES", 1, int)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# One OpenAI model for every active agent; no provider or per-role fallback.
-OPENAI_MODEL = os.getenv("LLM_MODEL", "").strip() or os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
-SCHEMA_ENRICHMENT_MODEL = os.getenv("LLM_MODEL", "").strip() or os.getenv("SCHEMA_ENRICHMENT_MODEL", OPENAI_MODEL)
-SCHEMA_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "").strip() or os.getenv("SCHEMA_EMBEDDING_MODEL", "text-embedding-3-small")
-KNOWLEDGE_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "").strip() or os.getenv("KNOWLEDGE_EMBEDDING_MODEL", SCHEMA_EMBEDDING_MODEL)
+# Model names must be configured explicitly. OPENAI_MODEL is a legacy variable
+# name and may point to a local model through LLM_BASE_URL.
+OPENAI_MODEL = os.getenv("LLM_MODEL", "").strip() or os.getenv("OPENAI_MODEL", "").strip()
+SCHEMA_ENRICHMENT_MODEL = (os.getenv("LLM_MODEL", "").strip()
+                           or os.getenv("SCHEMA_ENRICHMENT_MODEL", "").strip() or OPENAI_MODEL)
+SCHEMA_EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL", "").strip()
+                          or os.getenv("SCHEMA_EMBEDDING_MODEL", "").strip())
+KNOWLEDGE_EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL", "").strip()
+                             or os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "").strip() or SCHEMA_EMBEDDING_MODEL)
+if not OPENAI_MODEL:
+    raise ValueError("Set LLM_MODEL or OPENAI_MODEL explicitly; no chat model default is configured")
+if not SCHEMA_EMBEDDING_MODEL:
+    raise ValueError("Set EMBEDDING_MODEL or SCHEMA_EMBEDDING_MODEL explicitly; no embedding model default is configured")
 # Unset preserves the provider's existing default; query and rule vectors share it.
 _local_embedding_dimensions = os.getenv("EMBEDDING_DIMENSIONS", "").strip()
 _embedding_dimensions = _local_embedding_dimensions or os.getenv("SCHEMA_EMBEDDING_DIMENSIONS", "").strip()
