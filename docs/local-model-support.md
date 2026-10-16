@@ -67,12 +67,47 @@ Local chat uses the existing LangChain client with explicit chat-completions
 routing. Local embeddings use the OpenAI SDK already installed through
 `langchain-openai`; they send text strings directly without tokenizer downloads.
 Custom endpoints never receive the old public API key implicitly, never fall back
-to a public endpoint, and disable external tracing. An embedding-only custom URL
+to a public endpoint, and disable external tracing unless explicitly enabled below. An embedding-only custom URL
 requires a custom chat URL too. The Docker entrypoint accepts this configuration.
 
 Each chat attempt and embedding batch logs purpose, model, endpoint host, latency,
 tokens when available, retry count and structured-fallback status. Prompts,
 answers and keys are omitted. Embedding purposes identify their calling component.
+
+## LangSmith tracing with local models
+
+To inspect local-model requests, add these settings to the backend's runtime
+`.env` and restart the backend (also copy the updated tracing code to your VM):
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_ALLOW_LOCAL=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=your_langsmith_api_key
+LANGSMITH_PROJECT=mongodb-interrogator
+```
+
+`LANGSMITH_ALLOW_LOCAL` is an application setting. Its default is `false`, so a
+custom chat or embedding endpoint keeps tracing disabled until you opt in.
+`LANGSMITH_TRACING=false` disables tracing even when local tracing is allowed or
+the older `LANGCHAIN_TRACING_V2` flag is true. Edit the runtime `.env` and restart
+the backend whenever you change these settings; the file is not watched for changes.
+If your VM service or shell also defines these variables, update those values too:
+the existing dotenv loader does not override process environment variables.
+
+Send a query, then open LangSmith's tracing project named `mongodb-interrogator`
+(or your configured project). Expand `orchestrator.run`, then
+`query_context.build`, `query_generator.generate`, and the nested LangChain model
+calls to inspect their inputs, outputs, prompts, and timings. Inspect the generator
+model's messages to see which schema, retrieved rules, and profile facts reached
+generation. `schema_enrichment.enrich` records enrichment calls; a cache hit can
+skip enrichment. Existing decorators cover validation, execution, repair, and
+summary when those stages run. Direct SDK embedding calls do not gain separate
+model spans from this setting.
+
+Inference still runs on Ollama. Instrumented inputs and outputs are exported to
+the configured LangSmith endpoint, which is hosted externally in this example.
+Offline benchmarks continue to disable trace export.
 
 ## JSON and vector safety
 

@@ -1663,7 +1663,11 @@ No public API key is required with a custom base URL. Missing local keys use a p
 an old `OPENAI_API_KEY` is never forwarded to custom servers. Set `LLM_API_KEY` and/or
 `EMBEDDING_API_KEY` only if your internal server requires authentication. Both routes use
 the configured endpoints, with no public endpoint fallback. External tracing is disabled
-automatically. An embedding-only custom URL is rejected until a chat URL is supplied.
+by default. To inspect local requests in LangSmith, set both `LANGSMITH_TRACING=true`
+and `LANGSMITH_ALLOW_LOCAL=true`, configure your LangSmith key/project, and restart
+the backend. Set `LANGSMITH_TRACING=false` and restart to disable it. See
+[local LangSmith tracing](docs/local-model-support.md#langsmith-tracing-with-local-models)
+for setup and inspection steps. An embedding-only custom URL is rejected until a chat URL is supplied.
 
 `LLM_EXTRA_BODY` must be a JSON object and is merged into every chat body.
 `LLM_DROP_PARAMS` removes comma-separated parameter names at the final request boundary.

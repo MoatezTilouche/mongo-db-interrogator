@@ -15,7 +15,8 @@ from agent.llm import LLMRouter, LLMRouterError
 NEW_ENV = ("LLM_BASE_URL", "OPENAI_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "EMBEDDING_BASE_URL",
            "EMBEDDING_API_KEY", "EMBEDDING_MODEL", "EMBEDDING_DIMENSIONS", "LLM_EXTRA_BODY",
            "LLM_DROP_PARAMS", "EMBEDDING_SEND_DIMENSIONS", "EMBEDDING_BATCH_SIZE", "LLM_STRUCTURED_OUTPUT",
-           "LLM_TIMEOUT_SECONDS", "LLM_MAX_RETRIES", "SCHEMA_EMBEDDING_DIMENSIONS")
+           "LLM_TIMEOUT_SECONDS", "LLM_MAX_RETRIES", "SCHEMA_EMBEDDING_DIMENSIONS",
+           "LANGSMITH_ALLOW_LOCAL")
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +30,9 @@ def clean_config(monkeypatch):
     monkeypatch.setattr(llm, "LLM_TIMEOUT_SECONDS", 30)
     monkeypatch.setattr(llm, "LLM_MAX_RETRIES", 1)
     monkeypatch.setattr(factory.time, "sleep", Mock())
+    yield
+    from langsmith.utils import get_env_var
+    get_env_var.cache_clear()
 
 
 def local(monkeypatch):
@@ -255,3 +259,82 @@ def test_local_configuration_disables_automatic_and_decorator_tracing(monkeypatc
     import os
     assert os.environ["LANGSMITH_TRACING"] == "false"
     assert os.environ["LANGCHAIN_TRACING_V2"] == "false"
+
+
+@pytest.mark.parametrize("endpoint", ["LLM_BASE_URL", "OPENAI_BASE_URL", "EMBEDDING_BASE_URL"])
+@pytest.mark.parametrize("master,allow,expected", [
+    ("true", "true", True),
+    ("true", "false", False),
+    ("false", "true", False),
+    ("false", "false", False),
+])
+def test_tracing_policy_for_custom_endpoints(monkeypatch, endpoint, master, allow, expected):
+    import os
+    from langsmith.utils import tracing_is_enabled
+
+    monkeypatch.setenv(endpoint, "http://local-model.test/v1")
+    monkeypatch.setenv("LANGSMITH_TRACING", master)
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGSMITH_ALLOW_LOCAL", allow)
+    assert factory.configure_tracing() is expected
+    assert os.environ["LANGCHAIN_TRACING_V2"] == str(expected).lower()
+    # This is the same predicate LangChain uses to enable automatic LLM tracing.
+    assert tracing_is_enabled() is expected
+
+
+def test_local_tracing_opt_in_calls_instrumented_agents_and_master_switch_disables(monkeypatch):
+    from agent import tracing
+
+    local(monkeypatch)
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_ALLOW_LOCAL", "true")
+    traced_calls = Mock()
+
+    def instrument(**options):
+        def decorate(func):
+            def run(*args, **kwargs):
+                traced_calls(options["name"])
+                return func(*args, **kwargs)
+            return run
+        return decorate
+
+    monkeypatch.setattr(tracing, "_traceable", instrument)
+
+    @tracing.traceable(name="local-test")
+    def action():
+        return 5
+
+    factory.get_config()
+    assert action() == 5
+    traced_calls.assert_called_once_with("local-test")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    assert action() == 5
+    traced_calls.assert_called_once_with("local-test")
+
+
+def test_tracing_legacy_flag_and_master_precedence_without_custom_endpoint(monkeypatch):
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    assert factory.configure_tracing() is True
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    assert factory.configure_tracing() is False
+
+
+def test_master_switch_disables_child_tracing_inside_enabled_context(monkeypatch):
+    from agent import tracing
+    from langsmith import tracing_context
+    from langsmith.utils import tracing_is_enabled
+
+    local(monkeypatch)
+    monkeypatch.setenv("LANGSMITH_ALLOW_LOCAL", "true")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    decorator = Mock(return_value=Mock())
+    monkeypatch.setattr(tracing, "_traceable", decorator)
+
+    @tracing.traceable(name="disabled-child")
+    def action():
+        return tracing_is_enabled()
+
+    with tracing_context(enabled=True):
+        assert action() is False
+    decorator.return_value.return_value.assert_not_called()

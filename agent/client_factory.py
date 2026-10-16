@@ -41,6 +41,34 @@ def _boolean(name, default):
     return value == "true"
 
 
+def configure_tracing():
+    """Apply one tracing policy to app decorators and automatic LangChain spans.
+
+    LANGSMITH_TRACING is the master switch (the older alias is a fallback).
+    Custom endpoints also require explicit consent to export local-model data.
+    Environment-file changes require restarting the backend.
+    """
+    master = "LANGSMITH_TRACING" if os.getenv("LANGSMITH_TRACING", "").strip() else "LANGCHAIN_TRACING_V2"
+    enabled = _boolean(master, False)
+    if custom_endpoint_active():
+        enabled = enabled and _boolean("LANGSMITH_ALLOW_LOCAL", False)
+    # Keep both aliases consistent, including when the legacy flag was true.
+    value = "true" if enabled else "false"
+    os.environ["LANGSMITH_TRACING"] = value
+    os.environ["LANGCHAIN_TRACING_V2"] = value
+    # LangSmith caches environment lookups; do not leave automatic spans enabled
+    # after the application has disabled tracing (or vice versa).
+    try:
+        from langsmith.utils import get_env_var
+    except ImportError:
+        pass
+    else:
+        clear_cache = getattr(get_env_var, "cache_clear", None)
+        if clear_cache is not None:
+            clear_cache()
+    return enabled
+
+
 def _url(name, value):
     if not value:
         return None
@@ -88,10 +116,7 @@ def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None):
     # An embedding-only endpoint must never silently leave chat on a public default.
     if embedding_url and not chat_url:
         raise ClientConfigError("LLM_BASE_URL (or OPENAI_BASE_URL) is required with EMBEDDING_BASE_URL")
-    if custom_endpoint_active():
-        # Includes LangChain's automatic tracing, not just application decorators.
-        os.environ["LANGCHAIN_TRACING_V2"] = "false"
-        os.environ["LANGSMITH_TRACING"] = "false"
+    configure_tracing()
     old_key = legacy.OPENAI_API_KEY if api_key is None else api_key
     chat_key = os.getenv("LLM_API_KEY", "").strip() or ("unused" if chat_url else old_key)
     embedding_key = os.getenv("EMBEDDING_API_KEY", "").strip() or (

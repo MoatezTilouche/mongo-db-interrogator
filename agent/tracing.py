@@ -1,14 +1,17 @@
 """Optional LangSmith tracing with a no-op fallback."""
 from __future__ import annotations
+from contextlib import nullcontext
 from typing import Any, Callable, TypeVar
 from functools import wraps
-from agent.client_factory import custom_endpoint_active
+from agent.client_factory import configure_tracing
 
 F = TypeVar("F", bound=Callable[..., Any])
 try:
     from langsmith import traceable as _traceable
+    from langsmith import tracing_context as _tracing_context
 except Exception:
     _traceable = None
+    _tracing_context = None
 
 
 def traceable(*args: Any, **kwargs: Any):
@@ -17,12 +20,10 @@ def traceable(*args: Any, **kwargs: Any):
             traced = _traceable(*args, **kwargs)(func)
             @wraps(func)
             def call(*call_args, **call_kwargs):
-                if custom_endpoint_active():
-                    import os
-                    os.environ["LANGCHAIN_TRACING_V2"] = "false"
-                    os.environ["LANGSMITH_TRACING"] = "false"
-                    return func(*call_args, **call_kwargs)
-                return traced(*call_args, **call_kwargs)
+                enabled = configure_tracing()
+                context = _tracing_context(enabled=enabled) if _tracing_context else nullcontext()
+                with context:
+                    return (traced if enabled else func)(*call_args, **call_kwargs)
             return call
         return guarded
     def decorator(func: F) -> F:
