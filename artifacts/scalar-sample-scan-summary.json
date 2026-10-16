@@ -1,0 +1,26 @@
+{
+  "completed_at_utc": "2026-10-16T07:46:03.659259+00:00",
+  "collections": 34,
+  "field_paths": 2190,
+  "fields_with_samples": 1574,
+  "sample_values": 5438,
+  "eligible_fields": 1574,
+  "eligible_fields_without_samples": 0,
+  "sample_limit_per_field": 5,
+  "previous_field_paths_preserved": true,
+  "retained_previous_paths": 32,
+  "bounded_gap_lookups": 5,
+  "gaps_with_samples": 5,
+  "partial": true,
+  "partial_causes": [
+    "relationship check cap (34 collections)",
+    "depth cap (5 collections)"
+  ],
+  "empty_collections": 2,
+  "database_metadata_writes": false,
+  "model_calls": false,
+  "validation": {
+    "related_tests_passed": 220,
+    "final_profiling_tests_passed": 71
+  }
+}

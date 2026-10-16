@@ -13,6 +13,7 @@ class FieldProfile:
     kind: Literal["categorical", "identifier", "date", "text", "number", "boolean", "object", "array", "unknown"] = "unknown"
     distinct_estimate: int = 0
     values: list[dict] = field(default_factory=list)
+    sample_values: list[dict] = field(default_factory=list)
     date_format: str | None = None
     date_min: str | None = None
     date_max: str | None = None

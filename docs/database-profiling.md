@@ -77,10 +77,31 @@ date parsing/conversion helper to wire.
 | `SCAN_EXCLUDE_COLLECTIONS` | empty; comma-separated globs |
 | `SCAN_EXCLUDE_FIELDS` | empty; comma-separated globs |
 | `SCAN_STORE_VALUES` | `true` |
+| `SCAN_SAMPLE_VALUES_PER_FIELD` | `5` (`0` disables scalar examples) |
 
 Field exclusions match dotted paths or collection-qualified dotted paths and
 include descendants of an excluded container. The application collection cap,
 `MONGO_MAX_COLLECTIONS`, is also honored. No existing defaults or thresholds changed.
+
+Scans also retain up to five distinct examples per safe scalar field in
+`sample_values`, with counts from the sampled documents. Text, categorical,
+number, boolean and date fields qualify; identifier, PII/excluded, object,
+array and unknown fields do not. Scalar leaf paths inside nested structures
+can qualify. Individual PII-looking observations are also skipped. Examples
+are sorted by frequency then by typed value, and strings longer than
+`SCAN_MAX_VALUE_LENGTH` are shortened with `truncated=true`. Dates use ISO
+strings and Decimal128 values use decimal strings so exports remain JSON-safe.
+Fields without eligible observations retain an empty sample list.
+
+`SCAN_STORE_VALUES=false` disables both categorical values and scalar examples.
+The existing `values` list remains categorical-only. Samples are for inspecting
+profiles; they do not enter model prompts, value matching, structural hashes
+or schema-enrichment cache keys. Existing exports require a new scan to gain
+these examples. A read-only export can be generated without metadata writes:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m scripts.scan_database --output profiles.json
+```
 
 ## Exact description-call input change
 

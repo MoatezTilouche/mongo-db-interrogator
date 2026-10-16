@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 import json
 import hashlib
+import math
 import re
 import time
 
@@ -12,6 +13,7 @@ from bson.decimal128 import Decimal128
 from bson.int64 import Int64
 
 from database.schema_inspector import excluded_collection
+from database.value_codec import to_json_safe
 from services.profiling.config import ScanConfig, excluded_field
 from services.profiling.dates import detect_dates
 from services.profiling.guard import BudgetExceeded, ReadOnlyDatabase
@@ -46,6 +48,30 @@ def _pii(value):
         return True
     return bool(re.fullmatch(r"\+?[\d ()\-.]+", text) and
                 10 <= sum(char.isdigit() for char in text) <= 15)
+
+
+def _scalar_samples(values, config):
+    if not config.store_values or not config.sample_values_per_field:
+        return []
+    counts, originals = Counter(), {}
+    for value in values:
+        if not isinstance(value, (str, bool, int, float, Decimal128, datetime)) or _pii(value):
+            continue
+        if isinstance(value, float) and not math.isfinite(value):
+            continue
+        if isinstance(value, Decimal128) and not value.to_decimal().is_finite():
+            continue
+        key = _key(value)
+        counts[key] += 1
+        originals[key] = value
+    samples = []
+    for key in sorted(counts, key=lambda key: (-counts[key], key))[:config.sample_values_per_field]:
+        value = to_json_safe(originals[key])
+        sample = {"value": value, "count": counts[key]}
+        if isinstance(value, str) and len(value) > config.max_value_length:
+            sample.update(value=value[:config.max_value_length], truncated=True)
+        samples.append(sample)
+    return samples
 
 
 def _warn(profile, message, *, partial=False):
@@ -218,6 +244,8 @@ class DatabaseScanner:
             spec.kind = "number"
         if spec.kind == "identifier" and values:
             spec.pattern = Counter(_shape(value) for value in values).most_common(1)[0][0]
+        if not spec.pii_suspected and spec.kind in {"categorical", "date", "text", "number", "boolean"}:
+            spec.sample_values = _scalar_samples(values, cfg)
         return spec
 
     def _collection(self, name):
@@ -266,6 +294,11 @@ class DatabaseScanner:
                     sample_warning = f"{path}: date range is sample-based"
                     if sample_warning in profile.warnings:
                         profile.warnings.remove(sample_warning)
+        # Mixed-type parents can be sensitive even when scalar children are not.
+        for path, spec in profile.fields.items():
+            ancestors = [".".join(path.split(".")[:index]) for index in range(1, len(path.split(".")))]
+            if any(profile.fields[parent].pii_suspected for parent in ancestors if parent in profile.fields):
+                spec.sample_values = []
         return profile
 
     def _relationships(self, profiles):

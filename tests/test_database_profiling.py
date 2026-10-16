@@ -16,6 +16,7 @@ from services.profiling.guard import ReadOnlyDatabase
 from services.profiling.models import CollectionProfile, FieldProfile, structural_hash
 from services.profiling.prompt import profile_diff, profile_to_prompt_view
 from services.profiling.scanner import DatabaseScanner
+from services.profiling.scanner import _scalar_samples
 
 C1, C2, C3 = "zxq_nimbus_41", "zxq_orbit_73", "zxq_helix_19"
 F1, F2, F3, F4 = "vxq_mark_47", "vxq_link_53", "vxq_mix_61", "vxq_nest_83"
@@ -179,6 +180,90 @@ class FakeDatabase:
 def scan(documents, config=None, **kwargs):
     db = FakeDatabase({C1: documents}, config=config)
     return DatabaseScanner(db, db.config, **kwargs).scan()[C1], db
+
+
+def scalar_documents():
+    return [{"_id": index, F1: SPELLINGS[index % len(SPELLINGS)], F2: index % 2,
+             F3: ("vxq sample prose " if index % 2 else "vxq other prose ") * 10,
+             F4: bool(index % 2), F5: datetime(2026, 10, 1 + index % 2, tzinfo=timezone.utc),
+             F6: [1, 2], F7: {F4: True}, F8: "vxq@example.test"} for index in range(12)]
+
+
+def test_safe_scalar_samples_keep_categories_separate_and_skip_identifiers_containers_pii():
+    profile, _ = scan(scalar_documents())
+    for path in (F1, F2, F3, F4, F5, F7 + "." + F4):
+        assert 0 < len(profile.fields[path].sample_values) <= 5
+    for path in ("_id", F6, F7, F8):
+        assert profile.fields[path].sample_values == []
+    assert profile.fields[F2].kind == "number" and profile.fields[F2].values == []
+    assert profile.fields[F4].kind == "boolean" and profile.fields[F4].values == []
+    assert profile.fields[F5].kind == "date" and profile.fields[F5].values == []
+    assert {row["value"] for row in profile.fields[F1].values} == set(SPELLINGS)
+    assert all(row["truncated"] and len(row["value"]) == 64 for row in profile.fields[F3].sample_values)
+
+
+def test_scalar_sample_caps_frequency_order_and_types_are_deterministic():
+    values = [2, 1, 3, 2, 3, 2, 3, True, False]
+    config = ScanConfig(sample_values_per_field=3)
+    result = _scalar_samples(values, config)
+    assert result == [{"value": 2, "count": 3}, {"value": 3, "count": 3}, {"value": False, "count": 1}]
+    assert result == _scalar_samples(list(reversed(values)), config)
+    assert isinstance(result[-1]["value"], bool)
+    assert _scalar_samples(["vxq@example.test", "001234567891", float("nan"), float("inf"), "vxq_safe"], config) == [
+        {"value": "vxq_safe", "count": 1}]
+
+
+@pytest.mark.parametrize("changes", [{"store_values": False}, {"sample_values_per_field": 0}, {"exclude_fields": (F2, F3)}])
+def test_scalar_sample_storage_switches_and_exclusions(changes):
+    profile, _ = scan(scalar_documents(), ScanConfig(pause_ms=0, recent_sample_size=0, **changes))
+    assert profile.fields[F2].sample_values == [] and profile.fields[F3].sample_values == []
+    if changes.get("store_values") is False:
+        assert all(not spec.sample_values and not spec.values for spec in profile.fields.values())
+
+
+def test_scalar_samples_never_enter_hashes_or_model_views():
+    documents = scalar_documents()
+    full, _ = scan(documents)
+    disabled, _ = scan(documents, ScanConfig(pause_ms=0, recent_sample_size=0, sample_values_per_field=0))
+    assert structural_hash(full) == structural_hash(disabled)
+    assert profile_diff(full.to_dict(), disabled) == profile_diff(full.to_dict(), full)
+    view = profile_to_prompt_view(full)
+    assert "sample_values" not in json.dumps(view)
+    assert full.fields[F3].sample_values[0]["value"] not in json.dumps(view)
+    from services.query.profile_view import profile_to_generator_view
+    facts = full.to_dict()
+    schema = {"collections": {C1: {"fields": {path: list(spec.types) for path, spec in full.fields.items()}}}}
+    prompt = profile_to_generator_view(schema, F3, profile_lookup=lambda _: facts)
+    assert "sample_values" not in prompt and full.fields[F3].sample_values[0]["value"] not in prompt
+
+
+def test_scalar_samples_redact_sensitive_ancestors_and_minority_pii_observations():
+    documents = [{F7: "vxq@example.test", F3: "vxq sample prose " * 10} for _ in range(10)]
+    documents += [{F7: {F4: True}, F3: "vxq@example.test"} for _ in range(2)]
+    profile, _ = scan(documents)
+    assert profile.fields[F7].pii_suspected
+    assert profile.fields[F7 + "." + F4].sample_values == []
+    assert not profile.fields[F3].pii_suspected and profile.fields[F3].sample_values
+    assert "vxq@example.test" not in json.dumps(profile.fields[F3].sample_values)
+
+
+def test_scalar_sample_config_and_json_export_are_offline(monkeypatch, tmp_path):
+    from bson.decimal128 import Decimal128
+    from scripts.scan_database import main
+    monkeypatch.setenv("SCAN_SAMPLE_VALUES_PER_FIELD", "2")
+    assert ScanConfig.from_env().sample_values_per_field == 2
+    with pytest.raises(ValueError):
+        ScanConfig(sample_values_per_field=-1)
+    samples = _scalar_samples([datetime(2026, 10, 1, tzinfo=timezone.utc), Decimal128("1.2345")], ScanConfig())
+    json.dumps(samples, allow_nan=False)
+    assert {row["value"] for row in samples} == {"2026-10-01T00:00:00+00:00", "1.2345"}
+    db = FakeDatabase({C1: scalar_documents()})
+    export = tmp_path / "scalar_profiles.json"
+    assert main(["--output", str(export)], database_provider=lambda: db,
+                repository_factory=Mock(side_effect=AssertionError("No metadata writes")),
+                scanner_factory=lambda database, config: DatabaseScanner(database, config, sleep=lambda _: None)) == 0
+    facts = json.loads(export.read_text(encoding="utf-8"))["collections"][C1]["facts"]
+    assert facts["fields"][F2]["sample_values"] and facts["fields"]["_id"]["sample_values"] == []
 
 
 @pytest.fixture(autouse=True)

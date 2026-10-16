@@ -22,13 +22,14 @@ class ScanConfig:
     exclude_collections: tuple[str, ...] = ()
     exclude_fields: tuple[str, ...] = ()
     store_values: bool = True
+    sample_values_per_field: int = 5
 
     def __post_init__(self):
         for name in ("sample_size", "max_time_ms", "max_depth", "max_paths",
                      "categorical_max_distinct", "max_value_length", "rel_sample_values"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
-        if min(self.recent_sample_size, self.pause_ms, self.rel_max_checks) < 0:
+        if min(self.recent_sample_size, self.pause_ms, self.rel_max_checks, self.sample_values_per_field) < 0:
             raise ValueError("Scan limits cannot be negative")
         if (not math.isfinite(self.total_budget_seconds) or self.total_budget_seconds <= 0
                 or not 0 <= self.rel_min_overlap <= 1):
