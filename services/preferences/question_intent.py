@@ -7,7 +7,7 @@ def result_limit_instruction(text):
         _NUMBER_WORDS,
         re,
     )
-    match = re.search(r"\b(last|latest|first|top|only(?:\s+the)?|show|give|list|get|limit(?:\s+(?:to|of))?|return(?:\s+only(?:\s+the)?)?)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twenty)\b", text or "", re.I)
+    match = re.search(r"\b(last|latest|first|top|only(?:\s+the)?|show|give|list|get|limit(?:\s+(?:to|of))?|return(?:\s+only(?:\s+the)?)?)\s+(?:me\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twenty)\b", text or "", re.I)
     if not match: return None
     token = match[2].lower()
     value = int(token) if token.isdigit() else _NUMBER_WORDS[token]

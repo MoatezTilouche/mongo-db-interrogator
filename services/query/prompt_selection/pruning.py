@@ -37,7 +37,7 @@ def prune_schema_for_prompt(selected_schema, relevance, config):
         collection["fields"] = {path: deepcopy(fields[path]) for path in kept}
         omitted = len(fields) - len(kept)
         if omitted:
-            collection["_prompt_note"] = f"(+{omitted} more fields not shown; any field of the collection is valid)"
+            collection["_prompt_note"] = f"(+{omitted} more fields not shown; use listed fields only, never guess omitted names)"
     return result
 
 

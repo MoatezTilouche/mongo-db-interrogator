@@ -28,12 +28,14 @@ def relevant_profile_facts(schema, question, lookup, relevance, constraints, con
             path = row["field"]
             spec = profile["fields"].get(path)
             reason = None
-            if not spec or not is_safe_path(profile, path):
+            if path not in schema["collections"][name].get("fields", {}):
+                reason = "outside_prompt_schema"
+            elif not spec or not is_safe_path(profile, path):
                 reason = "excluded"
             elif spec.get("kind") in {"array", "object", "unknown"}:
                 reason = "non_scalar_kind"
-            elif is_date_field(spec) and all(reason.startswith("default_") for reason in row["reasons"]):
-                reason = "date_not_requested"
+            elif all(reason.startswith("default_") for reason in row["reasons"]):
+                reason = "no_question_signal"
             elif len(spec.get("values", [])) == 1 and "value" not in row["reasons"] and not tokens(spec["values"][0]["value"]) & question_tokens:
                 reason = "unmatched_singleton"
             if reason:

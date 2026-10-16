@@ -150,7 +150,7 @@ class OrchestratorAgent:
             query_context = context_result["query_context"]
             schema_spec = context_result["schema_spec"]
             query_context, schema_spec, suggested_collections = apply_rule_suggestions(
-                query_context, schema_spec, knowledge_candidates, catalog,
+                query_context, schema_spec, knowledge_candidates, catalog, question=question,
             )
             if "_context_diagnostics" in knowledge_result:
                 self.knowledge_retriever.log_context_diagnostics(

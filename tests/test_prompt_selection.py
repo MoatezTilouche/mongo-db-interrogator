@@ -73,7 +73,7 @@ def test_prunes_three_hundred_fields_without_mutating(case):
     assert len(case["schema"]["collections"][name]["fields"]) == 300
     assert len(fields) == 40
     assert {category, identity, moment} <= set(fields) and private not in fields
-    assert "(+260 more fields not shown; any field of the collection is valid)" == result["schema"][name]["omitted_fields"]
+    assert "(+260 more fields not shown; use listed fields only, never guess omitted names)" == result["schema"][name]["omitted_fields"]
     assert fields[category] == case["schema"]["collections"][name]["fields"][category]
     assert case == before
 
@@ -390,7 +390,7 @@ def test_all_generator_paths_use_prompt_copy(case, monkeypatch, method):
         assert context == old_context
         assert len(json.loads(text.split("\n", 1)[1].split("\nProfile facts:", 1)[0])["query_context"]["fields"][name]) <= 40
     assert build.call_args.args[0] is case["schema"]
-    assert "more fields not shown; any field of the collection is valid" in text
+    assert "more fields not shown; use listed fields only, never guess omitted names" in text
     assert case["schema"] == before
 
 

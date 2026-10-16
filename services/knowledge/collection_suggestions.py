@@ -16,6 +16,7 @@ from agent.telemetry import current_request_id
 from database.record_safety import safe_record
 from services.knowledge_keywords import normalize
 from services.knowledge_rule_policy import rule_type
+from services.query.collection_scope import explicit_collection_scope
 
 logger = logging.getLogger("services.knowledge_collection_suggestions")
 logger.setLevel(logging.INFO)
@@ -31,18 +32,21 @@ def _entity_terms(name, entry):
     return {word[:-1] if word.endswith("s") and len(word) > 3 else word for word in terms}
 
 
-def apply_rule_suggestions(query_context, schema_spec, knowledge, catalog):
+def apply_rule_suggestions(query_context, schema_spec, knowledge, catalog, question=""):
     """Return copied context/schema and actual additions; flags off are a no-op."""
     if not KNOWLEDGE_RULE_SUGGESTED_COLLECTIONS_ENABLED:
         return query_context, schema_spec, []
     context, schema = deepcopy(query_context), deepcopy(schema_spec)
     available = catalog.get("collections", {})
+    explicit = explicit_collection_scope(question, available)
     chosen = list(context.get("collections", []))
     additions = []
     for rule in knowledge:
         if rule_type(rule) not in {"business_rule", "relationship"}:
             continue
         for name in rule.get("collections", []):
+            if explicit and name not in explicit:
+                continue
             if name not in available or name in context.get("collections", []):
                 continue
             if len(additions) >= KNOWLEDGE_RULE_SUGGESTED_COLLECTIONS_MAX:

@@ -286,7 +286,7 @@ def test_view_safety_and_caps(profiles, monkeypatch):
     assert f"{C}.{I} -> {D}.{I}" in view
     assert all(value not in view for value in (P, E, SECRET, "count=", '"count"'))
     monkeypatch.setenv("GENERATOR_FACTS_MAX_VALUES_PER_FIELD", "1")
-    view = profile_to_generator_view(schema(profiles), "today", profiles.get, NOW)
+    view = profile_to_generator_view(schema(profiles), "today " + F, profiles.get, NOW)
     assert sum(value in view for value in VALUES) == 1
     monkeypatch.setenv("GENERATOR_FACTS_MAX_CHARS", "250")
     assert len(profile_to_generator_view(schema(profiles), "today", profiles.get, NOW)) <= 250
@@ -643,11 +643,11 @@ def test_prompts_append_only(profiles, monkeypatch, method):
     monkeypatch.setattr(agent, "_invoke_json", invoke)
     def run():
         if method == "generate":
-            agent.generate("today", schema(profiles))
+            agent.generate("today " + F, schema(profiles))
         elif method == "repair":
-            agent.repair("today", schema(profiles), query(), "Synthetic error")
+            agent.repair("today " + F, schema(profiles), query(), "Synthetic error")
         else:
-            agent.optimize("today", {}, schema(profiles), query(), "today")
+            agent.optimize("today " + F, {}, schema(profiles), query(), "today " + F)
         return invoke.call_args.args[0]
     enabled = run()
     monkeypatch.setenv("GENERATOR_PROFILE_FACTS_ENABLED", "false")

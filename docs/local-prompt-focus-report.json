@@ -1,0 +1,36 @@
+{
+  "method": "Offline replay of the two supplied prompt inputs with current profiles.json. Rule text matched to frozen snapshot metadata where possible; unmatched scopes/fields reconstructed from literal catalog names in the text. No live model, database, embeddings or trace export.",
+  "limitations": "Prompt-size comparison only; reconstructed metadata may differ from the VM. Estimates use cl100k_base, not the Qwen tokenizer, and exclude chat framing, structured-output schema, reasoning and generated tokens.",
+  "rules_metadata_matched": 0,
+  "rules_metadata_reconstructed": 9,
+  "context": {
+    "before_estimated_tokens": 2205,
+    "after_estimated_tokens": 646,
+    "reduction_percent": 70.7,
+    "before_collections": [
+      "orders_proc_hist",
+      "orders",
+      "request_proc_hist_archive",
+      "request_proc_hist",
+      "ordersHist",
+      "manual_recycle",
+      "requestsHist"
+    ],
+    "after_collections": [
+      "orders_proc_hist"
+    ]
+  },
+  "generator": {
+    "before_estimated_tokens": 1648,
+    "after_estimated_tokens": 710,
+    "reduction_percent": 56.9,
+    "before_collections": [
+      "orders_proc_hist",
+      "manual_recycle",
+      "request_proc_hist"
+    ],
+    "after_collections": [
+      "orders_proc_hist"
+    ]
+  }
+}

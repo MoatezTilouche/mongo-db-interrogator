@@ -1,3 +1,5 @@
+For the subsequent fixes to explicit source scope, irrelevant numeric values and local-model instructions, see [focused local prompts](local-prompt-focus.md). The measurements and saved diff below describe the earlier synthetic comparison.
+
 Generator prompts now select schema paths, knowledge rules and stored facts using one shared question-relevance function. Selection changes only serialized prompt data. Full selected schemas and stored profiles remain available to validation, date normalization, value resolution, optimization and execution.
 
 The synthetic measurement is **7,781 → 2,138 tokens**, a **72.5% reduction**, using the project's `cl100k_base` counter. The comparison uses three synthetic collections with 300 paths each, private fields, categorical observations and ten rules. All three collections survive the default collection gate, which only logs.

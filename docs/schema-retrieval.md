@@ -15,6 +15,7 @@ Configuration:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `QUERY_CONTEXT_TOKEN_BUDGET` | 1800 | Target for serialized schema, joins, knowledge and preferences. Instructions and the complete user question are additional. |
+| `QUERY_CONTEXT_MAX_FIELDS_PER_COLLECTION` | 16 | Optional fields per context candidate; explicit/rule/preference/join evidence is retained even above this cap. |
 | `QUERY_CONTEXT_MAX_RELATIONSHIPS` | 8 | Global maximum of compact join hints. Set to zero to disable hints. |
 
 This is a **soft budget**: candidate keys, explicit fields and authoritative rule text/fields take precedence. If they cannot fit, retain them and report `query_context_budget_exceeded=true`; never silently truncate a rule or the user question. Token counts use the local `cl100k_base` tokenizer as an estimate. Provider-reported `query_context_input_tokens` remains the actual usage measure. The original structured context remains available to downstream generation/validation and traces; compaction affects the selection prompt.

@@ -15,10 +15,11 @@ from typing import Any
 
 import tiktoken
 
-from agent.config import QUERY_CONTEXT_MAX_RELATIONSHIPS, QUERY_CONTEXT_TOKEN_BUDGET
+from agent.config import QUERY_CONTEXT_MAX_RELATIONSHIPS, QUERY_CONTEXT_TOKEN_BUDGET, QUERY_CONTEXT_MAX_FIELDS_PER_COLLECTION
 from database.schema_inspector import compact_schema
 from services.schema_retriever import _phrase_present, _tokens
 from services.prompt_context import knowledge_texts, compact_preferences
+from services.query.collection_scope import explicit_collection_scope, scoped_rules
 
 
 def compact_json(value: Any) -> str:
@@ -43,15 +44,22 @@ def _field_mentioned(words: set[str], field: str) -> bool:
 
 class QueryContextCompactor:
     def __init__(self, token_budget: int = QUERY_CONTEXT_TOKEN_BUDGET,
-                 max_relationships: int = QUERY_CONTEXT_MAX_RELATIONSHIPS):
+                 max_relationships: int = QUERY_CONTEXT_MAX_RELATIONSHIPS,
+                 max_fields: int = QUERY_CONTEXT_MAX_FIELDS_PER_COLLECTION):
         self.token_budget = max(1, token_budget)
         self.max_relationships = max(0, max_relationships)
+        self.max_fields = max(1, max_fields)
 
     def build(self, question: str, catalog: dict[str, Any],
               knowledge: list[dict[str, Any]], preferences: list[dict[str, Any]]) -> dict[str, Any]:
         original = {"schema": compact_schema(catalog), "knowledge": knowledge, "preferences": preferences}
         before = count_tokens(compact_json(original))
         words = _tokens(question)
+        explicit = explicit_collection_scope(question, original["schema"])
+        if explicit:
+            original["schema"] = {name: entry for name, entry in original["schema"].items() if name in explicit}
+            knowledge = scoped_rules(knowledge, explicit)
+            preferences = [item for item in preferences if item.get("collection") in explicit]
         rules = knowledge_texts(knowledge)
         defaults = compact_preferences(preferences)
         schema = deepcopy(original["schema"])
@@ -91,18 +99,28 @@ class QueryContextCompactor:
         def size():
             return count_tokens(compact_json(payload))
 
-        # Metadata is expendable before fields or join evidence. All candidate keys
-        # survive, so token savings cannot manufacture better collection recall.
+        join_fields = {name: set() for name in schema}
+        for source, left, target, right in joins:
+            join_fields[source].add(left)
+            join_fields[target].add(right)
+
+        # One restored rule collection must not consume the entire context window.
+        # Preserve required evidence even when it exceeds the per-collection cap.
+        for name, entry in schema.items():
+            protected = required[name] | join_fields[name]
+            optional_fields = [field for field in entry["fields"] if field not in protected]
+            optional_fields.sort(key=lambda field: (
+                -len(words & _tokens(field)), field.count("."), len(field), field))
+            kept = protected | set(optional_fields[:max(0, self.max_fields - len(protected))])
+            entry["fields"] = {field: types for field, types in entry["fields"].items() if field in kept}
+
+        # After bounding oversized candidates, retain useful source hints whenever
+        # they fit. Without explicit source scope, every candidate key survives.
         for key in ("aliases", "description"):
             for entry in reversed(list(schema.values())):
                 if size() <= self.token_budget:
                     break
                 entry.pop(key, None)
-
-        join_fields = {name: set() for name in schema}
-        for source, left, target, right in joins:
-            join_fields[source].add(left)
-            join_fields[target].add(right)
 
         optional = []
         for index, (name, entry) in enumerate(schema.items()):
@@ -140,4 +158,5 @@ class QueryContextCompactor:
             "query_context_budget_exceeded": after > self.token_budget,
             "query_context_relationships_returned": len(joins),
             "query_context_candidates_returned": len(schema),
+            "query_context_explicit_collection_scope": explicit,
         }}

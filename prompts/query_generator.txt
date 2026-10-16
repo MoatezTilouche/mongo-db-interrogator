@@ -4,7 +4,8 @@ Dates in questions are day/month/year. Resolve relative dates ("last week", "sin
 Today: $today
 Question: $question
 Schema: $schema_json
-Operation hint: $operation_hint
+Operation hint (advisory): $operation_hint
+If applicable knowledge requires grouping, latest-per-entity selection, or chronological parsing of string dates, use aggregate even when the hint suggests find. Apply a requested row limit after those steps.
 Constraints: $constraints_json
 User preferences: $user_preferences_json
 Verified active database knowledge (highest retrieval priority first): $database_knowledge_json

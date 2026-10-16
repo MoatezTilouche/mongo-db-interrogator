@@ -10,6 +10,7 @@ from .relevance import compute_question_relevance
 from .gates import gate_rules, collection_relevance
 from .pruning import prune_schema_for_prompt, compact_prompt_schema, remember_prompt_view, query_field_references
 from .facts import relevant_profile_facts
+from services.query.collection_scope import explicit_collection_scope, scoped_rules
 
 
 def prepare_relevance(question, selected, rules=(), preferences=(), profile_lookup=None, config=None, now=None,
@@ -36,14 +37,23 @@ def build_prompt_inputs(selected_schema, question, rules=None, preferences=None,
     from services.query.profile_view import _legacy_profile_to_generator_view
     config = config or PromptSelectionConfig.from_env()
     rules, preferences = list(rules or []), list(preferences or [])
+    full_schema = selected_schema
     names = list(selected_schema.get("collections", {}))
     diagnostics = []
     if config.legacy:
         prompt_schema = deepcopy(selected_schema)
         remember_prompt_view(selected_schema, prompt_schema)
         return {"schema": compact_prompt_schema(prompt_schema), "rules": rules,
+                "preferences": preferences,
                 "facts": _legacy_profile_to_generator_view(selected_schema, question, profile_lookup, now, fallback_question),
                 "relevance": {}, "diagnostics": diagnostics, "selected_schema": prompt_schema, "active": False}
+    explicit = explicit_collection_scope(question, names) if not previous_query else []
+    if explicit:
+        selected_schema = deepcopy(selected_schema)
+        selected_schema["collections"] = {name: entry for name, entry in selected_schema["collections"].items() if name in explicit}
+        names = list(selected_schema["collections"])
+        rules = scoped_rules(rules, names)
+        preferences = [item for item in preferences if item.get("collection") in names]
     # Existing constraints are structured preference signals during refinement.
     # Feed them into the same computation, preserving value/time reasons.
     previous_fields = query_field_references(previous_query, selected_schema) if previous_query else {}
@@ -52,8 +62,8 @@ def build_prompt_inputs(selected_schema, question, rules=None, preferences=None,
         question, names, rules, [*preferences, *inherited], profile_lookup, config, now, fallback_question)
     if not any(profiles.values()):
         prompt_schema = deepcopy(selected_schema)
-        remember_prompt_view(selected_schema, prompt_schema)
-        return {"schema": compact_prompt_schema(prompt_schema), "rules": rules, "facts": "",
+        remember_prompt_view(full_schema, prompt_schema)
+        return {"schema": compact_prompt_schema(prompt_schema), "rules": rules, "preferences": preferences, "facts": "",
                 "relevance": relevance, "diagnostics": diagnostics, "selected_schema": prompt_schema, "active": False}
     for name, info in selected_schema.get("collections", {}).items():
         profile = profiles[name]
@@ -76,8 +86,8 @@ def build_prompt_inputs(selected_schema, question, rules=None, preferences=None,
                                     "reason": "collection_gate" if name not in survivors else "field_cap" if path in eligible else "excluded_or_no_signal"})
     facts = relevant_profile_facts(prompt_schema, question, profiles.get, relevance, constraints, config,
                                    RuntimeProfileConfig.from_env(), diagnostics)
-    remember_prompt_view(selected_schema, prompt_schema)
-    return {"schema": compact_prompt_schema(prompt_schema), "rules": kept_rules, "facts": facts,
+    remember_prompt_view(full_schema, prompt_schema)
+    return {"schema": compact_prompt_schema(prompt_schema), "rules": kept_rules, "preferences": preferences, "facts": facts,
             "relevance": relevance, "diagnostics": diagnostics, "selected_schema": prompt_schema, "active": True}
 
 

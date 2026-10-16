@@ -1,5 +1,6 @@
 """Pure, deterministic question signals shared by all prompt consumers."""
 from collections import Counter
+import re
 from services.profiling.accessors import safe_field
 from services.query.profile_facts import is_date_field
 from services.query.values.matching import normalize_for_match
@@ -12,6 +13,15 @@ class QuestionRelevance(dict):
 
 def tokens(value):
     return set(normalize_for_match(str(value or ""))[1])
+
+
+def value_question_tokens(question):
+    # A requested row count is not evidence that unrelated categorical fields
+    # containing that same number are relevant. Keep separately supplied values.
+    question = re.sub(r"\b((?:give|show|list|return|get|first|last|latest|top|only|limit(?:\s+to)?)\s+(?:me\s+)?)"
+                      r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+                      r"\1", question, flags=re.I)
+    return tokens(question)
 
 
 def rule_scopes(rule, selected):
@@ -59,6 +69,7 @@ def compute_question_relevance(question, selected_collections, profile_lookup, r
     config = config or PromptSelectionConfig()
     names = list(selected_collections)
     question_tokens = tokens(question)
+    value_tokens = value_question_tokens(question)
     profiles = {name: profile_lookup(name) for name in names}
     result = QuestionRelevance({name: [] for name in names})
     result.profiled = frozenset(name for name, profile in profiles.items() if profile is not None)
@@ -78,7 +89,7 @@ def compute_question_relevance(question, selected_collections, profile_lookup, r
             elif tokens(path) & question_tokens:
                 reasons.append("field_token")
             values = [row["value"] for row in spec.get("values", []) if safe and spec.get("kind") == "categorical"
-                      and tokens(row["value"]) and tokens(row["value"]) <= question_tokens]
+                      and tokens(row["value"]) and tokens(row["value"]) <= value_tokens]
             if values:
                 reasons.append("value")
             date = is_date_field(spec)

@@ -59,10 +59,10 @@ class QueryGeneratorAgent:
         return self._invoke_json(render_prompt("query_generator", {
             "today": datetime.now(ZoneInfo("Africa/Tunis")).date().isoformat(),
             "question": question,
-            "schema_json": json.dumps(inputs["schema"], ensure_ascii=False, default=str),
+            "schema_json": json.dumps(inputs["schema"], ensure_ascii=False, separators=(",", ":"), default=str),
             "operation_hint": operation,
             "constraints_json": json.dumps({"read_only": True, "default_limit": None, "preserve_requested_limit": True, "server_enforces_output_cap": True}),
-            "user_preferences_json": json.dumps(compact_preferences(user_preferences), ensure_ascii=False, separators=(",", ":")),
+            "user_preferences_json": json.dumps(compact_preferences(inputs["preferences"]), ensure_ascii=False, separators=(",", ":")),
             "database_knowledge_json": json.dumps(knowledge_texts(inputs["rules"]), ensure_ascii=False, separators=(",", ":")),
             "operation_instructions": operation_instructions(operation),
             "output_contract": output_contract(operation),
@@ -85,7 +85,7 @@ class QueryGeneratorAgent:
         context = {"mode": "optimize", "original_question": original_question,
                    "query_context": prompt_query_context(query_context, inputs["selected_schema"]) if inputs["active"] else query_context, "selected_schema": inputs["schema"],
                    "previous_query": previous_query, "refinement": refinement,
-                   "user_preferences": compact_preferences(user_preferences),
+                   "user_preferences": compact_preferences(inputs["preferences"]),
                    "database_knowledge": knowledge_texts(inputs["rules"])}
         operation = normalize_operation(previous_query.get("operation"))
         return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str)
@@ -125,10 +125,10 @@ class QueryGeneratorAgent:
         inputs = build_prompt_inputs(schema_spec, question, database_knowledge, user_preferences, previous_query=previous_query)
         return self._invoke_json(render_prompt("query_repair", {
             "question": question,
-            "schema_json": json.dumps(inputs["schema"], ensure_ascii=False, default=str),
+            "schema_json": json.dumps(inputs["schema"], ensure_ascii=False, separators=(",", ":"), default=str),
             "query_json": json.dumps(previous_query, ensure_ascii=False, default=str),
             "error": error,
-            "user_preferences_json": json.dumps(compact_preferences(user_preferences), ensure_ascii=False, separators=(",", ":")),
+            "user_preferences_json": json.dumps(compact_preferences(inputs["preferences"]), ensure_ascii=False, separators=(",", ":")),
             "database_knowledge_json": json.dumps(knowledge_texts(inputs["rules"]), ensure_ascii=False, separators=(",", ":")),
             "operation_instructions": operation_instructions(operation),
             "repair_instructions": (render_prompt("query_aggregate_repair", {"operation": operation})

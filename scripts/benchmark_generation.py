@@ -302,7 +302,7 @@ def generate_arm(snapshot, candidate, vector, case, mode, now, max_repairs):
             selected, spec = result["query_context"], result["schema_spec"]
             rules = []
             if augmented:
-                selected, spec, _ = apply_rule_suggestions(selected, spec, knowledge, catalog)
+                selected, spec, _ = apply_rule_suggestions(selected, spec, knowledge, catalog, question=question)
                 rules = retriever.rules_for_generator(question, set(selected["collections"]), selected["fields"],
                     full_schema=catalog, records=[record for record in deepcopy(snapshot["rules"])
                                                  if not rule_entity_mismatch(record, question)],
