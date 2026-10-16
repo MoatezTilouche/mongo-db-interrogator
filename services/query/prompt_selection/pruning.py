@@ -103,3 +103,30 @@ def log_fields_outside_prompt(query, full_schema):
         for field in sorted(fields - view[1].get(collection, set())):
             logger.info("field_outside_pruned_view collection=%s field=%s", collection, field)
     return query
+
+
+def validate_prompt_collection_scope(query, full_schema):
+    """Generation cannot use a source that was removed from its prompt view."""
+    from services.aggregation_validation import QueryValidationError
+    view = _view.get()
+    if view is None or view[0] is not full_schema:
+        return
+    allowed = set(view[1])
+    def check(name):
+        if name not in allowed:
+            raise QueryValidationError("Query uses a collection outside the selected prompt schema",
+                                       code="query_collection_scope")
+    check(query.get("collection"))
+    def stages(pipeline):
+        for stage in pipeline or []:
+            if "$lookup" in stage:
+                check(stage["$lookup"]["from"])
+                stages(stage["$lookup"].get("pipeline"))
+            if "$unionWith" in stage:
+                union = stage["$unionWith"]
+                check(union if isinstance(union, str) else union["coll"])
+                if isinstance(union, dict):
+                    stages(union.get("pipeline"))
+            for child in stage.get("$facet", {}).values():
+                stages(child)
+    stages(query.get("pipeline"))

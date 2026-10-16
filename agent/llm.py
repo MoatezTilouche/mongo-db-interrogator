@@ -193,6 +193,7 @@ class LLMRouter:
             started = time.perf_counter()
             response = None
             using_schema = False
+            response_format_type = "none"
             try:
                 client = self._client(model)
                 response_format = schema_response_format(structured_output_schema) if config.structured_output is True else None
@@ -200,14 +201,25 @@ class LLMRouter:
                     pass  # Existing local parser/validators handle the plain response.
                 elif response_format:
                     client = client.bind(response_format=response_format)
-                    using_schema = "response_format" not in config.drop_params
+                    response_format_type = response_format.get("type", "none")
                 elif role == "feedback_analysis" and hasattr(structured_output_schema, "feedback_response_format"):
                     # Bind per invocation, leaving other roles' settings intact.
                     client = client.bind(response_format=structured_output_schema.feedback_response_format())
+                    response_format_type = "json_schema"
                 elif query_contract or context_contract:
                     # MongoDB filter/parameter maps have dynamic keys, so enforce
                     # a JSON object here and keep the full local schema validator.
                     client = client.bind(response_format={"type": "json_object"})
+                    response_format_type = "json_object"
+                # Report the final request policy, including environment overrides.
+                override = (getattr(config, "extra_body", {}) or {}).get("response_format")
+                if override is not None:
+                    response_format_type = override.get("type") if isinstance(override, dict) else "none"
+                if "response_format" in getattr(config, "drop_params", ()):
+                    response_format_type = "none"
+                if not isinstance(response_format_type, str) or response_format_type not in {"json_schema", "json_object"}:
+                    response_format_type = "none"
+                using_schema = response_format_type == "json_schema"
                 response = client.invoke(request_messages)
                 if structured_output_schema is not None:
                     self._validate_structured(getattr(response, "content", "") or "", structured_output_schema)
@@ -218,11 +230,12 @@ class LLMRouter:
                 # Provider exception messages can contain credentials, request
                 # bodies and URLs. Keep startup diagnostics useful without them.
                 logger.warning("llm_request_failed role=%s model=%s error_type=%s status_code=%s "
-                               "retry_count=%d timeout_seconds=%s request_id=%s",
+                               "retry_count=%d timeout_seconds=%s response_format=%s request_id=%s",
                                role, model, type(exc).__name__, http_status, attempt,
-                               config.timeout, current_request_id())
+                               config.timeout, response_format_type, current_request_id())
                 if using_schema and not structured_fallback and (
-                        isinstance(exc, StructuredOutputError) or status in {400, 415, 422}):
+                        status in {400, 415, 422} or isinstance(exc, StructuredOutputError)
+                        and not (query_contract or context_contract)):
                     structured_fallback = True
                     logger.warning("structured_output_fallback role=%s model=%s retry_count=%d request_id=%s",
                                    role, model, attempt, current_request_id())
@@ -238,6 +251,9 @@ class LLMRouter:
                         continue
                     if not isinstance(exc, StructuredOutputError):
                         raise LLMRouterError(f"LLM structured output rejected for {role}", role=role) from None
+                # Invalid query/context output does not mean the provider rejected
+                # schema support. Keep schema constraints for the one bounded
+                # format-regeneration attempt below, rather than retrying plain text.
                 recoverable = self._is_recoverable(exc)
                 if not recoverable:
                     raise
@@ -254,8 +270,8 @@ class LLMRouter:
                         "Return one JSON object with semantic_intent, template (a query object), and parameters (an object). "
                         "These are sibling keys. Return a query specification, never result rows or text-content blocks. "
                         "Use concrete filter literals; the backend parameterizes them. Never use $param strings. "
-                        "parameters is {} unless template has an explicit limit placeholder {\"$param\":\"limit\"}; "
-                        "then parameters contains only its integer limit value. "
+                        "Write a requested limit as an integer in template.limit or the final top-level $limit. "
+                        "parameters must be {}; the backend creates bindings. Do not emit any $param placeholders. "
                         "Preserve requested filters, ordering and limits; do not invent schema fields."
                     ) if query_contract else (
                         f"The previous response failed JSON validation: {exc}. "
@@ -291,6 +307,7 @@ class LLMRouter:
                 record["retry_count"] = attempt
                 record["structured_output_retries"] = format_retries
                 record["structured_output_fallback"] = structured_fallback
+                record["response_format"] = response_format_type
                 logger.info("llm role=%s purpose=%s model=%s host=%s latency_ms=%.1f prompt_tokens=%s "
                             "completion_tokens=%s retry_count=%d fallback_used=False structured_output_fallback=%s request_id=%s",
                             role, role, model, config.host(), record["latency_ms"], record["input_tokens"],

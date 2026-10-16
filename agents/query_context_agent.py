@@ -14,6 +14,7 @@ from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
 from database.schema_inspector import compact_schema
 from services.query_context_compactor import QueryContextCompactor, compact_json, count_tokens
+from services.query.generation_examples import approved_source_hints_text
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ def _question_required_fields(question, fields):
     words = set(re.findall(r"[a-z0-9_]+", question.casefold()))
     words.update(word[:-1] for word in list(words) if word.endswith("s") and len(word) > 3)
     status_requested = bool(words & {"fail", "failed", "failure", "success", "successful", "completed",
-                                     "pending", "cancelled", "canceled", "refunded", "status", "state"})
+                                     "pass", "passed", "pending", "cancelled", "canceled", "refunded", "status", "state"})
     recent_requested = bool(words & {"latest", "recent", "newest", "oldest", "earliest", "last"})
     date_names = {"executiondate", "createdat", "created_at", "creationdate", "timestamp",
                   "date", "updatedat", "updated_at"}
@@ -73,6 +74,7 @@ class QueryContextAgent:
             "database_knowledge_json": compact_json(compacted["knowledge"]),
             "user_preferences_json": compact_json(compacted["preferences"]),
             "relationship_candidates_json": compact_json(compacted["joins"]),
+            "approved_source_hints": approved_source_hints_text(question, {"collections": available}),
         })
         metrics = compacted["telemetry"]
         metrics["query_context_prompt_tokens_estimate"] = count_tokens(prompt)

@@ -93,6 +93,9 @@ class ValidatorAgent:
             raise QueryValidationError(f"Unknown or missing collection: {collection}")
 
         _validate_no_banned_keys(normalized)
+        from services.query.predicate_validation import validate_predicate
+        if operation != "aggregate":
+            validate_predicate(normalized.get("filter", {}))
         for key, child in _walk_keys(normalized):
             if key in {"$lookup", "$unionWith"}:
                 target = child.get("from") if key == "$lookup" and isinstance(child, dict) else (
@@ -148,5 +151,6 @@ class ValidatorAgent:
             _validate_filter_fields(normalized["filter"], known_fields)
 
         validated = validate_profile_query(normalized, profile_lookup)
-        from services.query.prompt_selection.pruning import log_fields_outside_prompt
+        from services.query.prompt_selection.pruning import log_fields_outside_prompt, validate_prompt_collection_scope
+        validate_prompt_collection_scope(validated, schema_spec)
         return log_fields_outside_prompt(validated, schema_spec)

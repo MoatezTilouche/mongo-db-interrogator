@@ -18,6 +18,15 @@ COLLECTION = QUERY_TEMPLATES_COLLECTION
 EMBEDDING_REPRESENTATION_VERSION = 2
 
 
+def stale_embedding_filter():
+    """A model switch invalidates a vector even when its text version matches."""
+    return {"$or": [
+        {"embedding_representation_version": {"$ne": EMBEDDING_REPRESENTATION_VERSION}},
+        {"embedding_model": {"$ne": SCHEMA_EMBEDDING_MODEL}},
+        {"embedding": {"$exists": False}},
+    ]}
+
+
 def template_validation_schema(schema):
     """Restore the validator envelope for legacy compact collection maps."""
     if not isinstance(schema, dict):
@@ -119,11 +128,11 @@ class QueryTemplateRepository:
         if not isinstance(source_document, dict) or not source_document.get("source_question"):
             return
         search_text = normalized_question(source_document["source_question"])
-        eligibility = {"embedding_representation_version": {"$ne": EMBEDDING_REPRESENTATION_VERSION}} if reembed_stale else {
+        eligibility = stale_embedding_filter() if reembed_stale else {
             "embedding": {"$exists": False}}
-        document = collection.find_one_and_update({"_id": template_id, "source_question": {"$exists": True},
-            **eligibility, "$or": [{"embedding_claim_until": {"$exists": False}},
-                {"embedding_claim_until": {"$lt": now}}]},
+        document = collection.find_one_and_update({"_id": template_id, "source_question": source_document["source_question"],
+            "$and": [eligibility, {"$or": [{"embedding_claim_until": {"$exists": False}},
+                {"embedding_claim_until": {"$lt": now}}]}]},
             {"$set": {"embedding_claim": claim, "embedding_claim_until": now + timedelta(minutes=2),
                 "semantic_search_text": search_text}},
             return_document=ReturnDocument.AFTER)
@@ -146,7 +155,7 @@ class QueryTemplateRepository:
         documents = db[COLLECTION].find({"status": "active", "trusted": {"$ne": False},
             "positive_feedback_count": {"$gt": 0},
             "user_id": DEFAULT_USER_ID, "success_count": {"$gt": 0}, "source_question": {"$exists": True},
-            "embedding_representation_version": {"$ne": EMBEDDING_REPRESENTATION_VERSION}}, {"_id": 1})
+            **stale_embedding_filter()}, {"_id": 1})
         if hasattr(documents, "limit"):
             documents = documents.limit(limit)
         migrated = 0

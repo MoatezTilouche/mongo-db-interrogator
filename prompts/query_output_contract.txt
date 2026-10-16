@@ -3,4 +3,5 @@ Use concrete literal values in $filter_location: IDs, statuses, strings, numbers
 Keep field names/operators, collection, operation, projection, sort, skip and stage structure fixed. Never bind operator objects, $$exists/$$type/$$options structural flags$expression_restrictions. Never use string placeholders such as "$$param" or "$$param.status".
 $parameter_instructions
 $limit_instructions
+Complete envelope syntax example (replace placeholders using the selected schema and current request; copy no example filters or limits): $envelope_example
 semantic_intent is a short description of the requested operation and business meaning with variable values replaced by generic concepts. Preserve filter, projection and ranking distinctions; omit current IDs, dates, limits, credentials and literal values.

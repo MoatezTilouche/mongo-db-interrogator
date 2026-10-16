@@ -5,6 +5,7 @@ Today: $today
 Question: $question
 Schema: $schema_json
 Operation hint (advisory): $operation_hint
+Choose a collection by the requested entity and applicable knowledge, not merely because one of its fields has a matching status. Never invent IDs, dates, filters, joins, fields or collections. Values in facts or examples are observations, not additional requested filters. A request to return three records is a row limit, not a count operation.
 If applicable knowledge requires grouping, latest-per-entity selection, or chronological parsing of string dates, use aggregate even when the hint suggests find. Apply a requested row limit after those steps.
 Constraints: $constraints_json
 User preferences: $user_preferences_json
@@ -12,3 +13,4 @@ Verified active database knowledge (highest retrieval priority first): $database
 When supplied rules conflict, prefer the first applicable rule while preserving explicit current request precedence. Do not merge contradictory rules.
 $operation_instructions
 $output_contract
+$generation_examples

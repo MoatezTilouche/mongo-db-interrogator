@@ -152,6 +152,32 @@ def test_similarity_thresholds(monkeypatch, score, hit, weak, caplog):
         assert suggestion["status"] == "similar_template_detected"
 
 
+def test_schema_miss_hands_ranked_examples_to_generation_without_extra_embedding(monkeypatch):
+    import services.semantic_template_cache as module
+    from agent.telemetry import request_context
+    from services.query.generation_examples import generation_examples_text
+    from services.schema_bootstrap_service import schema_bootstrap_service
+    doc = document()
+    collection, db = Mock(), Mock()
+    collection.find.return_value = [doc]
+    db.__getitem__ = Mock(return_value=collection)
+    db.list_collection_names.return_value = ["orders"]
+    monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
+    monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": "new-global-version"})
+    embed = Mock(return_value=[1., 0.])
+    monkeypatch.setattr(module.llm_router, "embed_query", embed)
+    with request_context("cache-to-generation"):
+        candidate, metadata = SemanticTemplateCache(db).lookup(NEW)
+        assert candidate is None and not metadata["hit"]
+        text = generation_examples_text(NEW, doc["schema_spec"], "find")
+        assert SOURCE in text
+        embed.assert_called_once()
+        # A second failed/empty lookup must clear this request's examples.
+        collection.find.return_value = []
+        SemanticTemplateCache(db).lookup(NEW)
+        assert generation_examples_text(NEW, doc["schema_spec"], "find") == ""
+
+
 @pytest.mark.parametrize("change", ["operation", "inactive", "untrusted", "missing_collection", "schema_version", "malformed"])
 def test_compatibility_rejects_invalid_candidates(change):
     doc = document()

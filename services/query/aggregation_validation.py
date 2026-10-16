@@ -68,7 +68,10 @@ def validate_pipeline(pipeline, allowed_stages, known_collections, capabilities=
         operator, value = next(iter(stage.items()))
         if operator not in allowed_stages:
             fail(f"Unsupported aggregation stage: {operator}", index, operator)
-        if operator == "$lookup":
+        if operator == "$match":
+            from services.query.predicate_validation import validate_predicate
+            validate_predicate(value)
+        elif operator == "$lookup":
             def lookup_fail(detail):
                 fail(detail, index, operator, "invalid_lookup_shape")
             if not isinstance(value, dict):

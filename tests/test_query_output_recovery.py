@@ -129,6 +129,43 @@ def test_binding_retry_identifies_unused_parameters_without_exposing_values(monk
     assert secret not in guidance and "private_unused_name" not in guidance
 
 
+@pytest.mark.parametrize("role,schema", [("query_generator", GeneratedQuery), ("repair", GeneratedQuery),
+                                         ("query_context", QueryContext)])
+def test_schema_constrained_regeneration_keeps_constraints(monkeypatch, caplog, role, schema):
+    monkeypatch.setenv("LLM_STRUCTURED_OUTPUT", "true")
+    monkeypatch.setenv("LLM_MAX_RETRIES", "1")
+    monkeypatch.delenv("LLM_DROP_PARAMS", raising=False)
+    monkeypatch.delenv("LLM_EXTRA_BODY", raising=False)
+    valid = VALID if schema is GeneratedQuery else {"complexity": "simple", "operation": "find",
+        "collections": ["orders_proc_hist"], "fields": {"orders_proc_hist": ["status"]}}
+    _, router, client, bound = install(monkeypatch, [message(BROKEN), message(json.dumps(valid))])
+    with capture_usage() as records:
+        router.invoke(role, [], schema)
+    assert bound.invoke.call_count == 2
+    client.invoke.assert_not_called()
+    assert all(call.kwargs["response_format"]["type"] == "json_schema" for call in client.bind.call_args_list)
+    assert "structured_output_fallback role=" not in caplog.text
+    assert "llm structured_retry" in caplog.text
+    assert all(record["response_format"] == "json_schema" for record in records)
+    assert records[-1]["structured_output_retries"] == 1
+
+
+def test_zero_retry_schema_validation_failure_is_not_a_fallback(monkeypatch, caplog):
+    monkeypatch.setenv("LLM_STRUCTURED_OUTPUT", "true")
+    monkeypatch.setenv("LLM_MAX_RETRIES", "0")
+    monkeypatch.delenv("LLM_DROP_PARAMS", raising=False)
+    monkeypatch.delenv("LLM_EXTRA_BODY", raising=False)
+    _, router, client, bound = install(monkeypatch, [message(BROKEN)], retries=0)
+    with pytest.raises(LLMRouterError) as error, capture_usage() as records:
+        router.invoke("query_generator", [], GeneratedQuery)
+    assert error.value.code == "invalid_query_output"
+    bound.invoke.assert_called_once()
+    client.invoke.assert_not_called()
+    assert "structured_output_fallback role=" not in caplog.text
+    assert "response_format=json_schema" in caplog.text
+    assert records[0]["structured_output_fallback"] is False
+
+
 @pytest.mark.parametrize("placeholder,parameters", [
     ("$param.status", {"status": "Failed"}),
     ("$param", {"status": "Failed"}),

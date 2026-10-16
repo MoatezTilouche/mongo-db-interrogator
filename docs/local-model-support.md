@@ -112,10 +112,46 @@ Offline benchmarks continue to disable trace export.
 ## JSON and vector safety
 
 Enabled structured output uses existing Pydantic/schema contracts. Rejection or
-invalid output switches once to the existing parsing path within the existing
-retry budget. No additional retry budget or prompt edits were introduced. With
-zero retries, a rejected schema fails without a second request. Existing
-temperature behavior remains unchanged.
+invalid output consumes the existing retry budget. Invalid query/context output
+keeps its JSON-schema constraints for at most one format-regeneration attempt;
+it no longer switches to unconstrained text merely because validation failed.
+An HTTP rejection of schema support can still use the existing fallback policy.
+Other role policies are unchanged. With zero retries, failure returns after one
+request. `llm_request_failed` and attempt telemetry include the effective
+`response_format` (`json_schema`, `json_object`, or `none`). Existing temperature
+defaults remain unchanged.
+
+For a malformed local query, keep `LLM_STRUCTURED_OUTPUT=true`, ensure
+`LLM_DROP_PARAMS` does not include `response_format`, and consider this explicit
+configuration on the VM:
+
+```dotenv
+LLM_MAX_RETRIES=1
+LLM_EXTRA_BODY={"reasoning_effort":"none","temperature":0}
+```
+
+Restart the backend. One retry adds latency when a request fails; it does not
+establish semantic correctness. Schema constraints cannot express every MongoDB
+operator or parameter-binding relationship, so local validation remains required.
+Ollama recommends a low temperature for deterministic structured output:
+[structured outputs](https://docs.ollama.com/capabilities/structured-outputs).
+
+To isolate the running Ollama server from application context, copy the updated
+probe script to the VM and run from the project directory:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m scripts.probe_ollama_schema
+```
+
+The probe reads `/api/version` from the actual server, then sends one synthetic
+schema request through `/v1/chat/completions` with thinking disabled and temperature
+zero. It expects exactly `{"probe":7}` despite a conflicting plain-text prompt.
+It reads no `.env`, database, embeddings or application tracing configuration.
+`schema_probe_passed=true` demonstrates compliance on this small case, not support
+for every construct in the larger query schema or accurate database queries.
+Failure with `finish_reason=length` is inconclusive; a transport/HTTP error is
+reported separately from schema compliance failure. Passing this probe is only a
+first diagnostic. No probe was sent to a live server during implementation tests.
 
 Returned embedding dimensions are checked on every batch when configured.
 Knowledge freshness already checked model, dimensions and text hash. Schema
@@ -126,6 +162,10 @@ without model metadata retain their prior treatment on the unconfigured path;
 custom-endpoint retrieval requires matching metadata.
 
 ## Operator scripts and manual steps
+
+For query-template vectors after switching embedding models, use
+[the template migration command](reembed-templates.md). `reembed_knowledge`
+refreshes rule/schema vectors and does not migrate query templates.
 
 1. Install/pull chat and embedding models on your local server.
 2. Configure the commented local example in `.env.example` using the installed

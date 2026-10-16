@@ -87,6 +87,19 @@ class GeneratedQuery(StrictOutput):
     template: QueryTemplate
     parameters: dict[str, Any]
 
+    @classmethod
+    def generation_json_schema(cls):
+        """Simpler outbound contract; parsing still accepts valid legacy bindings."""
+        document = cls.model_json_schema()
+        document["properties"]["parameters"] = {
+            "title": "Parameters", "type": "object", "properties": {}, "additionalProperties": False,
+        }
+        document["$defs"]["QueryTemplate"]["properties"]["limit"] = {
+            "title": "Limit", "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}], "default": None,
+        }
+        document["$defs"].pop("LimitParameter", None)
+        return document
+
     @model_validator(mode="before")
     @classmethod
     def normalize_placeholder_syntax(cls, value):

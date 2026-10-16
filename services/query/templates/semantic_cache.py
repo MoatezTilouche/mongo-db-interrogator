@@ -21,6 +21,7 @@ from services.template_parameter_extractor import normalized_question
 from services.query_parameter_binder import bind_query_parameters
 from services.query_entity_guard import template_entity_mismatch
 from database.query_template_repository import QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
+from services.query.generation_examples import remember_candidates
 
 logger = logging.getLogger("services.semantic_template_cache")
 logger.setLevel(logging.INFO)
@@ -76,6 +77,7 @@ class SemanticTemplateCache:
         self.database = database
 
     def lookup(self, question):
+        remember_candidates(question, [])
         started = perf_counter()
         metadata = {"checked": SEMANTIC_TEMPLATE_CACHE_ENABLED, "hit": False}
         if not SEMANTIC_TEMPLATE_CACHE_ENABLED:
@@ -143,6 +145,7 @@ class SemanticTemplateCache:
             ranked = sorted(((cosine(vector, doc.get("embedding", [])), doc) for doc in eligible),
                             key=lambda item: item[0], reverse=True)[:SEMANTIC_TEMPLATE_TOP_K]
             metadata["best_similarity_score"] = ranked[0][0] if ranked else None
+            remember_candidates(question, ranked)
             metadata["miss_reason"] = "no_compatible_candidate_above_threshold"
             for rank, (score, document) in enumerate(ranked, 1):
                 logger.info("template_search_candidate request_id=%s rank=%d template_id=%s operation=%s pure_cosine_similarity=%.4f threshold=%.4f",

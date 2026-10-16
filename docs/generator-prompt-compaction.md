@@ -4,7 +4,7 @@ Generation now uses only the instructions and inner-template example for the sel
 
 Repair selects its instructions using the failed query's operation. Aggregate repairs retain the rules about preserving foreign pipelines, array/missing-key equality semantics, variables, aliases and stage order. Refinement retains its existing intent-preservation instructions, with join capability guidance for existing aggregate queries or unknown operations.
 
-The parameterized envelope, read-only requirements, typed literals, filter/limit binding and semantic intent contract remain in every relevant prompt. `$expr` field references remain protected from parameterization for direct filters as well as aggregations. Count instructions do not request a result limit.
+The read-only requirements, typed literals and semantic intent contract remain in every relevant prompt. The model now writes concrete filter values and numeric requested limits with empty parameters; the backend builds parameterized reusable templates. A complete operation-specific envelope illustrates the output shape. `$expr` field references remain protected from parameterization. Count instructions do not request a result limit. See [generation grounding](generation-grounding.md) for approved examples, source hints and current validation behavior; the historical token measurements below predate those changes.
 
 ## Rule content sent to the LLM
 

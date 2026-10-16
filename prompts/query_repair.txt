@@ -11,3 +11,4 @@ An unknown-field error is not evidence that another field has the same meaning. 
 $operation_instructions
 $repair_instructions
 $output_contract
+$generation_examples

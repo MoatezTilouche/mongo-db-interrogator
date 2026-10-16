@@ -51,10 +51,11 @@ def test_generator_sends_only_chosen_shape_and_simple_operations_omit_aggregatio
     assert bind_query_parameters(result["template"], result["parameters"]) == bind_query_parameters(expected["template"], expected["parameters"])
     assert result["semantic_intent"] == expected["semantic_intent"]
     if operation != "count_documents":
-        assert '"$param":"limit"' in prompt
+        assert "write its positive integer value directly" in prompt
         assert "Explicit current requests override stored defaults" in prompt
     else:
         assert '"$param":"limit"' not in prompt
+    assert "parameters must be {}" in prompt
     assert "read-only" in prompt
     assert "never bind $expr field references" in prompt
     if operation != "aggregate":

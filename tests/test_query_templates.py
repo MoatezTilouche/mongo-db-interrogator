@@ -272,4 +272,4 @@ def test_generator_modes_return_templates(monkeypatch):
     assert agent.generate("Latest 3 failed orders", schema) == output
     assert agent.repair("Latest 3 failed orders", schema, bind_query_parameters(**output), "bad projection") == output
     assert agent.optimize("Latest 10 failed orders", {}, schema, bind_query_parameters(**output), "Latest 3") == output
-    assert all('"$param":"limit"' in prompt for prompt in captured)
+    assert all('"parameters": {}' in prompt or "parameters must be {}" in prompt for prompt in captured)

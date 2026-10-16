@@ -272,7 +272,9 @@ def get_embedding_client(model=None, dimensions=None, *, api_key=None, purpose="
 def schema_response_format(schema):
     if hasattr(schema, "feedback_response_format"):
         return schema.feedback_response_format()
-    if hasattr(schema, "model_json_schema"):
+    if hasattr(schema, "generation_json_schema"):
+        document = schema.generation_json_schema()
+    elif hasattr(schema, "model_json_schema"):
         document = schema.model_json_schema()
     elif isinstance(schema, dict):
         document = schema

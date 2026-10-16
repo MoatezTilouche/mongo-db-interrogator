@@ -285,7 +285,7 @@ def test_collection_gate_changes_prompt_only(case):
 
 @pytest.mark.parametrize("method", ["generate", "repair", "optimize"])
 @pytest.mark.parametrize("has_profile", [True, False])
-def test_legacy_or_no_profile_match_prechange_golden(case, monkeypatch, method, has_profile):
+def test_legacy_or_no_profile_match_golden(case, monkeypatch, method, has_profile):
     import agents.query_generator_agent as module
     if has_profile:
         monkeypatch.setenv("SCHEMA_PRUNE_ENABLED", "false")

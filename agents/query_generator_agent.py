@@ -9,7 +9,8 @@ from langchain_core.messages import HumanMessage
 
 from agent.llm import llm_router, LLMRouterError
 from agent.output_schemas import GeneratedQuery
-from services.query_parameter_binder import parameterize_filter_values
+from services.query_parameter_binder import parameterize_filter_values, bind_query_parameters, template_from_concrete
+from services.query.generation_examples import generation_examples_text
 from agent.llm_structured import parse_json_from_text
 from agent.prompt_loader import render_prompt
 from agent.tracing import traceable
@@ -27,7 +28,7 @@ class QueryGeneratorAgent:
     def __init__(self, capabilities=None):
         self.capabilities = capabilities or get_mongo_capabilities()
 
-    def _invoke_json(self, prompt: str, role: str, *, include_lookup_guidance: bool = True) -> dict[str, Any]:
+    def _invoke_json(self, prompt: str, role: str, *, include_lookup_guidance: bool = True, question: str = "") -> dict[str, Any]:
         if include_lookup_guidance:
             prompt += "\n" + self.capabilities.lookup_guidance()
         try:
@@ -36,6 +37,13 @@ class QueryGeneratorAgent:
             if not isinstance(parsed, dict):
                 raise ValueError("Query generator returned a non-object JSON response")
             generated = GeneratedQuery.model_validate(parsed).model_dump(by_alias=True, exclude_unset=True)
+            from services.preferences.question_intent import explicit_result_limit
+            if explicit_result_limit(question) and not generated["parameters"]:
+                concrete = bind_query_parameters(generated["template"], generated["parameters"])
+                result = template_from_concrete(concrete, parameterize_limit=True)
+                if generated.get("semantic_intent"):
+                    result["semantic_intent"] = generated["semantic_intent"]
+                return result
             return parameterize_filter_values(generated)
         except (ValueError, LLMRouterError) as exc:
             if role != "repair":
@@ -66,7 +74,8 @@ class QueryGeneratorAgent:
             "database_knowledge_json": json.dumps(knowledge_texts(inputs["rules"]), ensure_ascii=False, separators=(",", ":")),
             "operation_instructions": operation_instructions(operation),
             "output_contract": output_contract(operation),
-        }) + inputs["facts"], "query_generator", include_lookup_guidance=operation in {"aggregate", "unknown"})
+            "generation_examples": generation_examples_text(question, inputs["selected_schema"], operation),
+        }) + inputs["facts"], "query_generator", include_lookup_guidance=operation in {"aggregate", "unknown"}, question=question)
 
     @traceable(name="query_generator.optimize")
     def optimize(self, original_question, query_context, schema_spec, previous_query,
@@ -80,7 +89,7 @@ class QueryGeneratorAgent:
             "Do not broaden or remove constraints unless the user explicitly replaces them. "
             "Use only the selected schema; do not retrieve new context. Prefer more selective filters. "
             "For summaries compute compact counts/groups in MongoDB, never fetch raw rows to summarize. "
-            'Return only {"semantic_intent": <normalized intent>, "template": <revised query>, "parameters": <current values>} JSON. Parameterize filter literal values (including command IDs, statuses, numbers, dates, and membership lists) using named $param objects; keep field names and operators fixed. Parameterize explicit requested limit using {"$param":"limit"}, including top-level pipeline $limit. Keep sort, skip, projection, joins, aggregation structure, and filter operators fixed. Never parameterize $expr field references or structural $exists/$type/$options flags. Keep unrequested defaults literal. Also include semantic_intent: a compact normalized intent without current parameter values. No explanations.\n'
+            'Return only {"semantic_intent": <normalized intent>, "template": <revised query>, "parameters": {}} JSON. Use concrete filter literals and a numeric requested limit; the backend parameterizes them. Keep field names, operators, sort, skip, projection, joins and aggregation structure fixed unless the refinement changes them. Never invent IDs or extra filters. No explanations.\n'
         )
         context = {"mode": "optimize", "original_question": original_question,
                    "query_context": prompt_query_context(query_context, inputs["selected_schema"]) if inputs["active"] else query_context, "selected_schema": inputs["schema"],
@@ -90,7 +99,7 @@ class QueryGeneratorAgent:
         operation = normalize_operation(previous_query.get("operation"))
         return self._invoke_json(prompt + json.dumps(context, ensure_ascii=False, default=str)
                                  + inputs["facts"], "query_generator",
-                                 include_lookup_guidance=operation in {"aggregate", "unknown"})
+                                 include_lookup_guidance=operation in {"aggregate", "unknown"}, question=original_question + "\n" + (refinement or ""))
 
     @traceable(name="query_generator.repair")
     def repair(
@@ -134,4 +143,5 @@ class QueryGeneratorAgent:
             "repair_instructions": (render_prompt("query_aggregate_repair", {"operation": operation})
                                     if operation in {"aggregate", "unknown"} else ""),
             "output_contract": output_contract(operation),
-        }) + inputs["facts"], "repair", include_lookup_guidance=operation in {"aggregate", "unknown"})
+            "generation_examples": generation_examples_text(question, inputs["selected_schema"], operation),
+        }) + inputs["facts"], "repair", include_lookup_guidance=operation in {"aggregate", "unknown"}, question=question)
