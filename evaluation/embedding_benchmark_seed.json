@@ -1,0 +1,167 @@
+{
+  "name": "Multilingual synthetic retrieval stress suite",
+  "now": "2026-10-19T12:00:00+00:00",
+  "timezone": "UTC",
+  "collection_description": "Collection {collection} stores {noun}. Each record has recordId (case-sensitive identifier), stateCode (E failed, P pending, S successful), and loggedAt (DD/MM/YYYY HH:mm:ss text timestamp). Supports filtering, counting and full event history. Dates must be parsed before chronological range comparisons.",
+  "collection_descriptions": {
+    "fr":"La collection {collection} contient les {noun}. recordId identifie exactement chaque référence, stateCode indique le résultat (E échec, P en attente, S succès) et loggedAt est une date texte DD/MM/YYYY HH:mm:ss. Elle permet le filtrage, le comptage et l'historique complet. Les dates doivent être analysées avant toute comparaison chronologique.",
+    "ar":"تحتوي المجموعة {collection} على {noun}. الحقل recordId معرّف حساس لحالة الأحرف، وstateCode نتيجة المعالجة (E فشل، P انتظار، S نجاح)، وloggedAt تاريخ نصي بالتنسيق DD/MM/YYYY HH:mm:ss. تدعم التصفية والعد والسجل الكامل. يجب تحليل التواريخ قبل المقارنة الزمنية.",
+    "aeb":"الكولكسيون {collection} فيها {noun}. recordId ريفيرانس حساس للحروف، وstateCode يعطي الحالة (E فشل، P يستنى، S نجاح)، وloggedAt تاريخ مخزّن كنص DD/MM/YYYY HH:mm:ss. تنجّم تفلتر وتعد وتشوف الهيستوري الكل. لازم تحوّل نص التاريخ لتاريخ قبل المقارنة.",
+    "de":"Die Sammlung {collection} enthält {noun}. recordId ist eine groß-/kleinschreibungssensitive Kennung, stateCode das Ergebnis (E fehlgeschlagen, P ausstehend, S erfolgreich), loggedAt ein Zeitstempel als Text im Format DD/MM/YYYY HH:mm:ss. Unterstützt Filtern, Zählen und vollständige Verläufe. Datumswerte müssen vor zeitlichen Vergleichen geparst werden.",
+    "es":"La colección {collection} almacena {noun}. recordId es un identificador sensible a mayúsculas, stateCode indica el resultado (E fallo, P pendiente, S éxito), y loggedAt es una fecha de texto DD/MM/YYYY HH:mm:ss. Permite filtrar, contar y consultar historiales completos. Las fechas deben analizarse antes de compararse cronológicamente."
+  },
+  "fields": {
+    "recordId": {"kind":"identifier", "types":{"string":1}, "description":"Case-sensitive record reference"},
+    "stateCode": {"kind":"categorical", "types":{"string":1}, "description":"Processing outcome", "values":[{"value":"E","count":25},{"value":"P","count":30},{"value":"S","count":45}]},
+    "loggedAt": {"kind":"date", "types":{"string":1}, "date_format":"%d/%m/%Y %H:%M:%S", "sortable_as_string":false, "date_min":"2026-01-01", "date_max":"2026-10-19", "date_range_source":"full"}
+  },
+  "distractor_fields": {
+    "processingDurationMs":{"kind":"number","types":{"long":1},"description":"Processing duration in milliseconds"},
+    "payloadSizeBytes":{"kind":"number","types":{"long":1},"description":"Serialized payload size in bytes"},
+    "retryCount":{"kind":"number","types":{"int":1},"description":"Number of retry attempts"},
+    "sourceRegion":{"kind":"categorical","types":{"string":1},"description":"Ingestion region","values":[{"value":"west","count":50},{"value":"east","count":25},{"value":"north","count":25}]},
+    "serviceVersion":{"kind":"text","types":{"string":1},"description":"Application release version"},
+    "sourceTopic":{"kind":"text","types":{"string":1},"description":"Source message topic"},
+    "ingestionNode":{"kind":"identifier","types":{"string":1},"description":"Processing node reference"},
+    "internalContact":{"kind":"text","types":{"string":1},"pii_suspected":true,"description":"Synthetic private contact; must never become an embedding fact candidate"},
+    "attributes":{"kind":"object","types":{"object":1}},
+    "labels":{"kind":"array","types":{"array":1}}
+  },
+  "domains": [
+    {"id":"batch_jobs", "nouns":{"en":"batch jobs","fr":"traitements par lots","ar":"مهام معالجة الدفعات","aeb":"خدمات الباتش","de":"Stapelverarbeitungsaufträge","es":"trabajos por lotes"}},
+    {"id":"payment_events", "nouns":{"en":"card payment events","fr":"événements de paiement par carte","ar":"أحداث الدفع بالبطاقة","aeb":"عمليات الخلاص بالكارت","de":"Kartenzahlungsereignisse","es":"eventos de pago con tarjeta"}},
+    {"id":"shipment_events", "nouns":{"en":"parcel shipment events","fr":"événements d'expédition de colis","ar":"أحداث شحن الطرود","aeb":"عمليات إرسال الكولي","de":"Paketversandereignisse","es":"eventos de envío de paquetes"}},
+    {"id":"account_events", "nouns":{"en":"account creation events","fr":"événements de création de compte","ar":"أحداث إنشاء الحسابات","aeb":"عمليات حلان الكونت","de":"Kontoerstellungsereignisse","es":"eventos de creación de cuentas"}},
+    {"id":"support_tickets", "nouns":{"en":"customer support tickets","fr":"tickets du support client","ar":"تذاكر دعم العملاء","aeb":"تيكيات مساعدة الحرفاء","de":"Kundensupport-Tickets","es":"solicitudes de soporte al cliente"}},
+    {"id":"sensor_events", "nouns":{"en":"sensor measurement events","fr":"événements de mesure des capteurs","ar":"أحداث قياس المستشعرات","aeb":"عمليات قياس السنسورات","de":"Sensormessereignisse","es":"eventos de medición de sensores"}},
+    {"id":"invoice_events", "nouns":{"en":"invoice issuance events","fr":"événements d'émission de factures","ar":"أحداث إصدار الفواتير","aeb":"عمليات إصدار الفواتير","de":"Rechnungsausstellungsereignisse","es":"eventos de emisión de facturas"}},
+    {"id":"device_alerts", "nouns":{"en":"device health alerts","fr":"alertes de santé des appareils","ar":"تنبيهات حالة الأجهزة","aeb":"تنبيهات حالة الأجهزة","de":"Gerätezustandswarnungen","es":"alertas de estado de dispositivos"}},
+    {"id":"refund_events", "nouns":{"en":"refund processing events","fr":"événements de remboursement","ar":"أحداث معالجة استرداد الأموال","aeb":"عمليات ترجيع الفلوس","de":"Rückerstattungsverarbeitungsereignisse","es":"eventos de procesamiento de reembolsos"}},
+    {"id":"subscription_events", "nouns":{"en":"subscription activation events","fr":"événements d'activation d'abonnements","ar":"أحداث تفعيل الاشتراكات","aeb":"عمليات تفعيل الاشتراكات","de":"Abonnementaktivierungsereignisse","es":"eventos de activación de suscripciones"}},
+    {"id":"hotel_bookings", "nouns":{"en":"hotel room bookings","fr":"réservations de chambres d'hôtel","ar":"حجوزات غرف الفنادق","aeb":"حجوزات بيوت الأوتيل","de":"Hotelzimmerbuchungen","es":"reservas de habitaciones de hotel"}},
+    {"id":"bank_transfers", "nouns":{"en":"bank transfer events","fr":"événements de virement bancaire","ar":"أحداث التحويلات البنكية","aeb":"عمليات التحويل البنكي","de":"Banküberweisungsereignisse","es":"eventos de transferencias bancarias"}},
+    {"id":"insurance_claims", "nouns":{"en":"insurance claim submissions","fr":"demandes d'indemnisation d'assurance","ar":"طلبات تعويض التأمين","aeb":"مطالب تعويض التأمين","de":"Versicherungsschadensmeldungen","es":"solicitudes de indemnización de seguros"}},
+    {"id":"notification_events", "nouns":{"en":"push notification deliveries","fr":"envois de notifications push","ar":"عمليات تسليم الإشعارات الفورية","aeb":"عمليات بعث النوتيفيكاسيونات","de":"Push-Benachrichtigungszustellungen","es":"entregas de notificaciones push"}},
+    {"id":"registration_events", "nouns":{"en":"conference registrations","fr":"inscriptions aux conférences","ar":"عمليات التسجيل في المؤتمرات","aeb":"عمليات التسجيل في الندوات","de":"Konferenzanmeldungen","es":"inscripciones a conferencias"}},
+    {"id":"upload_events", "nouns":{"en":"file upload events","fr":"événements de téléversement de fichiers","ar":"أحداث رفع الملفات","aeb":"عمليات طلوع الفيشيات","de":"Datei-Upload-Ereignisse","es":"eventos de carga de archivos"}},
+    {"id":"deployment_events", "nouns":{"en":"application deployment events","fr":"événements de déploiement d'applications","ar":"أحداث نشر التطبيقات","aeb":"عمليات نشر التطبيقات","de":"Anwendungsbereitstellungsereignisse","es":"eventos de despliegue de aplicaciones"}},
+    {"id":"backup_events", "nouns":{"en":"database backup events","fr":"événements de sauvegarde de bases de données","ar":"أحداث النسخ الاحتياطي لقواعد البيانات","aeb":"عمليات حفظ نسخة احتياطية للداتاباز","de":"Datenbanksicherungsereignisse","es":"eventos de copia de seguridad de bases de datos"}},
+    {"id":"import_events", "nouns":{"en":"data import events","fr":"événements d'importation de données","ar":"أحداث استيراد البيانات","aeb":"عمليات إدخال الداتا","de":"Datenimportereignisse","es":"eventos de importación de datos"}},
+    {"id":"export_events", "nouns":{"en":"data export events","fr":"événements d'exportation de données","ar":"أحداث تصدير البيانات","aeb":"عمليات إخراج الداتا","de":"Datenexportereignisse","es":"eventos de exportación de datos"}},
+    {"id":"identity_checks", "nouns":{"en":"identity verification requests","fr":"demandes de vérification d'identité","ar":"طلبات التحقق من الهوية","aeb":"مطالب التثبت من الهوية","de":"Identitätsprüfungsanfragen","es":"solicitudes de verificación de identidad"}},
+    {"id":"approval_events", "nouns":{"en":"expense approval requests","fr":"demandes d'approbation de dépenses","ar":"طلبات الموافقة على المصروفات","aeb":"مطالب الموافقة على المصاريف","de":"Ausgabengenehmigungsanfragen","es":"solicitudes de aprobación de gastos"}},
+    {"id":"retry_events", "nouns":{"en":"message retry attempts","fr":"tentatives de renvoi de messages","ar":"محاولات إعادة إرسال الرسائل","aeb":"محاولات إعادة بعث المساجات","de":"Nachrichtenwiederholungsversuche","es":"intentos de reenvío de mensajes"}},
+    {"id":"login_sessions", "nouns":{"en":"user login sessions","fr":"sessions de connexion utilisateur","ar":"جلسات تسجيل دخول المستخدمين","aeb":"عمليات دخول اليوزرات","de":"Benutzeranmeldesitzungen","es":"sesiones de inicio de sesión de usuarios"}},
+    {"id":"purchase_orders", "nouns":{"en":"purchase order submissions","fr":"soumissions de bons de commande","ar":"طلبات أوامر الشراء","aeb":"مطالب أوامر الشراء","de":"Bestellauftragseinreichungen","es":"envíos de órdenes de compra"}},
+    {"id":"maintenance_tasks", "nouns":{"en":"scheduled maintenance tasks","fr":"tâches de maintenance planifiée","ar":"مهام الصيانة المجدولة","aeb":"خدمات الصيانة المبرمجة","de":"geplante Wartungsaufgaben","es":"tareas de mantenimiento programadas"}},
+    {"id":"appointment_events", "nouns":{"en":"medical appointment requests","fr":"demandes de rendez-vous médicaux","ar":"طلبات المواعيد الطبية","aeb":"مطالب مواعيد عند الطبيب","de":"Arztterminanfragen","es":"solicitudes de citas médicas"}},
+    {"id":"inventory_moves", "nouns":{"en":"warehouse inventory movements","fr":"mouvements de stock d'entrepôt","ar":"حركات مخزون المستودعات","aeb":"عمليات تحريك الستوك في المخزن","de":"Lagerbestandsbewegungen","es":"movimientos de inventario de almacén"}}
+  ],
+  "intents": [
+    {
+      "id":"failed_rows", "fields":["stateCode"], "expected_rules":["failed_rows"], "challenges":["paraphrase","near_entity_distractors","status"],
+      "rule":"For {noun}, failed processing means stateCode equals E; do not confuse it with pending P or successful S.",
+      "rule_translations":{
+        "fr":"Pour les {noun}, un traitement échoué signifie stateCode E ; ne pas le confondre avec P en attente ou S réussi.",
+        "ar":"بالنسبة إلى {noun}، يعني فشل المعالجة أن stateCode يساوي E، وليس P للانتظار أو S للنجاح.",
+        "aeb":"بالنسبة لـ {noun}، كي تفشل المعالجة stateCode يكون E، موش P متاع الانتظار ولا S متاع النجاح.",
+        "de":"Für {noun} bedeutet fehlgeschlagene Verarbeitung stateCode E, nicht P für ausstehend oder S für erfolgreich.",
+        "es":"Para {noun}, un fallo de procesamiento corresponde a stateCode E; P es pendiente y S es éxito."
+      },
+      "fact_checks":[{"field":"stateCode","contains":["values=","\"E\""]}],
+      "query":{"operation":"find","collection":"{collection}","filter":{"stateCode":"E"},"projection":null,"sort":[],"limit":null,"skip":0},
+      "questions":{
+        "en":["Show {noun} whose processing failed."],
+        "fr":["Afficher les {noun} dont le traitement a échoué."],
+        "ar":["اعرض {noun} التي فشلت معالجتها."],
+        "aeb":["ورّيني {noun} اللي فشلو."],
+        "de":["Zeige {noun} mit fehlgeschlagener Verarbeitung."],
+        "es":["Muestra {noun} cuyo procesamiento falló."]
+      }
+    },
+    {
+      "id":"pending_count", "fields":["stateCode"], "expected_rules":["pending_count"], "challenges":["count_vs_list","status"],
+      "rule":"For {noun}, count items awaiting processing using stateCode P. E indicates failure, while S indicates success.",
+      "rule_translations":{
+        "fr":"Pour les {noun}, compter les éléments en attente avec stateCode P. E signifie échec et S signifie succès.",
+        "ar":"بالنسبة إلى {noun}، احسب العناصر المنتظرة باستخدام stateCode P. يشير E للفشل وS للنجاح.",
+        "aeb":"بالنسبة لـ {noun}، عدّ اللي يستنّاو باستعمال stateCode P. E للفشل وS للنجاح.",
+        "de":"Für {noun} werden ausstehende Elemente mit stateCode P gezählt. E bedeutet Fehler und S Erfolg.",
+        "es":"Para {noun}, cuenta los elementos pendientes usando stateCode P. E indica fallo y S indica éxito."
+      },
+      "query":{"operation":"count_documents","collection":"{collection}","filter":{"stateCode":"P"}},
+      "questions":{
+        "en":["How many {noun} are still awaiting processing?"],
+        "fr":["Combien de {noun} sont encore en attente de traitement ?"],
+        "ar":["كم عدد {noun} التي ما زالت تنتظر المعالجة؟"],
+        "aeb":["قدّاش من {noun} مازالو يستنّاو المعالجة؟"],
+        "de":["Wie viele {noun} warten noch auf die Verarbeitung?"],
+        "es":["¿Cuántos registros de {noun} siguen pendientes de procesamiento?"]
+      }
+    },
+    {
+      "id":"record_history", "fields":["recordId"], "expected_rules":["record_history"], "challenges":["identifier_change","full_history","deterministic_template_possible"],
+      "rule":"For {noun}, the full history for a record is selected by exact recordId. Preserve case and include all states rather than only the newest row.",
+      "rule_translations":{
+        "fr":"Pour les {noun}, sélectionner tout l'historique par recordId exact. Respecter la casse et inclure tous les états, pas seulement la dernière ligne.",
+        "ar":"بالنسبة إلى {noun}، يُختار السجل الكامل بواسطة recordId المطابق تماماً. حافظ على حالة الأحرف وأدرج جميع الحالات لا أحدث صف فقط.",
+        "aeb":"بالنسبة لـ {noun}، الهيستوري الكل يتختار بـ recordId مطابق بالضبط. حافظ على الحروف وجيب الحالات الكل، موش كان آخر سطر.",
+        "de":"Für {noun} wird der vollständige Verlauf über die exakte recordId gewählt. Groß-/Kleinschreibung beibehalten und alle Zustände statt nur der neuesten Zeile einschließen.",
+        "es":"Para {noun}, selecciona el historial completo mediante recordId exacto. Respeta mayúsculas e incluye todos los estados, no solo la fila más reciente."
+      },
+      "fact_checks":[{"field":"recordId","contains":["case_sensitive=true","never_case_fold=true"]}],
+      "query":{"operation":"find","collection":"{collection}","filter":{"recordId":"{identifier}"},"projection":null,"sort":[],"limit":null,"skip":0},
+      "questions":{
+        "en":["Give the full history of {noun} for record {identifier}.","Show every recorded event for {noun} with reference rec-9999."],
+        "fr":["Donne tout l'historique des {noun} pour la référence {identifier}."],
+        "ar":["اعرض السجل الكامل لـ {noun} للمرجع {identifier}."],
+        "aeb":["هاتلي الهيستوري الكل متاع {noun} للريفيرانس {identifier}."],
+        "de":["Zeige den vollständigen Verlauf für {noun} mit Referenz {identifier}."],
+        "es":["Muestra todo el historial de {noun} para la referencia {identifier}."]
+      }
+    },
+    {
+      "id":"previous_month", "fields":["loggedAt"], "expected_rules":["previous_month"], "challenges":["date_format","calendar_range","multilingual_time"],
+      "rule":"For {noun}, chronological operations use loggedAt stored as DD/MM/YYYY HH:mm:ss strings. Parse with %d/%m/%Y %H:%M:%S; never use lexical string range comparisons.",
+      "rule_translations":{
+        "fr":"Pour les {noun}, les opérations chronologiques portent sur loggedAt, stocké en texte DD/MM/YYYY HH:mm:ss. Analyser avec %d/%m/%Y %H:%M:%S, jamais par ordre lexicographique.",
+        "ar":"بالنسبة إلى {noun}، تستخدم العمليات الزمنية loggedAt المخزّن كنص DD/MM/YYYY HH:mm:ss. حلّله بالتنسيق %d/%m/%Y %H:%M:%S ولا تقارن النصوص معجمياً.",
+        "aeb":"بالنسبة لـ {noun}، العمليات الزمنية تستعمل loggedAt المخزّن كنص DD/MM/YYYY HH:mm:ss. حوّلو بتاريخ بـ %d/%m/%Y %H:%M:%S، ما تقارنش النصوص مباشرة.",
+        "de":"Für {noun} verwenden chronologische Operationen loggedAt als Text DD/MM/YYYY HH:mm:ss. Mit %d/%m/%Y %H:%M:%S parsen und niemals lexikografische Bereichsvergleiche verwenden.",
+        "es":"Para {noun}, las operaciones cronológicas se aplican a loggedAt almacenado como texto DD/MM/YYYY HH:mm:ss. Analiza con %d/%m/%Y %H:%M:%S; nunca compares rangos lexicográficos."
+      },
+      "fact_checks":[{"field":"loggedAt","contains":["date_format=\"%d/%m/%Y %H:%M:%S\"","sortable_as_string=false"]}],
+      "query":{"operation":"find","collection":"{collection}","filter":{"loggedAt":{"$gte":"01/09/2026 00:00:00","$lt":"01/10/2026 00:00:00"}},"projection":null,"sort":[],"limit":null,"skip":0},
+      "questions":{
+        "en":["List {noun} recorded last month, regardless of their state."],
+        "fr":["Liste les {noun} enregistrés le mois dernier, quel que soit leur état."],
+        "ar":["اعرض {noun} المسجلة في الشهر الماضي مهما كانت حالتها."],
+        "aeb":["ورّيني {noun} المسجّلين الشهر اللي فات مهما كانت حالتهم."],
+        "de":["Zeige {noun} aus dem letzten Monat, unabhängig vom Status."],
+        "es":["Lista los registros de {noun} del mes pasado, sin importar su estado."]
+      }
+    },
+    {
+      "id":"unsupported_average", "fields":["stateCode","loggedAt"], "expected_rules":["pending_count","previous_month"], "challenges":["hard_no_template","aggregate_vs_count","near_match","multiple_relevant"],
+      "query":null,
+      "questions":{
+        "en":["Calculate the average number of pending {noun} per day."],
+        "fr":["Calcule le nombre moyen de {noun} en attente par jour."],
+        "ar":["احسب متوسط عدد {noun} قيد الانتظار في اليوم."],
+        "aeb":["احسب المعدّل اليومي متاع {noun} اللي يستنّاو."],
+        "de":["Berechne die durchschnittliche tägliche Anzahl ausstehender Datensätze für {noun}."],
+        "es":["Calcula el promedio diario de registros pendientes de {noun}."]
+      }
+    }
+  ],
+  "no_match":[
+    {"id":"weather_dev","split":"dev","questions":{"en":"What will the weather be in Tunis tomorrow?","fr":"Quel temps fera-t-il demain à Tunis ?","ar":"كيف سيكون الطقس غداً في تونس؟","aeb":"شنوة حالة الطقس غدوة في تونس؟","de":"Wie wird das Wetter morgen in Tunis?","es":"¿Qué tiempo hará mañana en Túnez?"}},
+    {"id":"recipe_dev","split":"dev","questions":{"en":"Give me a recipe for vegetable soup.","fr":"Donne-moi une recette de soupe de légumes.","ar":"أعطني وصفة لحساء الخضار.","aeb":"اعطيني وصفة شربة بالخضرة.","de":"Gib mir ein Rezept für Gemüsesuppe.","es":"Dame una receta de sopa de verduras."}},
+    {"id":"unavailable_asset_dev","split":"dev","questions":{"en":"List the open patent applications by inventor nationality.","fr":"Liste les demandes de brevet ouvertes par nationalité de l'inventeur.","ar":"اعرض طلبات براءات الاختراع المفتوحة حسب جنسية المخترع.","aeb":"ورّيني مطالب براءات الاختراع حسب جنسية المخترع.","de":"Zeige offene Patentanmeldungen nach Staatsangehörigkeit der Erfinder.","es":"Lista solicitudes de patentes abiertas por nacionalidad del inventor."}},
+    {"id":"astronomy_test","split":"test","questions":{"en":"How many moons does Jupiter have?","fr":"Combien de lunes Jupiter possède-t-elle ?","ar":"كم عدد أقمار المشتري؟","aeb":"قدّاش من قمر عند المشتري؟","de":"Wie viele Monde hat Jupiter?","es":"¿Cuántas lunas tiene Júpiter?"}},
+    {"id":"unavailable_grades_test","split":"test","questions":{"en":"Show students whose final examination grade exceeds ninety.","fr":"Affiche les étudiants dont la note finale dépasse quatre-vingt-dix.","ar":"اعرض الطلاب الذين تتجاوز علاماتهم النهائية تسعين.","aeb":"ورّيني التلامذة اللي نوتتهم النهائية فوق التسعين.","de":"Zeige Studierende mit einer Abschlussprüfungsnote über neunzig.","es":"Muestra estudiantes cuya nota final supera noventa."}},
+    {"id":"sports_test","split":"test","questions":{"en":"Who won the football tournament last weekend?","fr":"Qui a gagné le tournoi de football le week-end dernier ?","ar":"من فاز ببطولة كرة القدم في نهاية الأسبوع الماضي؟","aeb":"شكون ربح دورة الكورة الويكاند اللي فات؟","de":"Wer hat das Fußballturnier am letzten Wochenende gewonnen?","es":"¿Quién ganó el torneo de fútbol el fin de semana pasado?"}},
+    {"id":"unavailable_elections_test","split":"test","questions":{"en":"Count election ballots rejected because the voter signature is missing.","fr":"Compte les bulletins électoraux rejetés faute de signature de l'électeur.","ar":"احسب أوراق الاقتراع المرفوضة لغياب توقيع الناخب.","aeb":"احسب أوراق الانتخاب المرفوضة خاطر إمضاء الناخب ناقص.","de":"Zähle abgelehnte Wahlzettel ohne Unterschrift der Wähler.","es":"Cuenta papeletas rechazadas por falta de firma del votante."}},
+    {"id":"unavailable_library_test","split":"test","questions":{"en":"Find overdue library books grouped by author.","fr":"Trouve les livres de bibliothèque en retard, regroupés par auteur.","ar":"ابحث عن كتب المكتبة المتأخرة مجمعة حسب المؤلف.","aeb":"لوّج على كتب المكتبة اللي تأخّر ترجيعهم حسب الكاتب.","de":"Finde überfällige Bibliotheksbücher, gruppiert nach Autor.","es":"Busca libros de biblioteca vencidos, agrupados por autor."}}
+  ]
+}

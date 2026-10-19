@@ -1,0 +1,22 @@
+{
+  "seed": 43,
+  "repeats": 2,
+  "batch_size": 16,
+  "query_batch_size": 1,
+  "unload_after_arm": true,
+  "bootstrap_iterations": 2000,
+  "max_false_accept_rate": 0.05,
+  "fixed_thresholds": [0.65, 0.70],
+  "replay": {"schema_top_k": 3, "schema_max_fields": 40, "template_threshold": 0.70},
+  "arms": [
+    {"id": "bge_m3_plain", "model": "bge-m3", "dimensions": null, "query_instruction": ""},
+    {"id": "qwen3_4b_plain", "model": "qwen3-embedding:4b", "dimensions": null, "query_instruction": ""},
+    {"id": "qwen3_4b_instruct", "model": "qwen3-embedding:4b", "dimensions": null,
+     "query_instruction": "Given a database question, retrieve relevant database schemas, business rules, profile field descriptions and reusable query examples."}
+  ],
+  "sources": {
+    "qwen": "https://huggingface.co/Qwen/Qwen3-Embedding-4B",
+    "bge": "https://huggingface.co/BAAI/bge-m3",
+    "ollama": "https://docs.ollama.com/api/embed"
+  }
+}
