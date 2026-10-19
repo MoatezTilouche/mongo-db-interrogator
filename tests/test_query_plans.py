@@ -219,6 +219,14 @@ def test_latest_time_filter_stays_after_replace_root(profiles):
     assert "$match" not in normalized["pipeline"][0]
 
 
+@pytest.mark.parametrize("task", ["list", "count", "group_count"])
+def test_month_range_on_nonsortable_date_compiles_to_expression(profiles, task):
+    query = compile(profiles, plan(task=task, uses_time=True, group_by=[S] if task == "group_count" else []), "last month")
+    assert "$dateFromString" in json.dumps(query)
+    validated = ValidatorAgent().validate(query, schema(profiles), profiles.get)
+    assert apply_date_normalization(validated, profiles.get, "last month", NOW) == validated
+
+
 def test_directive_status_and_applicability(profiles):
     config = PlanConfig(enabled=True)
     for status in ("needs_review", "rejected"):

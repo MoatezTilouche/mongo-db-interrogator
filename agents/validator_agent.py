@@ -62,12 +62,28 @@ def _validate_filter_fields(value: Any, known_fields: set[str]) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             key = str(key)
+            if key == "$expr":
+                _validate_expression_fields(child, known_fields)
+                continue
             if not key.startswith("$") and known_fields and not _field_is_known(key, known_fields):
                 raise QueryValidationError(f"Unknown field in filter/expression: {key}")
             _validate_filter_fields(child, known_fields)
     elif isinstance(value, list):
         for child in value:
             _validate_filter_fields(child, known_fields)
+
+
+def _validate_expression_fields(value: Any, known_fields: set[str]) -> None:
+    if isinstance(value, str) and value.startswith("$") and not value.startswith("$$"):
+        if known_fields and not _field_is_known(value[1:], known_fields):
+            raise QueryValidationError(f"Unknown field in filter/expression: {value[1:]}")
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            if key not in {"$literal", "$const"}:
+                _validate_expression_fields(child, known_fields)
+    elif isinstance(value, list):
+        for child in value:
+            _validate_expression_fields(child, known_fields)
 
 
 class ValidatorAgent:

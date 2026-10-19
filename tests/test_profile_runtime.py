@@ -162,12 +162,17 @@ def test_ambiguous_date_target_repairable(profiles):
                               query(pipeline=[{"$match": {T: {"$lt": "2026-10-15"}}}])])
 def test_nonsortable_dates(profiles, q):
     profiles[C]["fields"][T] = date_spec("%d/%m/%Y", sortable=False)
-    with pytest.raises(QueryValidationError, match="cannot be ordered/compared as text") as error:
-        normalize(profiles, q)
-    assert ("$dateFromString" in str(error.value)) == (q["operation"] == "aggregate")
+    if q.get("sort"):
+        with pytest.raises(QueryValidationError, match="cannot be ordered/compared as text"):
+            normalize(profiles, q)
+    else:
+        with pytest.raises(QueryValidationError, match="cannot be ordered/compared as text"):
+            validate(profiles, q)
+        fixed = normalize(profiles, q)
+        assert "$dateFromString" in json.dumps(fixed)
+        validate(profiles, fixed)
     assert normalize(profiles, query({T: {"$date": "2026-10-15T00:00:00Z"}}), "today")["filter"][T] == "15/10/2026"
-    with pytest.raises(QueryValidationError, match="cannot be ordered/compared as text"):
-        normalize(profiles, query(), "last week")
+    assert "$dateFromString" in json.dumps(normalize(profiles, query(), "last week"))
 
 
 def test_plausibility_and_explicit_override(profiles, monkeypatch, caplog):
@@ -483,7 +488,7 @@ def test_main_order_and_existing_repair_limit(profiles, monkeypatch, failure):
     order = runtime_spies(monkeypatch, module, profiles)
     result = app._run("today" if failure != "plausibility" else "Find dates")
     assert result["execution_success"], result
-    assert order[-4:] == ["validate", "dates", "values", "parameters"]
+    assert order[-4:] == ["dates", "validate", "values", "parameters"]
     assert app.query_generator.repair.call_count == int(failure is not None)
     if failure:
         error = app.query_generator.repair.call_args.args[3]
@@ -512,7 +517,7 @@ def test_execution_repair_also_normalizes_dates(profiles, monkeypatch):
     app.executor.execute.side_effect = [{"ok": False, "repairable": True, "error": "Structural failure"},
                                         {"ok": True, "row_count": 0, "all_rows": []}]
     assert app._run("today")["execution_success"]
-    assert order == ["validate", "dates", "values", "parameters"] * 2
+    assert order == ["dates", "validate", "values", "parameters"] * 2
     app.query_generator.repair.assert_called_once()
 
 
@@ -527,7 +532,7 @@ def test_main_learned_optimization_normalizes_before_values(profiles, monkeypatc
     monkeypatch.setattr(module.LearnedOptimizationService, "apply", learned)
     result = app._run("today")
     assert result["execution_success"] and result["learned_optimization"]
-    assert order == ["validate", "dates", "values", "parameters", "dates", "values"]
+    assert order == ["dates", "validate", "values", "parameters", "dates", "values"]
 
 
 def test_invalid_learned_dates_keep_original(profiles, monkeypatch):
@@ -586,7 +591,7 @@ def test_template_reuse_and_learned_order(profiles, monkeypatch, learned):
         monkeypatch.setattr(learned_module.LearnedOptimizationService, "apply", apply)
     result = service.decide("qzv_request_823", SimpleNamespace(action="reuse", template_id="qzv_template_827"))
     assert result["execution_success"] and result["query_template_id"] is None
-    assert order[:4] == ["validate", "dates", "values", "parameters"]
+    assert order[:4] == ["dates", "validate", "values", "parameters"]
     if learned:
         assert order[4:] == ["dates", "values"]
     assert document == original
@@ -702,8 +707,52 @@ def test_optimization_and_repair_order(profiles, monkeypatch, repair):
     result = service.continue_query("qzv_request_823", SimpleNamespace(
         optimization="run_anyway", refinement=None, value=None, page=1))
     assert result["execution_success"], result
-    assert order[-4:] == ["validate", "dates", "values", "parameters"]
+    assert order[-4:] == ["dates", "validate", "values", "parameters"]
     assert repaired.call_count == int(repair)
+
+
+@pytest.mark.parametrize("route", ["fresh", "reuse", "optimization"])
+def test_raw_string_date_range_rewritten_before_execution(profiles, monkeypatch, route):
+    from services.query_parameter_binder import bind_query_parameters, template_from_concrete
+    from services.learned_optimization_service import LearnedOptimizationService
+    profiles[C]["fields"][T] = date_spec("%d/%m/%Y %H:%M:%S", sortable=False)
+    publish(profiles)
+    initial = query({T: {"$gte": "01/09/2026 00:00:00", "$lt": "01/10/2026 00:00:00"}})
+    if route == "fresh":
+        app, module = fresh_runtime(monkeypatch, profiles, initial)
+        execute = app.executor.execute
+        run = lambda: app._run("last month")
+    elif route == "reuse":
+        module, service, _, failure, execute = template_runtime(monkeypatch, profiles, initial, "last month")
+        run = lambda: service.decide("qzv_request_823", SimpleNamespace(action="reuse", template_id="qzv_template_827"))
+    else:
+        import services.query_optimization_service as module
+        pending = Mock()
+        pending.find_one_and_update.return_value = {"state": "pending", "question": "last month", "result": {
+            "validated_query": initial, "generated_query": template_from_concrete(initial),
+            "schema_spec": schema(profiles), "cost_analysis": {}, "suggestions": [{"id": "run_anyway"}]}}
+        service = module.QueryOptimizationService()
+        monkeypatch.setattr(service, "collection", lambda: pending)
+        monkeypatch.setattr(service, "save_history", Mock())
+        monkeypatch.setattr(module, "active_resolution_rules", lambda: [])
+        execute = Mock(return_value={"ok": True, "all_rows": [], "row_count": 0, "execution_time_ms": 0})
+        monkeypatch.setattr(module.ExecutorAgent, "execute", execute)
+        run = lambda: service.continue_query("qzv_request_823", SimpleNamespace(
+            optimization="run_anyway", refinement=None, value=None, page=1))
+    monkeypatch.setattr(module, "apply_date_normalization", lambda candidate, **kwargs: apply_date_normalization(candidate, now=NOW, **kwargs))
+    monkeypatch.setattr(module.QueryCostGuard, "analyze", lambda *args: {"status": "safe", "query_signature": "qzv_signature_797"})
+    monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
+    monkeypatch.setattr(LearnedOptimizationService, "apply", lambda self, candidate, *args: (candidate, None))
+    result = run()
+    assert result["execution_success"], result
+    executed = execute.call_args.args[0]
+    assert "$dateFromString" in json.dumps(executed)
+    assert executed == result["validated_query"]
+    assert bind_query_parameters(result["generated_query"]["template"], result["query_parameters"]) == executed
+    if route == "fresh":
+        app.query_generator.repair.assert_not_called()
+    elif route == "reuse":
+        failure.assert_not_called()
 
 
 @pytest.mark.parametrize("method", ["generate", "repair", "optimize"])

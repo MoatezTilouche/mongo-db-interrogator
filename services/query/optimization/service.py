@@ -162,9 +162,9 @@ class QueryOptimizationService:
                         date_question = intent
                 def validate_candidate(candidate):
                     candidate = stage("AggregationNormalizer", normalize_lookups, candidate)
+                    candidate = apply_date_normalization(candidate, question=date_question)
                     with normalization_context():
                         validated = stage("ValidatorAgent", ValidatorAgent().validate, candidate, result["schema_spec"])
-                    validated = apply_date_normalization(validated, question=date_question)
                     return apply_value_resolution(validated, result["schema_spec"], resolution_rules)
 
                 def repair_candidate(candidate, error):

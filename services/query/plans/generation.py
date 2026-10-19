@@ -98,8 +98,8 @@ def generate_with_plan(question, schema_spec, preferences, rules, config, invoke
                 plan, profile, local = resolve_plan(plan, visible, question, config, directives,
                                                     inputs["preferences"], profile_lookup)
                 query, intent = compile_plan(plan, profile, visible, question, inputs["rules"], local, profile_lookup, now)
-                query = (validator or ValidatorAgent()).validate(query, schema_spec, profile_lookup=profile_lookup)
                 query = apply_date_normalization(query, question=question, profile_lookup=profile_lookup, now=now)
+                query = (validator or ValidatorAgent()).validate(query, schema_spec, profile_lookup=profile_lookup)
                 generated = template_from_concrete(query, parameterize_limit=True)
                 generated["semantic_intent"] = intent
                 logger.info("plan_path request_id=%s path=plan retries=%d plan_tokens=%d free_form_tokens=0",

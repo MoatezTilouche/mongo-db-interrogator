@@ -53,7 +53,7 @@ def compile_filter(plan, profile, selected_schema, rules, directives, question, 
         if field not in candidates:
             raise PlanError("time_field_invalid")
         normalizer = DateNormalizer(lambda name: profile if name == plan.collection else None, question, now)
-        date_filter = {field: normalizer.question_condition(profile["fields"][field], field, False)}
+        date_filter = normalizer.question_predicate(field, profile["fields"][field], field)
         predicate = {"$and": [predicate, date_filter]} if predicate else date_filter
         repair_log("plan_question_time_resolved")
     elif plan.uses_time:

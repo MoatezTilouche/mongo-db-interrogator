@@ -103,12 +103,13 @@ class TemplateDecisionService:
 
                     def validate_reuse(candidate):
                         nonlocal validation_stage
+                        before_dates = candidate
+                        validation_stage = "date_normalization"
+                        candidate = apply_date_normalization(candidate, question=pending["question"])
+                        dates_changed = candidate != before_dates
                         validation_stage = "validator"
                         validated = stage("ValidatorAgent", ValidatorAgent().validate, candidate, schema_spec)
-                        before_dates = validated
-                        validation_stage = "date_normalization"
-                        validated = apply_date_normalization(validated, question=pending["question"])
-                        return validated, validated != before_dates
+                        return validated, dates_changed
 
                     try:
                         schema_spec = validation_schema(document, catalog)

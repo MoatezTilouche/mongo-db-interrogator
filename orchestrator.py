@@ -217,9 +217,9 @@ class OrchestratorAgent:
             for attempt in range(2):
                 try:
                     bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
+                    bound_query = apply_date_normalization(bound_query, question=question)
                     with normalization_context():
                         validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
-                    validated_query = apply_date_normalization(validated_query, question=question)
                     break
                 except QueryValidationError as exc:
                     validation_errors.append(exc.to_dict())
@@ -282,9 +282,9 @@ class OrchestratorAgent:
                 apply_preferences_to_query(bound_query, preferences, self.preference_service.user_id, question=question)
                 try:
                     bound_query = stage("AggregationNormalizer", normalize_lookups, bound_query)
+                    bound_query = apply_date_normalization(bound_query, question=question)
                     with normalization_context():
                         validated_query = stage("ValidatorAgent", self.validator.validate, bound_query, schema_spec)
-                    validated_query = apply_date_normalization(validated_query, question=question)
                     validated_query = apply_value_resolution(validated_query, schema_spec, knowledge_result["_active_rules"])
                     generated_query = parameterize_resolved_query(repaired, validated_query)
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, validated_query)

@@ -61,7 +61,7 @@ class ProfileValidator:
             if "string" not in types and "array<string>" not in types:
                 self.issue(f"Regex requires a string field: {scope.collection}.{path}", scope)
             return
-        # Dates are deliberately normalized after validation, including wrong wrappers.
+        # The date normalizer owns stored date spelling, including wrong wrappers.
         if is_date_field(spec) and self.config.date_enabled:
             return
         if len(types) != 1 or value is None:
@@ -176,7 +176,47 @@ class ProfileValidator:
             advance_scope(scope, operator, value)
 
 
+class DateRangeValidator(ProfileValidator):
+    """Date ordering safety remains enforced when optional profile checks are off."""
+
+    def issue(self, *args, **kwargs):
+        pass
+
+    def path(self, path, scope):
+        return True
+
+    def relationship(self, *args):
+        pass
+
+    def literal(self, value, path, scope, operator=""):
+        from services.query.dates.normalization import nonsortable_date, RANGES, _ordering_error
+        if operator in RANGES and scope.safe(path) and nonsortable_date(scope.spec(path)):
+            _ordering_error(f"{scope.collection}.{path}", True)
+
+    def expression(self, value, scope):
+        if isinstance(value, dict):
+            for operator, arguments in value.items():
+                if operator in {"$gt", "$gte", "$lt", "$lte"} and isinstance(arguments, list):
+                    for operand in arguments:
+                        if isinstance(operand, str) and operand.startswith(("$$ROOT.", "$$CURRENT.")):
+                            self.literal(None, operand.split(".", 1)[1], scope, operator)
+                        elif isinstance(operand, str) and operand.startswith("$") and not operand.startswith("$$"):
+                            self.literal(None, operand[1:], scope, operator)
+        super().expression(value, scope)
+
+
+def validate_date_ranges(query, profile_lookup=None):
+    validator = DateRangeValidator(profile_lookup)
+    scope = Scope(query.get("collection"), profile_lookup)
+    if query.get("operation") == "aggregate":
+        validator.pipeline(query.get("pipeline", []), scope)
+    else:
+        validator.predicate(query.get("filter", {}), scope)
+    return query
+
+
 def validate_profile_query(query, profile_lookup=None):
+    validate_date_ranges(query, profile_lookup)
     validator = ProfileValidator(profile_lookup)
     if validator.config.validation_mode == "off":
         return query
