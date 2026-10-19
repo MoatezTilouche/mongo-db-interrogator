@@ -76,6 +76,7 @@ def document(identity="template-1", **changes):
     return {"_id": identity, "user_id": "test-user", "status": "active", "trusted": True,
             "positive_feedback_count": 2, "success_count": 5,
             "source_question": question, "semantic_search_text": normalized_question(question),
+            "embedding_source_text": normalized_question(question),
             "embedding": [0., 1., 0.], "embedding_model": "old-model",
             "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
             "template": {"operation": "find", "collection": "orders", "filter": {}, "limit": 3},
@@ -215,7 +216,8 @@ def test_migrated_template_becomes_retrievable_without_chat_or_new_embeddings(mo
     monkeypatch.setattr(llm_router, "invoke", forbidden)
     monkeypatch.setattr(llm_router, "embed_query", forbidden)
     lookup = cache.SemanticTemplateCache(database)
-    assert lookup.lookup(row["source_question"])[1]["miss_reason"] == "no_eligible_templates"
+    found, metadata = lookup.lookup(row["source_question"])
+    assert found["template_id"] == "template-1" and metadata["match_type"] == "exact_question"
     assert run(collection, apply=True, embedding_provider=provider())["updated"] == 1
     found, metadata = lookup.lookup(row["source_question"])
     assert found["template_id"] == "template-1" and metadata["hit"] is True

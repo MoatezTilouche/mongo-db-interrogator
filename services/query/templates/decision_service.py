@@ -28,6 +28,7 @@ from services.query_performance_memory import PerformanceLogger
 from services.optimization_advisor import OptimizationAdvisor
 from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query, active_resolution_rules
 from services.query.dates.normalization import apply_date_normalization
+from services.query.templates.matching import current_catalog, validation_schema
 
 logger = logging.getLogger("services.template_decision_service")
 
@@ -71,9 +72,10 @@ class TemplateDecisionService:
                 repository = QueryTemplateRepository()
                 document = repository.get(payload.template_id)
                 from services.schema_bootstrap_service import schema_bootstrap_service
+                catalog = current_catalog()
                 with request_context(request_id):
                     compatible = document and SemanticTemplateCache.compatible(document, pending["question"],
-                        set(get_database().list_collection_names()), schema_bootstrap_service.status().get("schema_version"))
+                        set(get_database().list_collection_names()), schema_bootstrap_service.status().get("schema_version"), catalog)
                 if not compatible:
                     raise HTTPException(409, "Template is no longer compatible. Choose Regenerate.")
                 with request_context(request_id), capture_usage() as usage, capture_workflow() as trace:
@@ -109,7 +111,7 @@ class TemplateDecisionService:
                         return validated, validated != before_dates
 
                     try:
-                        schema_spec = template_validation_schema(document["schema_spec"])
+                        schema_spec = validation_schema(document, catalog)
                         validation_stage = "preferences"
                         from services.user_preference_service import UserPreferenceService, apply_preferences_to_query
                         preference_service = UserPreferenceService(user_id=DEFAULT_USER_ID)

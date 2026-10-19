@@ -74,7 +74,7 @@ class QueryTemplateRepository:
         db = self.database if self.database is not None else get_database()
         metadata = {}
         if question and safe_record(question) == question:
-            from services.template_parameter_extractor import normalized_question, describe_parameters
+            from services.template_parameter_extractor import normalized_question, describe_parameters, question_pattern
             from database.schema_inspector import compact_schema
             schema = {"collections": compact_schema(schema_spec or {})}
             intent = generated.get("semantic_intent") or normalized_question(question, generated["parameters"])
@@ -96,23 +96,32 @@ class QueryTemplateRepository:
                 return None
             # Parameterized query structure alone cannot distinguish a broader
             # request from an explicitly narrowed scope using the same fields.
-            scoped_identity = signature + "\n" + normalized_question(question)
+            scoped_identity = DEFAULT_USER_ID + "\n" + signature + "\nrefined\n" + question_pattern({**metadata, "template": template})
             template_id = "tpl_" + hashlib.sha256(scoped_identity.encode("utf-8")).hexdigest()
+        elif metadata:
+            # Different approved question patterns need their own extraction
+            # examples and vectors. Parameter-only substitutions still share
+            # one record; template_signature continues to identify query shape.
+            identity = DEFAULT_USER_ID + "\n" + signature + "\nquestion\n" + question_pattern({**metadata, "template": template})
+            template_id = "tpl_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
         if metadata and not metadata.get("schema_version"):
             from services.schema_bootstrap_service import schema_bootstrap_service
             metadata["schema_version"] = schema_bootstrap_service.status().get("schema_version")
-        db[COLLECTION].update_one({"_id": template_id}, {
-            "$setOnInsert": encode_record({"template_id": template_id, "template_signature": signature,
+        inserted = {"template_id": template_id, "template_signature": signature,
                 "source_request_id": request_id, "operation": template["operation"],
                 "collections": sorted(collections), "template": template,
                 "parameter_schema": {key: parameter_schema(value) for key, value in generated["parameters"].items()},
-                "created_at": now, **{key: value for key, value in metadata.items()
-                    if key not in {"schema_spec", "schema_version"}}}),
-            "$set": encode_record({"updated_at": now, **({"schema_spec": metadata["schema_spec"],
-                "schema_version": metadata["schema_version"]} if metadata else {})}),
+                "created_at": now}
+        updated = {"updated_at": now, **metadata}
+        if metadata:
+            # This entry point records a newly successful, positively approved
+            # execution. Old failures must not permanently disable that pattern.
+            updated["reuse_failure_count"] = 0
+        db[COLLECTION].update_one({"_id": template_id}, {
+            "$setOnInsert": encode_record({key: value for key, value in inserted.items() if key not in updated}),
+            "$set": encode_record(updated),
             "$inc": {"success_count": 1}}, upsert=True)
         if metadata:
-            db[COLLECTION].update_one({"_id": template_id, "source_question": {"$exists": False}}, {"$set": encode_record(metadata)})
             self.ensure_embedding(template_id)
         return template_id
 
@@ -128,8 +137,8 @@ class QueryTemplateRepository:
         if not isinstance(source_document, dict) or not source_document.get("source_question"):
             return
         search_text = normalized_question(source_document["source_question"])
-        eligibility = stale_embedding_filter() if reembed_stale else {
-            "embedding": {"$exists": False}}
+        eligibility = {"$or": [*stale_embedding_filter()["$or"],
+                                {"embedding_source_text": {"$ne": search_text}}]}
         document = collection.find_one_and_update({"_id": template_id, "source_question": source_document["source_question"],
             "$and": [eligibility, {"$or": [{"embedding_claim_until": {"$exists": False}},
                 {"embedding_claim_until": {"$lt": now}}]}]},
@@ -140,13 +149,26 @@ class QueryTemplateRepository:
         try:
             search_text = document.get("semantic_search_text") or normalized_question(document["source_question"])
             vector = llm_router.embed_query(search_text)
-            collection.update_one({"_id": template_id, "embedding_claim": claim}, {
+            saved = collection.update_one({"_id": template_id, "embedding_claim": claim,
+                                   "source_question": source_document["source_question"]}, {
                 "$set": {"embedding": vector, "embedding_model": SCHEMA_EMBEDDING_MODEL,
-                    "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION},
+                    "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
+                    "embedding_source_text": search_text},
                 "$unset": {"embedding_claim": "", "embedding_claim_until": ""}})
+            if getattr(saved, "matched_count", None) == 0:
+                # Another approval changed the source while embedding. Release
+                # our claim and let the normal missing-vector migration retry it.
+                collection.update_one({"_id": template_id, "embedding_claim": claim}, {
+                    "$unset": {"embedding_claim": "", "embedding_claim_until": "",
+                               "embedding": "", "embedding_source_text": ""}})
         except Exception:
+            remove = {"embedding_claim": "", "embedding_claim_until": ""}
+            if document.get("embedding_source_text") != search_text:
+                # A failed refresh must not leave a vector for different text
+                # eligible, and a missing vector can use the existing migration.
+                remove.update(embedding="", embedding_source_text="")
             collection.update_one({"_id": template_id, "embedding_claim": claim}, {
-                "$unset": {"embedding_claim": "", "embedding_claim_until": ""}})
+                "$unset": remove})
             logging.getLogger(__name__).warning("template_embedding_failed template_id=%s", template_id)
 
     def reembed_stale_embeddings(self, limit=100):

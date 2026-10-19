@@ -22,6 +22,7 @@ from services.query_parameter_binder import bind_query_parameters
 from services.query_entity_guard import template_entity_mismatch
 from database.query_template_repository import QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
 from services.query.generation_examples import remember_candidates
+from services.query.templates.matching import question_matches, current_catalog, used_schema_matches, latest_row_group, approval_order
 
 logger = logging.getLogger("services.semantic_template_cache")
 logger.setLevel(logging.INFO)
@@ -68,8 +69,9 @@ def operation_compatible(document, question):
     row_stages = {"$lookup", "$match", "$limit", "$skip", "$sort", "$project", "$unwind",
                   "$set", "$addFields", "$unset", "$replaceRoot", "$replaceWith"}
     return isinstance(stages, list) and all(
-        isinstance(stage, dict) and len(stage) == 1 and next(iter(stage)) in row_stages
-        for stage in stages)
+        isinstance(stage, dict) and len(stage) == 1 and (
+            next(iter(stage)) in row_stages or "$group" in stage and latest_row_group(stages, index))
+        for index, stage in enumerate(stages))
 
 
 class SemanticTemplateCache:
@@ -89,16 +91,13 @@ class SemanticTemplateCache:
         emit("SemanticTemplateCache", "running")
         try:
             db = self.database if self.database is not None else get_database()
-            migrated = QueryTemplateRepository(db).reembed_stale_embeddings()
-            if migrated:
-                logger.info("template_search_embedding_migration request_id=%s migrated=%d representation_version=%d",
-                    current_request_id(), migrated, EMBEDDING_REPRESENTATION_VERSION)
-            # Projection omits full schema and infrastructure claim fields.
-            documents = [decode_record(document) for document in db[QUERY_TEMPLATES_COLLECTION].find({"status": "active", "trusted": {"$ne": False},
+            eligibility = {"status": "active", "trusted": {"$ne": False},
                 "positive_feedback_count": {"$gt": 0},
-                "user_id": DEFAULT_USER_ID, "success_count": {"$gt": 0}, "embedding_model": SCHEMA_EMBEDDING_MODEL,
-                "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
-                "embedding": {"$exists": True}}, {"schema_spec": 0})]
+                "user_id": DEFAULT_USER_ID, "success_count": {"$gt": 0}}
+            def load_documents():
+                return sorted((decode_record(document) for document in db[QUERY_TEMPLATES_COLLECTION].find(eligibility, {})),
+                              key=approval_order, reverse=True)
+            documents = load_documents()
             logger.info("template_search_candidates request_id=%s eligible_count=%d", current_request_id(), len(documents))
             if not documents:
                 metadata["miss_reason"] = "no_eligible_templates"
@@ -116,16 +115,36 @@ class SemanticTemplateCache:
             existing = set(db.list_collection_names())
             from services.schema_bootstrap_service import schema_bootstrap_service
             version = schema_bootstrap_service.status().get("schema_version")
+            catalog = current_catalog()
             # Identical source questions need no similarity approximation or embedding call.
-            exact_question = " ".join(question.casefold().split())
             for document in documents:
-                if " ".join(document.get("source_question", "").casefold().split()) == exact_question:
-                    if self.compatible(document, question, existing, version):
+                if question_matches(document, question):
+                    if self.compatible(document, question, existing, version, catalog):
+                        exact = " ".join(document["source_question"].casefold().split()) == " ".join(question.casefold().split())
+                        match_type = "exact_question" if exact else "parameterized_question"
                         metadata.update({"hit": True, "template_id": document["template_id"],
-                            "similarity_score": 1.0, "match_type": "exact_question"})
-                        logger.info("template_search_hit request_id=%s template_id=%s match_type=exact_question", current_request_id(), document["template_id"])
+                            "similarity_score": 1.0, "match_type": match_type})
+                        logger.info("template_search_hit request_id=%s template_id=%s match_type=%s", current_request_id(), document["template_id"], match_type)
                         return document, metadata
             logger.info("template_search_exact_complete request_id=%s outcome=no_compatible_exact_match", current_request_id())
+            # Vector availability must not block a deterministic question match.
+            # Migration failure still permits already-current semantic candidates.
+            try:
+                migrated = QueryTemplateRepository(db).reembed_stale_embeddings()
+                if migrated:
+                    documents = load_documents()
+                    logger.info("template_search_embedding_migration request_id=%s migrated=%d representation_version=%d",
+                        current_request_id(), migrated, EMBEDDING_REPRESENTATION_VERSION)
+            except Exception as exc:
+                logger.warning("template_search_embedding_migration_failed request_id=%s error_type=%s",
+                               current_request_id(), type(exc).__name__)
+            documents = [doc for doc in documents if doc.get("embedding_model") == SCHEMA_EMBEDDING_MODEL
+                         and doc.get("embedding_representation_version") == EMBEDDING_REPRESENTATION_VERSION
+                         and doc.get("embedding") and ("embedding_source_text" not in doc or
+                             doc["embedding_source_text"] == normalized_question(doc.get("source_question", "")))]
+            if not documents:
+                metadata["miss_reason"] = "no_eligible_templates"
+                return None, metadata
             logger.info("template_search_embedding_started request_id=%s", current_request_id())
             vector = llm_router.embed_query(normalized_question(question))
             logger.info("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
@@ -143,11 +162,13 @@ class SemanticTemplateCache:
                 else:
                     eligible.append(document)
             ranked = sorted(((cosine(vector, doc.get("embedding", [])), doc) for doc in eligible),
-                            key=lambda item: item[0], reverse=True)[:SEMANTIC_TEMPLATE_TOP_K]
+                            key=lambda item: item[0], reverse=True)
             metadata["best_similarity_score"] = ranked[0][0] if ranked else None
-            remember_candidates(question, ranked)
+            remember_candidates(question, ranked[:SEMANTIC_TEMPLATE_TOP_K])
             metadata["miss_reason"] = "no_compatible_candidate_above_threshold"
-            for rank, (score, document) in enumerate(ranked, 1):
+            compatible = [(score, doc) for score, doc in ranked
+                          if self.compatible(doc, question, existing, version, catalog)][:SEMANTIC_TEMPLATE_TOP_K]
+            for rank, (score, document) in enumerate(compatible, 1):
                 logger.info("template_search_candidate request_id=%s rank=%d template_id=%s operation=%s pure_cosine_similarity=%.4f threshold=%.4f",
                     current_request_id(), rank, document.get("template_id"), document.get("operation"), score, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD)
                 if score < SEMANTIC_TEMPLATE_MIN_THRESHOLD:
@@ -157,7 +178,6 @@ class SemanticTemplateCache:
                     metadata["weak_match"] = True
                     logger.info("template_search_rejected request_id=%s template_id=%s reason=below_suggest_threshold score=%.4f", current_request_id(), document.get("template_id"), score)
                     continue
-                if not self.compatible(document, question, existing, version): continue
                 metadata.pop("miss_reason", None)
                 metadata.update({"hit": True, "template_id": document["template_id"], "similarity_score": score})
                 logger.info("template_search_hit request_id=%s template_id=%s score=%.4f match_type=semantic", current_request_id(), document["template_id"], score)
@@ -177,7 +197,7 @@ class SemanticTemplateCache:
                  message=f"Similar template detected ({metadata['similarity_score']:.0%})" if metadata["hit"] else "No compatible template")
 
     @staticmethod
-    def compatibility_reason(document, question, collections, schema_version=None):
+    def compatibility_reason(document, question, collections, schema_version=None, current_schema=None):
         try:
             if document.get("status") != "active": return "inactive_template"
             if document.get("trusted") is False: return "untrusted_template"
@@ -192,9 +212,10 @@ class SemanticTemplateCache:
             if not document.get("source_question") or not document.get("semantic_text"): return "missing_semantic_metadata"
             if not document.get("collections") or not set(document["collections"]) <= collections: return "collection_missing"
             if any(name == QUERY_TEMPLATES_COLLECTION or name.split(".")[-1].startswith("_system_") for name in document["collections"]): return "internal_collection"
-            if schema_version and document.get("schema_version") != schema_version: return "schema_version_mismatch"
+            if schema_version and document.get("schema_version") != schema_version and not used_schema_matches(document, current_schema):
+                return "schema_version_mismatch"
             specs = document["parameter_schema"]
-            if any("source_path" not in spec or "example" not in spec or spec.get("type") not in {
+            if not isinstance(specs, dict) or any(not isinstance(spec, dict) or "source_path" not in spec or "example" not in spec or spec.get("type") not in {
                     "integer", "number", "boolean", "string", "date", "objectId", "array", "object", "null"} for spec in specs.values()): return "invalid_parameter_metadata"
             bound = bind_query_parameters(document["template"], {key: spec["example"] for key, spec in specs.items()})
             if bound.get("operation") != document["operation"] or bound.get("collection") not in document["collections"]: return "query_metadata_mismatch"
@@ -204,8 +225,8 @@ class SemanticTemplateCache:
         except (KeyError, ValueError, TypeError): return "malformed_template_or_binding"
 
     @staticmethod
-    def compatible(document, question, collections, schema_version=None):
-        reason = SemanticTemplateCache.compatibility_reason(document, question, collections, schema_version)
+    def compatible(document, question, collections, schema_version=None, current_schema=None):
+        reason = SemanticTemplateCache.compatibility_reason(document, question, collections, schema_version, current_schema)
         logger.info("template_search_compatibility request_id=%s template_id=%s accepted=%s reason=%s requested_operation=%s stored_operation=%s",
             current_request_id(), document.get("template_id"), reason is None, reason or "compatible",
             operation_hint(question), document.get("operation"))

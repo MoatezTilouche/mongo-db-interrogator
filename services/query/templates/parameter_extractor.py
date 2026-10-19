@@ -123,10 +123,7 @@ def coerce(value, specification):
     return deepcopy(value)
 
 
-def extract_parameters(question, document):
-    from services.query_entity_guard import template_entity_mismatch
-    if template_entity_mismatch(document, question):
-        raise TemplateParameterExtractionError("entity_mismatch")
+def _parameter_pattern(document):
     source = document["source_question"]
     specs = _effective_specs(source, document["parameter_schema"])
     # Identical wording with substituted literals is unambiguous and requires no LLM.
@@ -167,7 +164,23 @@ def extract_parameters(question, document):
         pattern.extend([re.escape(source[last:start]), "(" + capture + ")"])
         names.append(name); last = end
     pattern.append(re.escape(source[last:]))
-    match = None if ambiguous else re.fullmatch("".join(pattern), question, re.I)
+    return specs, "".join(pattern), names, ambiguous
+
+
+def question_pattern(document):
+    """Identity of approved wording, replacing only its actual parameter slots."""
+    _, pattern, names, ambiguous = _parameter_pattern(document)
+    if ambiguous:
+        return " ".join(document["source_question"].casefold().split())
+    return json.dumps([pattern.casefold(), names], separators=(",", ":"))
+
+
+def _deterministic_parameters(question, document):
+    from services.query_entity_guard import template_entity_mismatch
+    if template_entity_mismatch(document, question):
+        raise TemplateParameterExtractionError("entity_mismatch")
+    specs, pattern, names, ambiguous = _parameter_pattern(document)
+    match = None if ambiguous else re.fullmatch(pattern, question, re.I)
     extracted = {}
     if match:
         for name, raw in zip(names, match.groups()):
@@ -183,7 +196,15 @@ def extract_parameters(question, document):
         for name, spec in specs.items():
             if name not in extracted and (spec.get("source_visible") is False or spec.get("user_variable") is False):
                 extracted[name] = coerce(spec["example"], spec)
-        if set(extracted) == set(specs): return extracted, "deterministic"
+        if set(extracted) == set(specs): return extracted, specs, ambiguous
+    return None, specs, ambiguous
+
+
+def extract_parameters(question, document):
+    extracted, specs, ambiguous = _deterministic_parameters(question, document)
+    if extracted is not None:
+        return extracted, "deterministic"
+    source = document["source_question"]
     # A small typed extraction call handles paraphrases and values not reliably parseable.
     types = {"integer": int, "number": float, "boolean": bool, "string": str,
              "date": str, "objectId": str, "array": list[Any], "object": dict[str, Any], "null": type(None)}

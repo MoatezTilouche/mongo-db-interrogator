@@ -104,7 +104,7 @@ def test_incompatible_template_cannot_consume_top_k_slot(monkeypatch, caplog):
     monkeypatch.setattr(module.llm_router, "embed_query", Mock(return_value=[1., 0.]))
     from services.schema_bootstrap_service import schema_bootstrap_service
     monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
-    selected, metadata = SemanticTemplateCache(db).lookup("give me status about this request REQ-220148108")
+    selected, metadata = SemanticTemplateCache(db).lookup("show status for request REQ-220148108")
     assert selected["template_id"] == request["template_id"]
     assert metadata["hit"]
     assert "reason=entity_mismatch" in caplog.text
@@ -133,7 +133,7 @@ def test_similarity_thresholds(monkeypatch, score, hit, weak, caplog):
     monkeypatch.setattr(module, "cosine", lambda *args: score)
     from services.schema_bootstrap_service import schema_bootstrap_service
     monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
-    candidate, metadata = SemanticTemplateCache(db).lookup(NEW)
+    candidate, metadata = SemanticTemplateCache(db).lookup("Orders linked to command CMD-000009999999 please")
     assert bool(candidate) == hit
     assert metadata["hit"] == hit
     assert bool(metadata.get("weak_match")) == weak
@@ -324,7 +324,7 @@ def test_new_template_persists_normalized_question_as_embedding_text(monkeypatch
     generated = {"template": doc["template"], "parameters": {"filter_commandId": "CMD-000009350132"},
         "semantic_intent": "LLM wording that is deliberately different"}
     repository.record_success(generated, "req_test", SOURCE, doc["schema_spec"])
-    inserted = collection.update_one.call_args_list[0].args[1]["$setOnInsert"]
+    inserted = collection.update_one.call_args_list[0].args[1]["$set"]
     assert inserted["semantic_search_text"] == normalized_question(SOURCE)
     assert inserted["semantic_search_text"] != generated["semantic_intent"]
 
