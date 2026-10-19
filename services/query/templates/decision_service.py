@@ -6,6 +6,8 @@ import sys as _sys
 _sys.modules[__name__] = _sys.modules[__spec__.name]
 setattr(_sys.modules["services"], "template_decision_service", _sys.modules[__spec__.name])
 import logging
+import re
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from uuid import uuid4
@@ -28,6 +30,11 @@ from services.filter_value_resolution import apply_value_resolution, parameteriz
 from services.query.dates.normalization import apply_date_normalization
 
 logger = logging.getLogger("services.template_decision_service")
+
+
+def _validation_reason(error):
+    reason = error.to_dict().get("code")
+    return reason if isinstance(reason, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason) else "invalid_query"
 
 
 class TemplateDecisionService:
@@ -64,8 +71,10 @@ class TemplateDecisionService:
                 repository = QueryTemplateRepository()
                 document = repository.get(payload.template_id)
                 from services.schema_bootstrap_service import schema_bootstrap_service
-                if not document or not SemanticTemplateCache.compatible(document, pending["question"],
-                        set(get_database().list_collection_names()), schema_bootstrap_service.status().get("schema_version")):
+                with request_context(request_id):
+                    compatible = document and SemanticTemplateCache.compatible(document, pending["question"],
+                        set(get_database().list_collection_names()), schema_bootstrap_service.status().get("schema_version"))
+                if not compatible:
                     raise HTTPException(409, "Template is no longer compatible. Choose Regenerate.")
                 with request_context(request_id), capture_usage() as usage, capture_workflow() as trace:
                     emit("TemplateDecision", "completed", message="Template selected")
@@ -88,8 +97,20 @@ class TemplateDecisionService:
                     logger.info("template_parameter_extraction_completed request_id=%s parameter_extraction_ms=%.2f method=%s", request_id, extraction_ms, method)
                     generated = {"template": document["template"], "parameters": parameters, "semantic_intent": document["semantic_text"]}
                     query = stage("QueryParameterBinder", bind_query_parameters, document["template"], parameters)
+                    validation_stage = "schema"
+
+                    def validate_reuse(candidate):
+                        nonlocal validation_stage
+                        validation_stage = "validator"
+                        validated = stage("ValidatorAgent", ValidatorAgent().validate, candidate, schema_spec)
+                        before_dates = validated
+                        validation_stage = "date_normalization"
+                        validated = apply_date_normalization(validated, question=pending["question"])
+                        return validated, validated != before_dates
+
                     try:
                         schema_spec = template_validation_schema(document["schema_spec"])
+                        validation_stage = "preferences"
                         from services.user_preference_service import UserPreferenceService, apply_preferences_to_query
                         preference_service = UserPreferenceService(user_id=DEFAULT_USER_ID)
                         preference_catalog = {"collections": schema_spec.get("collections", {})}
@@ -97,25 +118,42 @@ class TemplateDecisionService:
                             pending["question"], preference_catalog, request_id,
                             selected_collections={query.get("collection")} if query.get("collection") else None,
                         )
+                        before_preferences = deepcopy(query)
                         applied_preferences = apply_preferences_to_query(
                             query, preferences, DEFAULT_USER_ID, pending["question"],
                         )
-                        query = stage("ValidatorAgent", ValidatorAgent().validate, query, schema_spec)
-                        before_dates = query
-                        query = apply_date_normalization(query, question=pending["question"])
-                        dates_changed = query != before_dates
-                    except QueryValidationError:
+                        preferences_changed = query != before_preferences
+                        try:
+                            query, dates_changed = validate_reuse(query)
+                        except QueryValidationError as preference_error:
+                            if not preferences_changed:
+                                raise
+                            rejected_stage = validation_stage
+                            # Optional preferences must not invalidate an approved
+                            # query. The unmodified query still passes every guard.
+                            query, dates_changed = validate_reuse(before_preferences)
+                            applied_preferences = []
+                            preferences_changed = False
+                            cache["template_reuse_preferences_skipped"] = True
+                            cache["template_reuse_preferences_failure_reason"] = _validation_reason(preference_error)
+                            cache["template_reuse_preferences_failure_stage"] = rejected_stage
+                            logger.info("template_reuse_preferences_skipped request_id=%s reason=%s stage=%s",
+                                        request_id, _validation_reason(preference_error), rejected_stage)
+                    except QueryValidationError as exc:
+                        reason = _validation_reason(exc)
                         cache["template_reuse_validation_failed"] = True
-                        logger.warning("template_reuse_validation_failed request_id=%s", request_id)
+                        cache["template_reuse_validation_failure_reason"] = reason
+                        cache["template_reuse_validation_failure_stage"] = validation_stage
+                        logger.warning("template_reuse_validation_failed request_id=%s reason=%s stage=%s",
+                                       request_id, reason, validation_stage)
                         repository.record_failure(payload.template_id)
-                        raise HTTPException(422, "Template failed validation. Choose Regenerate.") from None
+                        raise HTTPException(422, f"Template failed validation ({reason}; stage={validation_stage}). Choose Regenerate.") from None
                     resolution_rules = active_resolution_rules()
                     resolved_query = apply_value_resolution(query, schema_spec, resolution_rules)
-                    values_changed = dates_changed or resolved_query != query
+                    values_changed = preferences_changed or dates_changed or resolved_query != query
                     query = resolved_query
-                    if values_changed:
-                        generated = parameterize_resolved_query(generated, query)
-                        parameters = generated["parameters"]
+                    generated = parameterize_resolved_query(generated, query)
+                    parameters = generated["parameters"]
                     cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                     from services.learned_optimization_service import LearnedOptimizationService
                     from services.query_parameter_binder import template_from_concrete

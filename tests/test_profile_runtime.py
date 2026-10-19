@@ -606,6 +606,78 @@ def test_template_date_failure_uses_existing_regenerate_response(profiles, monke
     failure.assert_called_once()
 
 
+@pytest.mark.parametrize("invalid_preference", [False, True])
+def test_template_preferences_do_not_reject_valid_saved_query(profiles, monkeypatch, invalid_preference, caplog):
+    from services.user_preference_service import UserPreferenceService
+    from services.learned_optimization_service import LearnedOptimizationService
+    from services.query_parameter_binder import bind_query_parameters
+    profiles[C]["fields"][T] = date_spec("%d/%m/%Y", sortable=False)
+    publish(profiles)
+    initial = query({I: "qzv_identifier_829"})
+    module, service, document, failure, execute = template_runtime(monkeypatch, profiles, initial, "Find records")
+    original = deepcopy(document)
+    preference = {"type": "sorting_preference", "collection": C, "field": T if invalid_preference else F, "direction": -1}
+    monkeypatch.setattr(UserPreferenceService, "retrieve_for_query", lambda *args, **kwargs: [preference])
+    monkeypatch.setattr(module.QueryCostGuard, "analyze", lambda *args: {"status": "safe", "query_signature": "qzv_signature_797"})
+    monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
+    monkeypatch.setattr(LearnedOptimizationService, "apply", lambda self, candidate, *args: (candidate, None))
+    with caplog.at_level("INFO"):
+        result = service.decide("qzv_request_823", SimpleNamespace(action="reuse", template_id="qzv_template_827"))
+    assert result["execution_success"]
+    assert document == original
+    assert bind_query_parameters(result["generated_query"]["template"], result["query_parameters"]) == result["validated_query"]
+    failure.assert_not_called()
+    execute.assert_called_once()
+    if invalid_preference:
+        assert result["validated_query"]["sort"] == []
+        assert result["applied_preferences"] == []
+        assert result["semantic_template_cache"]["template_reuse_preferences_skipped"]
+        assert "reason=date_string_ordering" in caplog.text
+    else:
+        assert result["validated_query"]["sort"] == [[F, -1]]
+        assert result["applied_preferences"]
+        assert result["query_template_id"] is None
+
+
+@pytest.mark.parametrize("phase,code", [("validator", "profile_validation"), ("date_normalization", "date_string_ordering")])
+def test_template_validation_failure_has_safe_reason_and_stage(profiles, monkeypatch, caplog, phase, code):
+    from fastapi import HTTPException
+    module, service, _, failure, execute = template_runtime(monkeypatch, profiles, query(), "Find records")
+    error = QueryValidationError("qzv_private_exception_839", code=code)
+    if phase == "validator":
+        monkeypatch.setattr(module.ValidatorAgent, "validate", Mock(side_effect=error))
+    else:
+        monkeypatch.setattr(module, "apply_date_normalization", Mock(side_effect=error))
+    history = Mock()
+    module.get_database().__getitem__ = Mock(return_value=history)
+    with caplog.at_level("WARNING"), pytest.raises(HTTPException) as rejected:
+        service.decide("qzv_request_823", SimpleNamespace(action="reuse", template_id="qzv_template_827"))
+    assert rejected.value.status_code == 422
+    assert code in rejected.value.detail and phase in rejected.value.detail
+    assert "reason=" + code in caplog.text and "stage=" + phase in caplog.text
+    assert "qzv_private_exception_839" not in caplog.text + rejected.value.detail
+    cache = history.update_one.call_args.args[1]["$set"]["semantic_template_cache"]
+    assert cache["template_reuse_validation_failure_reason"] == code
+    assert cache["template_reuse_validation_failure_stage"] == phase
+    failure.assert_called_once()
+    execute.assert_not_called()
+
+
+def test_invalid_template_still_rejected_when_preferences_are_skipped(profiles, monkeypatch):
+    from fastapi import HTTPException
+    from services.user_preference_service import UserPreferenceService
+    publish(profiles)
+    module, service, _, failure, execute = template_runtime(monkeypatch, profiles, query({"qzv_missing_853": 1}), "Find records")
+    monkeypatch.setattr(UserPreferenceService, "retrieve_for_query", lambda *args, **kwargs: [{
+        "type": "sorting_preference", "collection": C, "field": T, "direction": -1}])
+    with pytest.raises(HTTPException) as rejected:
+        service.decide("qzv_request_823", SimpleNamespace(action="reuse", template_id="qzv_template_827"))
+    assert rejected.value.status_code == 422
+    assert "profile_validation" in rejected.value.detail
+    failure.assert_called_once()
+    execute.assert_not_called()
+
+
 @pytest.mark.parametrize("repair", [False, True])
 def test_optimization_and_repair_order(profiles, monkeypatch, repair):
     import services.query_optimization_service as module
