@@ -199,6 +199,14 @@ class KnowledgeIngestionService:
             "embedding": [], "embedding_model": KNOWLEDGE_EMBEDDING_MODEL,
             "created_at": now, "updated_at": now,
         }
+        if analysis.get("directives"):
+            from services.query.plans.directives import validate_directive
+            catalog = self.schema_provider.get_catalog().get("collections", {})
+            def profile_lookup(name):
+                from services.profiling.accessors import get_profile
+                return catalog.get(name, {}).get("facts") or get_profile(name)
+            record["directives"] = [validate_directive({**item, "status": "needs_review"}, profile_lookup)
+                                    for item in analysis["directives"]]
         if explicit:
             record["source_feedback_id"] = request_id
         # On confirmation retain the original stored definition and source

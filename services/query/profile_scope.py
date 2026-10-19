@@ -1,6 +1,7 @@
 """Collection/alias scope shared by profile validation and date normalization."""
 from copy import deepcopy
 import logging
+import os
 
 from services.query.profile_facts import known_path, normalize_path, safe_profile
 
@@ -52,6 +53,14 @@ class Scope:
 
 def _assign(scope, path, expression, before):
     """Carry parent-object aliases and explicit object output shapes forward."""
+    if os.getenv("PLAN_MODE", "off").strip().lower() == "on" and isinstance(expression, dict) and expression == {"$first": "$$ROOT"}:
+        # Deterministic latest-per-key groups retain the whole input document.
+        scope.fields[path] = None
+        for child, spec in before.fields.items():
+            scope.fields[path + "." + child] = deepcopy(spec)
+            if child in before.origins:
+                scope.origins[path + "." + child] = before.origins[child]
+        return
     source = expression[1:] if isinstance(expression, str) and expression.startswith("$") and not expression.startswith("$$") else None
     scope.fields[path] = deepcopy(before.spec(source)) if source else None
     scope.origins.pop(path, None)
@@ -155,6 +164,16 @@ def advance_scope(scope, operator, value):
     elif operator == "$unwind":
         if isinstance(value, dict) and value.get("includeArrayIndex"):
             scope.set_field(value["includeArrayIndex"])
+    elif (os.getenv("PLAN_MODE", "off").strip().lower() == "on" and operator == "$replaceRoot"
+          and isinstance(value, dict) and isinstance(value.get("newRoot"), str) and value["newRoot"].startswith("$")):
+        prefix = value["newRoot"][1:] + "."
+        restored = {path[len(prefix):]: spec for path, spec in scope.fields.items() if path.startswith(prefix)}
+        if restored:
+            scope.fields = restored
+            scope.origins = {path[len(prefix):]: origin for path, origin in scope.origins.items() if path.startswith(prefix)}
+        else:
+            scope.fields = None
+            scope.unknown = True
     elif operator not in {"$match", "$sort", "$limit", "$skip", "$unwind"}:
         scope.fields = None
         scope.unknown = True

@@ -64,24 +64,30 @@ def _log(collection, field, original, resolved, reason, closest=None):
                 json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
 
 
-def resolve_filter_value(collection, field, user_value, rules):
+def resolve_filter_value(collection, field, user_value, rules, *, profile_lookup=None):
     if not KNOWLEDGE_VALUE_RESOLUTION_ENABLED or not isinstance(user_value, str):
         return [user_value], "unchanged"
     if collection + "." + field in KNOWLEDGE_CASE_SENSITIVE_FIELDS:
         return [user_value], "case_sensitive"
-    values = get_value_catalog(collection, field)
+    supplied_profile = profile_lookup(collection) if profile_lookup is not None else None
+    supplied_values = None
+    if supplied_profile and safe_field(supplied_profile, field):
+        spec = supplied_profile.get("fields", {}).get(field, {})
+        if spec.get("kind") == "categorical":
+            supplied_values = {row["value"] for row in spec.get("values", [])}
+    values = supplied_values if profile_lookup is not None else get_value_catalog(collection, field)
     if values is None:
-        reason = get_value_catalog_status(collection, field)
+        reason = "not_categorical" if profile_lookup is not None else get_value_catalog_status(collection, field)
         if reason == "catalog_unavailable":
             _log(collection, field, user_value, [user_value], reason)
         return [user_value], reason
     variants = sorted(value for value in values if _normalize(value) == _normalize(user_value))
     separator_variant = False
     if not variants and VALUE_SEPARATOR_MATCHING_ENABLED:
-        profile = get_profile(collection)
+        profile = supplied_profile if profile_lookup is not None else get_profile(collection)
         if (profile is not None and safe_field(profile, field)
                 and profile.get("fields", {}).get(field, {}).get("kind") == "categorical"):
-            stored = get_categorical_values(collection, field) or set()
+            stored = supplied_values if profile_lookup is not None else get_categorical_values(collection, field) or set()
             groups = {}
             for value in sorted(stored):
                 groups.setdefault(normalize_for_match(value)[0], []).append(value)
@@ -135,11 +141,16 @@ def _contains_regex(value):
     return isinstance(value, dict) and ("$regex" in value or any(_contains_regex(child) for child in value.values()))
 
 
-def apply_value_resolution(query, selected_schema, rules):
+def apply_value_resolution(query, selected_schema, rules, *, profile_lookup=None):
     if not KNOWLEDGE_VALUE_RESOLUTION_ENABLED:
         return query
     result = deepcopy(query)
     catalog = selected_schema.get("collections", selected_schema)
+
+    def resolve_value(collection, field, value):
+        if profile_lookup is not None:
+            return resolve_filter_value(collection, field, value, rules, profile_lookup=profile_lookup)[0]
+        return resolve_filter_value(collection, field, value, rules)[0]
 
     def origin(field, collection, aliases, blocked):
         if any(field == path or field.startswith(path + ".") for path in blocked):
@@ -151,7 +162,7 @@ def apply_value_resolution(query, selected_schema, rules):
 
     def condition(value, collection, field):
         if isinstance(value, str):
-            values, _ = resolve_filter_value(collection, field, value, rules)
+            values = resolve_value(collection, field, value)
             return (values[0] if len(values) == 1 else {"$in": values}), []
         if not isinstance(value, dict) or _contains_regex(value) or any(key in value for key in ("$oid", "$date", "$param")):
             return value, []
@@ -159,7 +170,7 @@ def apply_value_resolution(query, selected_schema, rules):
         extra = []
         for operator, child in list(value.items()):
             if operator in {"$eq", "$ne"} and isinstance(child, str):
-                values, _ = resolve_filter_value(collection, field, child, rules)
+                values = resolve_value(collection, field, child)
                 if len(values) == 1:
                     changed[operator] = values[0]
                 else:
@@ -172,7 +183,7 @@ def apply_value_resolution(query, selected_schema, rules):
             elif operator in {"$in", "$nin", "$all"} and isinstance(child, list):
                 expanded, groups = [], []
                 for item in child:
-                    values = resolve_filter_value(collection, field, item, rules)[0] if isinstance(item, str) else [item]
+                    values = resolve_value(collection, field, item) if isinstance(item, str) else [item]
                     expanded.extend(values)
                     if len(values) > 1:
                         groups.append({field: {"$in": values}})

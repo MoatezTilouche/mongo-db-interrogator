@@ -75,6 +75,11 @@ class KnowledgeRepository:
         """Operator re-embedding includes inactive candidates without changing status."""
         return list(self._collection().find({}))
 
+    def save_directives(self, knowledge_id: str, directives: list[dict[str, Any]]) -> bool:
+        """Store independently reviewed metadata without changing rule approval."""
+        result = self._collection().update_one({"_id": knowledge_id}, {"$set": {"directives": directives}})
+        return bool(result.matched_count)
+
     def save_embedding_if_missing(self, knowledge_id: str, vector: list[float], model: str) -> None:
         self._collection().update_one(
             {"_id": knowledge_id, "$or": [{"embedding": {"$exists": False}}, {"embedding": []}]},

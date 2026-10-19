@@ -1,0 +1,375 @@
+{
+  "question": "List three col_x with stateX Value_B",
+  "plan_json_schema": {
+    "title": "QueryPlan",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "collection": {
+        "type": "string",
+        "enum": [
+          "col_x"
+        ]
+      },
+      "task": {
+        "enum": [
+          "list",
+          "count",
+          "distinct",
+          "group_count",
+          "top_n",
+          "latest_per_key"
+        ],
+        "title": "Task",
+        "type": "string"
+      },
+      "filters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "field",
+            "op",
+            "value"
+          ],
+          "properties": {
+            "field": {
+              "type": "string",
+              "enum": [
+                "dateY",
+                "idZ",
+                "stateX"
+              ]
+            },
+            "op": {
+              "enum": [
+                "eq",
+                "ne",
+                "in",
+                "nin",
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "contains",
+                "exists"
+              ],
+              "title": "Op",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "select": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "dateY",
+                "idZ",
+                "stateX"
+              ]
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "order": {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "field",
+              "dir"
+            ],
+            "properties": {
+              "field": {
+                "type": "string",
+                "enum": [
+                  "dateY",
+                  "idZ",
+                  "stateX"
+                ]
+              },
+              "dir": {
+                "type": "integer",
+                "enum": [
+                  1,
+                  -1
+                ]
+              }
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "limit": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "group_by": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "dateY",
+            "idZ",
+            "stateX"
+          ]
+        }
+      },
+      "metric": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "count"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "distinct_field": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "dateY",
+              "idZ",
+              "stateX"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "uses_time": {
+        "title": "Uses Time",
+        "type": "boolean"
+      },
+      "time_field": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "dateY",
+              "idZ",
+              "stateX"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "join": {
+        "type": "null"
+      }
+    },
+    "required": [
+      "collection",
+      "task",
+      "filters",
+      "select",
+      "order",
+      "limit",
+      "group_by",
+      "metric",
+      "distinct_field",
+      "uses_time",
+      "time_field",
+      "join"
+    ]
+  },
+  "approved_directive": {
+    "collection": "col_x",
+    "status": "approved",
+    "type": "latest_per_key",
+    "key_field": "idZ",
+    "order_field": "dateY"
+  },
+  "plan": {
+    "collection": "col_x",
+    "task": "latest_per_key",
+    "filters": [
+      {
+        "field": "stateX",
+        "op": "eq",
+        "value": "Value_B"
+      }
+    ],
+    "select": null,
+    "order": null,
+    "limit": 3,
+    "group_by": [],
+    "metric": null,
+    "distinct_field": null,
+    "uses_time": false,
+    "time_field": null,
+    "join": null
+  },
+  "compiled_query": {
+    "collection": "col_x",
+    "operation": "aggregate",
+    "pipeline": [
+      {
+        "$addFields": {
+          "__plan_date": {
+            "$dateFromString": {
+              "dateString": "$dateY",
+              "format": "%d/%m/%Y",
+              "onError": null,
+              "onNull": null
+            }
+          }
+        }
+      },
+      {
+        "$sort": {
+          "__plan_date": -1,
+          "_id": -1
+        }
+      },
+      {
+        "$group": {
+          "_id": "$idZ",
+          "__plan_root": {
+            "$first": "$$ROOT"
+          }
+        }
+      },
+      {
+        "$replaceRoot": {
+          "newRoot": "$__plan_root"
+        }
+      },
+      {
+        "$match": {
+          "stateX": "Value_B"
+        }
+      },
+      {
+        "$limit": 3
+      },
+      {
+        "$unset": [
+          "__plan_date"
+        ]
+      }
+    ]
+  },
+  "envelope": {
+    "template": {
+      "collection": "col_x",
+      "operation": "aggregate",
+      "pipeline": [
+        {
+          "$addFields": {
+            "__plan_date": {
+              "$dateFromString": {
+                "dateString": "$dateY",
+                "format": "%d/%m/%Y",
+                "onError": null,
+                "onNull": null
+              }
+            }
+          }
+        },
+        {
+          "$sort": {
+            "__plan_date": -1,
+            "_id": -1
+          }
+        },
+        {
+          "$group": {
+            "_id": "$idZ",
+            "__plan_root": {
+              "$first": "$$ROOT"
+            }
+          }
+        },
+        {
+          "$replaceRoot": {
+            "newRoot": "$__plan_root"
+          }
+        },
+        {
+          "$match": {
+            "stateX": {
+              "$param": "pipeline_4_match_stateX"
+            }
+          }
+        },
+        {
+          "$limit": {
+            "$param": "limit"
+          }
+        },
+        {
+          "$unset": [
+            "__plan_date"
+          ]
+        }
+      ]
+    },
+    "parameters": {
+      "limit": 3,
+      "pipeline_4_match_stateX": "Value_B"
+    },
+    "semantic_intent": "latest_per_key col_x stateX"
+  }
+}

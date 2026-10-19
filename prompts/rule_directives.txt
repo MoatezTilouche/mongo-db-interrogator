@@ -1,0 +1,10 @@
+Propose structured directives justified by the supplied knowledge rule and stored profile.
+Return a JSON object with a directives array. Never invent collections, fields, values or identifiers.
+Allowed directive types:
+source_mapping: concept_terms, collection.
+latest_per_key: collection, key_field (identifier or categorical), order_field (date).
+default_filter: collection, field, op, values, concept_terms.
+case_insensitive_fields: collection, fields.
+Set every status to needs_review. Return an empty array if the text is insufficient.
+Rule text: $rule_text
+Stored profile: $profile_json

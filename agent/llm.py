@@ -202,6 +202,9 @@ class LLMRouter:
                 elif response_format:
                     client = client.bind(response_format=response_format)
                     response_format_type = response_format.get("type", "none")
+                elif getattr(structured_output_schema, "plan_output", False):
+                    client = client.bind(response_format=schema_response_format(structured_output_schema))
+                    response_format_type = "json_schema"
                 elif role == "feedback_analysis" and hasattr(structured_output_schema, "feedback_response_format"):
                     # Bind per invocation, leaving other roles' settings intact.
                     client = client.bind(response_format=structured_output_schema.feedback_response_format())
@@ -221,7 +224,7 @@ class LLMRouter:
                     response_format_type = "none"
                 using_schema = response_format_type == "json_schema"
                 response = client.invoke(request_messages)
-                if structured_output_schema is not None:
+                if structured_output_schema is not None and not getattr(structured_output_schema, "plan_output", False):
                     self._validate_structured(getattr(response, "content", "") or "", structured_output_schema)
                 return response
             except Exception as exc:

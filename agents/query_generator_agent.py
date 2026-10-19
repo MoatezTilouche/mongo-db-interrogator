@@ -61,6 +61,17 @@ class QueryGeneratorAgent:
     def generate(self, question: str, schema_spec: dict[str, Any], plan: dict[str, Any] | None = None,
                  operation_hint: str = "unknown", user_preferences: list[dict[str, Any]] | None = None,
                  database_knowledge: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        from services.query.plans.config import PlanConfig
+        config = PlanConfig.from_env()
+        if config.enabled:
+            from services.query.plans.generation import generate_with_plan
+            return generate_with_plan(question, schema_spec, user_preferences or [], database_knowledge or [], config,
+                llm_router.invoke, lambda: self._generate_freeform(question, schema_spec, plan, operation_hint,
+                                                                  user_preferences, database_knowledge))
+        return self._generate_freeform(question, schema_spec, plan, operation_hint, user_preferences, database_knowledge)
+
+    def _generate_freeform(self, question, schema_spec, plan=None, operation_hint="unknown", user_preferences=None,
+                           database_knowledge=None):
         # `plan` is accepted for compatibility but intentionally never enters the prompt.
         operation = normalize_operation(operation_hint)
         inputs = build_prompt_inputs(schema_spec, question, database_knowledge, user_preferences)

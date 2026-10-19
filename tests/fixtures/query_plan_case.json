@@ -1,0 +1,9 @@
+{
+  "collection": "col_x",
+  "other_collection": "col_y",
+  "fields": {"state": "stateX", "date": "dateY", "identifier": "idZ", "number": "numQ", "text": "textR"},
+  "values": ["Value_A", "value_a", "Value_B"],
+  "identifier": "token_123",
+  "invented_identifier": "invented_456",
+  "golden": {"semantic_intent": "fixture intent", "template": {"operation": "find", "collection": "col_x", "filter": {"stateX": {"$param": "filter_stateX"}}}, "parameters": {"filter_stateX": "Value_A"}}
+}

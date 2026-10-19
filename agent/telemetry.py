@@ -16,13 +16,16 @@ def current_request_id():
     return _request_id.get()
 
 @contextmanager
-def capture_usage():
+def capture_usage(*, propagate=False):
     records = []
+    parent = _records.get()
     token = _records.set(records)
     try:
         yield records
     finally:
         _records.reset(token)
+        if propagate and parent is not None:
+            parent.extend(records)
 def record_attempt(role, model, response, latency, fallback):
     usage = getattr(response, "usage_metadata", None) or {}
     if not usage:

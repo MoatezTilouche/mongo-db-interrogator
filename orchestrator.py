@@ -183,7 +183,12 @@ class OrchestratorAgent:
             for item in applied_knowledge:
                 for name in set(item.get("collections") or selected_collections) & selected_collections:
                     available_fields = catalog["collections"][name].get("fields", {})
-                    for field in item.get("fields", []):
+                    rule_fields = list(item.get("fields", []))
+                    from services.query.plans.config import PlanConfig
+                    if PlanConfig.from_env().enabled:
+                        from services.query.plans.directives import directive_field_references
+                        rule_fields.extend(sorted(directive_field_references(item, name) - set(rule_fields)))
+                    for field in rule_fields:
                         if field in available_fields:
                             schema_spec["collections"][name]["fields"][field] = deepcopy(available_fields[field])
             query_context["fields"] = {
