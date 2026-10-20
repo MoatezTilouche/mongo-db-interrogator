@@ -162,6 +162,7 @@ class QueryHistoryService:
             metadata = result.get("execution_metadata") or {}
             record = {
                 "semantic_template_cache": result.get("semantic_template_cache"),
+                "template_candidates": result.get("template_candidates", []),
                 "request_id": request_id, "user_id": DEFAULT_USER_ID, "question": question,
                 "original_question": result.get("original_question") or question,
                 "effective_question": result.get("effective_question") or question,

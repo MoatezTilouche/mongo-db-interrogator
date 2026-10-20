@@ -152,6 +152,89 @@ def test_similarity_thresholds(monkeypatch, score, hit, weak, caplog):
         assert suggestion["status"] == "similar_template_detected"
 
 
+def template_choice(index, source=None):
+    doc = document()
+    doc["template"]["limit"] = index + 1
+    signature = template_signature(doc["template"])
+    doc.update(_id="tpl_" + signature, template_id="tpl_" + signature, template_signature=signature,
+               source_question=source or f"Historical command lookup variant {index}")
+    doc["embedding"] = [1 - index / 100, (1 - (1 - index / 100) ** 2) ** .5]
+    return doc
+
+
+def choice_lookup(monkeypatch, rows):
+    import services.semantic_template_cache as module
+    from services.schema_bootstrap_service import schema_bootstrap_service
+    collection, db = Mock(), Mock()
+    collection.find.return_value = rows
+    db.__getitem__ = Mock(return_value=collection)
+    db.list_collection_names.return_value = ["orders"]
+    monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
+    monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_TOP_K", 5)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_MIN_THRESHOLD", .65)
+    monkeypatch.setattr(module, "SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD", .82)
+    embed = Mock(return_value=[1., 0.])
+    monkeypatch.setattr(module.llm_router, "embed_query", embed)
+    return SemanticTemplateCache(db), embed
+
+
+def test_suggests_top_three_compatible_templates_without_vectors_or_examples(monkeypatch):
+    rows = [template_choice(index) for index in range(5)]
+    unsafe = template_choice(6)
+    unsafe.update(trusted=False, embedding=[1., 0.])
+    cache, embed = choice_lookup(monkeypatch, [unsafe, *reversed(rows)])
+    selected, metadata = cache.lookup("Orders linked to command CMD-000009999999 please")
+    suggestion = cache.suggestion(selected, metadata)
+    candidates = suggestion["template_candidates"]
+    assert [item["template_id"] for item in candidates] == [row["template_id"] for row in rows[:3]]
+    assert [item["score"] for item in candidates] == sorted([item["score"] for item in candidates], reverse=True)
+    assert suggestion["similarity"]["template_id"] == candidates[0]["template_id"]
+    assert "embedding" not in json.dumps(suggestion) and "example" not in json.dumps(suggestion)
+    assert "template_candidates" not in suggestion["semantic_template_cache"]
+    assert len(suggestion["semantic_template_cache"]["candidate_matches"]) == 3
+    from api.schemas import QueryResponse
+    assert len(QueryResponse(request_id="req_choices", **suggestion).template_candidates) == 3
+    embed.assert_called_once()
+
+
+def test_exact_then_parameterized_then_semantic_choices(monkeypatch):
+    parameterized = template_choice(1, NEW)
+    parameterized["parameter_schema"]["filter_commandId"]["example"] = "CMD-000009999999"
+    exact = template_choice(2, SOURCE)
+    semantic = template_choice(0)
+    cache, embed = choice_lookup(monkeypatch, [parameterized, exact, semantic])
+    selected, metadata = cache.lookup(SOURCE)
+    candidates = cache.suggestion(selected, metadata)["template_candidates"]
+    assert [item["template_id"] for item in candidates] == [exact["template_id"], parameterized["template_id"], semantic["template_id"]]
+    assert [item["match_type"] for item in candidates] == ["exact_question", "parameterized_question", "semantic"]
+    embed.assert_called_once()
+
+
+def test_three_deterministic_choices_need_no_embedding(monkeypatch):
+    rows = [template_choice(index, SOURCE) for index in range(4)]
+    cache, embed = choice_lookup(monkeypatch, rows)
+    selected, metadata = cache.lookup(NEW)
+    assert len(cache.suggestion(selected, metadata)["template_candidates"]) == 3
+    embed.assert_not_called()
+
+
+def test_exact_choice_survives_optional_semantic_lookup_failure(monkeypatch):
+    exact, alternative = template_choice(0, SOURCE), template_choice(1)
+    cache, embed = choice_lookup(monkeypatch, [alternative, exact])
+    embed.side_effect = RuntimeError("Unavailable fixture embedding")
+    selected, metadata = cache.lookup(SOURCE)
+    assert selected == exact and metadata["hit"]
+    assert len(cache.suggestion(selected, metadata)["template_candidates"]) == 1
+
+
+def test_weak_alternatives_do_not_fill_three_choice_quota(monkeypatch):
+    rows = [template_choice(index) for index in (0, 10, 30, 40)]
+    cache, _ = choice_lookup(monkeypatch, rows)
+    selected, metadata = cache.lookup("Orders linked to command CMD-000009999999 please")
+    assert len(cache.suggestion(selected, metadata)["template_candidates"]) == 2
+
+
 def test_schema_miss_hands_ranked_examples_to_generation_without_extra_embedding(monkeypatch):
     import services.semantic_template_cache as module
     from agent.telemetry import request_context
@@ -383,6 +466,117 @@ def decision_setup(monkeypatch):
     save = Mock()
     monkeypatch.setattr(QueryHistoryService, "save_result", save)
     return module, service, doc, save
+
+
+class PendingChoices:
+    """In-memory Mongo predicate behavior for request-bound decision claims."""
+    def __init__(self):
+        self.row = None
+
+    def insert_one(self, row):
+        self.row = deepcopy(row)
+
+    def accepts(self, predicate):
+        for key, expected in predicate.items():
+            if key == "$or":
+                if not any(self.accepts(branch) for branch in expected):
+                    return False
+                continue
+            actual = self.row.get(key)
+            if isinstance(expected, dict):
+                if "$exists" in expected and (key in self.row) != expected["$exists"]:
+                    return False
+                if "$gt" in expected and (actual is None or actual <= expected["$gt"]):
+                    return False
+            elif (expected not in actual if isinstance(actual, list) else actual != expected):
+                return False
+        return True
+
+    def find_one_and_update(self, predicate, update):
+        if not self.row or not self.accepts(predicate):
+            return None
+        before = deepcopy(self.row)
+        self.row.update(update["$set"])
+        return before
+
+    def update_one(self, predicate, update):
+        if self.row and self.accepts(predicate):
+            self.row.update(update["$set"])
+
+
+def pending_choices(monkeypatch):
+    module, service, first, save = decision_setup(monkeypatch)
+    rows = [first, template_choice(1, SOURCE), template_choice(2, SOURCE)]
+    document_by_id = {row["template_id"]: row for row in rows}
+    monkeypatch.setattr(module.QueryTemplateRepository, "get", lambda self, identity: deepcopy(document_by_id[identity]))
+    collection = PendingChoices()
+    monkeypatch.setattr(service, "collection", lambda: collection)
+    selected, metadata = SemanticTemplateCache._matched_result([
+        (.98 - index / 10, row, "semantic") for index, row in enumerate(rows)], {"checked": True})
+    result = SemanticTemplateCache.suggestion(selected, metadata)
+    service.pause("req_test", NEW, result)
+    return module, service, rows, collection
+
+
+@pytest.mark.parametrize("index", [1, 2])
+def test_reuse_executes_selected_second_or_third_offered_template(monkeypatch, index):
+    module, service, rows, collection = pending_choices(monkeypatch)
+    monkeypatch.setattr(module.QueryCostGuard, "analyze", Mock(return_value={"status": "safe", "query_signature": "sig"}))
+    monkeypatch.setattr(module.PerformanceLogger, "record", Mock())
+    executor = Mock(return_value={"ok": True, "all_rows": [], "row_count": 0})
+    monkeypatch.setattr(module.ExecutorAgent, "execute", executor)
+    selected = rows[index]
+    payload = SimpleNamespace(action="reuse", template_id=selected["template_id"])
+    result = service.decide("req_test", payload)
+    assert result["execution_success"]
+    assert result["query_template_id"] == selected["template_id"]
+    assert executor.call_args.args[-1]["limit"] == selected["template"]["limit"]
+    assert result["semantic_template_cache"]["template_id"] == selected["template_id"]
+    assert result["semantic_template_cache"]["similarity_score"] == pytest.approx(.98 - index / 10)
+    assert collection.row["state"] == "completed"
+    with pytest.raises(HTTPException) as failure:
+        service.decide("req_test", SimpleNamespace(action="reuse", template_id=rows[0]["template_id"]))
+    assert failure.value.status_code == 409
+    executor.assert_called_once()
+
+
+@pytest.mark.parametrize("action", ["reuse", "regenerate"])
+@pytest.mark.parametrize("invalid", ["unoffered", "other_user", "expired", "claimed"])
+def test_template_choice_claim_rejects_unavailable_decisions(monkeypatch, action, invalid):
+    module, service, rows, collection = pending_choices(monkeypatch)
+    identity = rows[0]["template_id"]
+    if invalid == "unoffered":
+        identity = "tpl_not_offered"
+        # A legacy field cannot bypass a new decision's offered choices.
+        collection.row["template_id"] = identity
+    elif invalid == "other_user":
+        collection.row["user_id"] = "another_user"
+    elif invalid == "expired":
+        collection.row["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    else:
+        collection.row["state"] = "executing"
+    get = Mock(side_effect=AssertionError("An invalid choice must not load a template"))
+    monkeypatch.setattr(module.QueryTemplateRepository, "get", get)
+    with pytest.raises(HTTPException) as failure:
+        service.decide("req_test", SimpleNamespace(action=action, template_id=identity))
+    assert failure.value.status_code == 409
+    get.assert_not_called()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_regenerate_accepts_offered_choice_and_legacy_pending_record(monkeypatch, legacy):
+    _, service, rows, collection = pending_choices(monkeypatch)
+    selected = rows[1]["template_id"]
+    if legacy:
+        collection.row.pop("template_ids")
+        selected = rows[0]["template_id"]
+    from services.query_history_service import QueryHistoryService
+    run = Mock(return_value={"request_id": "req_test", "execution_success": True})
+    monkeypatch.setattr(QueryHistoryService, "run", run)
+    result = service.decide("req_test", SimpleNamespace(action="regenerate", template_id=selected))
+    assert result["execution_success"]
+    assert run.call_args.kwargs["skip_cache"] is True
+    assert collection.row["state"] == "completed"
 
 
 def test_reuse_binds_new_id_and_skips_query_agents(monkeypatch):

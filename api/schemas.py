@@ -15,11 +15,19 @@ class QueryRequest(BaseModel):
         return value.strip()
 
 
+class TemplateCandidate(BaseModel):
+    template_id: str
+    score: float
+    match_type: Literal["exact_question", "parameterized_question", "semantic"]
+    template_info: dict[str, Any]
+
+
 class QueryResponse(BaseModel):
     request_id: str
     status: str = "completed"
     similarity: dict[str, Any] | None = None
     template_info: dict[str, Any] | None = None
+    template_candidates: list[TemplateCandidate] = Field(default_factory=list, max_length=3)
     semantic_template_cache: dict[str, Any] | None = None
     query_template_id: str | None = None
     query_parameters: dict[str, Any] | None = None

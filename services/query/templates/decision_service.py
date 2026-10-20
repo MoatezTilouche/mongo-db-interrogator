@@ -45,15 +45,20 @@ class TemplateDecisionService:
         return collection
 
     def pause(self, request_id, question, result):
+        template_ids = list(dict.fromkeys(candidate["template_id"]
+            for candidate in result.get("template_candidates", [])[:3])) or [result["similarity"]["template_id"]]
         self.collection().insert_one({"_id": request_id, "user_id": DEFAULT_USER_ID, "state": "pending",
             "question": question, "template_id": result["similarity"]["template_id"],
+            "template_ids": template_ids,
             "cache": result["semantic_template_cache"], "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)})
 
     def decide(self, request_id, payload):
         collection = self.collection()
         claim = uuid4().hex
         pending = collection.find_one_and_update({"_id": request_id, "user_id": DEFAULT_USER_ID,
-            "template_id": payload.template_id, "state": "pending", "expires_at": {"$gt": datetime.now(timezone.utc)}},
+            "$or": [{"template_ids": payload.template_id},
+                    {"template_ids": {"$exists": False}, "template_id": payload.template_id}],
+            "state": "pending", "expires_at": {"$gt": datetime.now(timezone.utc)}},
             {"$set": {"state": "executing", "claim": claim}})
         if not pending: raise HTTPException(409, "Template decision is expired, unavailable, or already handled")
         started = perf_counter()
@@ -68,7 +73,12 @@ class TemplateDecisionService:
                     emit("SemanticTemplateCache", "completed", message="User chose regeneration")
                     result = QueryHistoryService().run(pending["question"], request_id, skip_cache=True, cache_metadata=cache)
             else:
-                logger.info("semantic_template_cache_user_reuse request_id=%s", request_id)
+                cache["template_id"] = payload.template_id
+                selected = next((item for item in cache.get("candidate_matches", [])
+                                 if item["template_id"] == payload.template_id), None)
+                if selected:
+                    cache.update(similarity_score=selected["score"], match_type=selected["match_type"])
+                logger.info("semantic_template_cache_user_reuse request_id=%s template_id=%s", request_id, payload.template_id)
                 repository = QueryTemplateRepository()
                 document = repository.get(payload.template_id)
                 from services.schema_bootstrap_service import schema_bootstrap_service

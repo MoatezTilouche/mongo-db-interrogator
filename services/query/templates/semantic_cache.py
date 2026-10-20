@@ -24,6 +24,8 @@ from database.query_template_repository import QueryTemplateRepository, EMBEDDIN
 from services.query.generation_examples import remember_candidates
 from services.query.templates.matching import question_matches, current_catalog, used_schema_matches, latest_row_group, approval_order
 
+MAX_TEMPLATE_SUGGESTIONS = 3
+
 logger = logging.getLogger("services.semantic_template_cache")
 logger.setLevel(logging.INFO)
 if not logger.hasHandlers():
@@ -89,6 +91,7 @@ class SemanticTemplateCache:
             current_request_id(), QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL,
             SEMANTIC_TEMPLATE_TOP_K, SEMANTIC_TEMPLATE_MIN_THRESHOLD, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD, operation_hint(question))
         emit("SemanticTemplateCache", "running")
+        matches = []
         try:
             db = self.database if self.database is not None else get_database()
             eligibility = {"status": "active", "trusted": {"$ne": False},
@@ -116,17 +119,24 @@ class SemanticTemplateCache:
             from services.schema_bootstrap_service import schema_bootstrap_service
             version = schema_bootstrap_service.status().get("schema_version")
             catalog = current_catalog()
-            # Identical source questions need no similarity approximation or embedding call.
+            # Deterministic matches qualify without embeddings; semantic alternatives are optional.
             for document in documents:
                 if question_matches(document, question):
                     if self.compatible(document, question, existing, version, catalog):
                         exact = " ".join(document["source_question"].casefold().split()) == " ".join(question.casefold().split())
                         match_type = "exact_question" if exact else "parameterized_question"
-                        metadata.update({"hit": True, "template_id": document["template_id"],
-                            "similarity_score": 1.0, "match_type": match_type})
-                        logger.info("template_search_hit request_id=%s template_id=%s match_type=%s", current_request_id(), document["template_id"], match_type)
-                        return document, metadata
-            logger.info("template_search_exact_complete request_id=%s outcome=no_compatible_exact_match", current_request_id())
+                        matches.append((1.0, document, match_type))
+            # Literal matches precede parameterized matches; approval recency breaks ties.
+            matches.sort(key=lambda item: item[2] != "exact_question")
+            matches = matches[:MAX_TEMPLATE_SUGGESTIONS]
+            matched_ids = {doc["template_id"] for _, doc, _ in matches}
+            if len(matches) == MAX_TEMPLATE_SUGGESTIONS or not any(
+                    doc["template_id"] not in matched_ids for doc in documents):
+                return self._matched_result(matches, metadata)
+            if matches and not any(doc["template_id"] not in matched_ids and
+                    self.compatible(doc, question, existing, version, catalog) for doc in documents):
+                return self._matched_result(matches, metadata)
+            logger.info("template_search_exact_complete request_id=%s matched_count=%d", current_request_id(), len(matches))
             # Vector availability must not block a deterministic question match.
             # Migration failure still permits already-current semantic candidates.
             try:
@@ -141,8 +151,11 @@ class SemanticTemplateCache:
             documents = [doc for doc in documents if doc.get("embedding_model") == TEMPLATE_EMBEDDING_MODEL
                          and doc.get("embedding_representation_version") == EMBEDDING_REPRESENTATION_VERSION
                          and doc.get("embedding") and ("embedding_source_text" not in doc or
-                             doc["embedding_source_text"] == normalized_question(doc.get("source_question", "")))]
+                             doc["embedding_source_text"] == normalized_question(doc.get("source_question", "")))
+                         and doc["template_id"] not in matched_ids]
             if not documents:
+                if matches:
+                    return self._matched_result(matches, metadata)
                 metadata["miss_reason"] = "no_eligible_templates"
                 return None, metadata
             logger.info("template_search_embedding_started request_id=%s", current_request_id())
@@ -178,15 +191,19 @@ class SemanticTemplateCache:
                     metadata["weak_match"] = True
                     logger.info("template_search_rejected request_id=%s template_id=%s reason=below_suggest_threshold score=%.4f", current_request_id(), document.get("template_id"), score)
                     continue
-                metadata.pop("miss_reason", None)
-                metadata.update({"hit": True, "template_id": document["template_id"], "similarity_score": score})
-                logger.info("template_search_hit request_id=%s template_id=%s score=%.4f match_type=semantic", current_request_id(), document["template_id"], score)
-                return document, metadata
-            return None, metadata
+                if document["template_id"] not in matched_ids:
+                    matches.append((score, document, "semantic"))
+                    matched_ids.add(document["template_id"])
+                if len(matches) == MAX_TEMPLATE_SUGGESTIONS:
+                    break
+            return self._matched_result(matches, metadata)
         except Exception as exc:
             # Embedding/storage unavailability must preserve normal generation.
             logger.warning("template_search_unavailable request_id=%s error_type=%s", current_request_id(), type(exc).__name__)
             metadata["unavailable"] = True
+            # Optional semantic alternatives must never discard valid deterministic matches.
+            if matches:
+                return self._matched_result(matches, metadata)
             metadata["miss_reason"] = "lookup_unavailable"
             return None, metadata
         finally:
@@ -194,7 +211,35 @@ class SemanticTemplateCache:
             logger.info("template_search_completed request_id=%s hit=%s reason=%s best_score=%s lookup_ms=%.2f", current_request_id(), metadata["hit"], metadata.get("miss_reason", "matched"), metadata.get("best_similarity_score", metadata.get("similarity_score")), metadata["semantic_cache_lookup_ms"])
             if not metadata["hit"]: logger.info("semantic_template_cache_miss request_id=%s reason=%s", current_request_id(), metadata.get("miss_reason"))
             emit("SemanticTemplateCache", "completed", elapsed_ms=metadata["semantic_cache_lookup_ms"],
-                 message=f"Similar template detected ({metadata['similarity_score']:.0%})" if metadata["hit"] else "No compatible template")
+                 message=f"{len(metadata.get('candidate_matches', []))} matching template(s) detected" if metadata["hit"] else "No compatible template")
+
+    @staticmethod
+    def _template_info(document):
+        return {"source_question": document["source_question"],
+            "semantic_intent": document["semantic_text"], "operation": document["operation"],
+            "collections": document["collections"], "template": document["template"],
+            "parameter_schema": {name: {"type": spec["type"], "source_path": spec["source_path"]}
+                for name, spec in document["parameter_schema"].items()}}
+
+    @staticmethod
+    def _matched_result(matches, metadata):
+        if not matches:
+            return None, metadata
+        candidates = [{"template_id": doc["template_id"], "score": score, "match_type": match_type,
+                       "template_info": SemanticTemplateCache._template_info(doc)}
+                      for score, doc, match_type in matches[:MAX_TEMPLATE_SUGGESTIONS]]
+        best = candidates[0]
+        metadata.pop("miss_reason", None)
+        metadata.pop("weak_match", None)
+        metadata.update(hit=True, template_id=best["template_id"], similarity_score=best["score"],
+                        match_type=best["match_type"], template_candidates=candidates,
+                        candidate_matches=[{key: candidate[key] for key in ("template_id", "score", "match_type")}
+                                           for candidate in candidates])
+        metadata["best_similarity_score"] = max(metadata.get("best_similarity_score") or 0, best["score"])
+        for rank, candidate in enumerate(candidates, 1):
+            logger.info("template_search_hit request_id=%s rank=%d template_id=%s score=%.4f match_type=%s",
+                        current_request_id(), rank, candidate["template_id"], candidate["score"], candidate["match_type"])
+        return matches[0][1], metadata
 
     @staticmethod
     def compatibility_reason(document, question, collections, schema_version=None, current_schema=None):
@@ -235,11 +280,11 @@ class SemanticTemplateCache:
     @staticmethod
     def suggestion(document, metadata):
         emit("TemplateDecision", "pending", message="Waiting for user decision")
+        info = SemanticTemplateCache._template_info(document)
+        candidates = metadata.pop("template_candidates", None) or [{
+            "template_id": document["template_id"], "score": metadata["similarity_score"],
+            "match_type": metadata.get("match_type", "semantic"), "template_info": info}]
         return {"status": "similar_template_detected", "similarity": {
             "score": metadata["similarity_score"], "template_id": document["template_id"]},
             "semantic_template_cache": metadata,
-            "template_info": {"source_question": document["source_question"],
-                "semantic_intent": document["semantic_text"], "operation": document["operation"],
-                "collections": document["collections"], "template": document["template"],
-                "parameter_schema": {name: {"type": spec["type"], "source_path": spec["source_path"]}
-                    for name, spec in document["parameter_schema"].items()}}}
+            "template_info": info, "template_candidates": candidates}

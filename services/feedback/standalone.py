@@ -95,14 +95,6 @@ class StandaloneFeedbackService:
         action = self.preference_repository.upsert(record)
         return {"feedback_id": feedback_id, "scope": "user", "learning_id": record["_id"],
                 "action": action, "status": "active", "learning_active": True}
-def submit_batch(
-    self,
-    items: list[StandaloneFeedbackRequest],
-) -> list[dict]:
-    results = []
-
-    for item in items:
-        result = self.submit(item)
-        results.append(result)
-
-    return results
+    def submit_batch(self, items: list[StandaloneFeedbackRequest]) -> list[dict]:
+        """Process each item through the normal validation and learning path."""
+        return [self.submit(item) for item in items]

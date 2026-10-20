@@ -164,6 +164,47 @@ def test_conflicting_rule_is_saved_but_not_activated(setup):
     assert len(setup.knowledge.list_active()) == 1
 
 
+def test_batch_saves_rules_and_preferences_in_request_order(setup):
+    response = setup.client.post("/feedback/standalone/batch", json={"items": [RULE, PREFERENCE]})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert (result["total"], result["succeeded"], result["failed"]) == (2, 2, 0)
+    assert [item["scope"] for item in result["results"]] == ["database", "user"]
+    assert all(item["learning_active"] for item in result["results"])
+    rule, preference = result["results"]
+    assert rule["feedback_id"] != preference["feedback_id"]
+    assert setup.knowledge.records[rule["learning_id"]]["text"] == RULE["text"]
+    assert setup.preferences.records[preference["learning_id"]]["limit"] == PREFERENCE["limit"]
+    setup.embeddings.embed_documents.assert_called_once()
+
+
+def test_batch_preserves_conflict_review_for_individual_rules(setup):
+    conflicting = {**RULE, "text": "Include refunded orders in revenue."}
+    response = setup.client.post("/feedback/standalone/batch", json={"items": [RULE, conflicting]})
+    assert response.status_code == 200, response.text
+    first, second = response.json()["results"]
+    assert first["learning_active"] is True
+    assert second["status"] == "needs_review" and second["learning_active"] is False
+    assert second["learning_error"]
+    assert setup.knowledge.records[second["learning_id"]]["conflict_with"] == first["learning_id"]
+
+
+def test_batch_rejects_unknown_collection_without_writing(setup):
+    response = setup.client.post("/feedback/standalone/batch", json={
+        "items": [{**RULE, "collections": ["missing"]}]})
+    assert response.status_code == 422
+    assert not setup.knowledge.records and not setup.preferences.records
+    setup.embeddings.embed_documents.assert_not_called()
+
+
+def test_batch_embedding_failure_returns_sanitized_503(setup):
+    setup.embeddings.embed_documents.side_effect = RuntimeError("private dependency details")
+    response = setup.client.post("/feedback/standalone/batch", json={"items": [RULE]})
+    assert response.status_code == 503
+    assert "private dependency details" not in response.text
+    assert not setup.knowledge.records
+
+
 @pytest.mark.parametrize("payload", [
     {**PREFERENCE, "text": "   "}, {**PREFERENCE, "collection": "  "},
     {**PREFERENCE, "request_id": "req_unneeded"}, {**PREFERENCE, "question": "unneeded"},
