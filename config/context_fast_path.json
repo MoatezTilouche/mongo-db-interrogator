@@ -1,0 +1,13 @@
+{
+  "actions": {
+    "find": ["show", "show me", "give me", "list", "find", "get", "return", "select", "afficher", "lister", "montrer"],
+    "count": ["count", "compter"]
+  },
+  "from": ["from", "from collection", "dans", "dans la collection"],
+  "where": ["where", "où"],
+  "and": ["and", "et"],
+  "sort": ["order by", "sort by", "trier par"],
+  "limit": ["limit", "limite"],
+  "all": ["*", "all", "tout", "records", "documents", "rows", "lignes", "enregistrements"],
+  "directions": ["asc", "desc", "ascending", "descending", "croissant", "décroissant"]
+}

@@ -55,6 +55,7 @@ def diagnostic(caplog):
 
 @pytest.fixture(autouse=True)
 def settings(monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", "on")
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_MIN_SIMILARITY", 0.75)
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_TOP_K", 3)
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_FLOOR", 0.30)
@@ -86,8 +87,14 @@ def test_rank_floor_only_applies_within_top_k():
 
 @pytest.mark.parametrize("term,question", [("recharge", "Show Recharge"), ("historique", "Voir HISTORÍQUE"),
                                             ("échoué", "Show echoue")])
-def test_keyword_selects_very_low_score_and_logs_reason(term, question, caplog):
+@pytest.mark.parametrize("policy_mode", ["off", "on"])
+def test_keyword_low_scores_follow_relevance_policy(term, question, caplog, monkeypatch, policy_mode):
+    monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", policy_mode)
     result = retrieve([rule("source", 0.01, text=f'"{term}" means processing evidence'), *fillers()], question)
+    if policy_mode == "on":
+        assert ids(result) == []
+        assert diagnostic(caplog)["policy_rejections"][0]["reason"] == "keyword_below_similarity_floor"
+        return
     assert ids(result) == ["source"]
     item = result["knowledge"][0]
     assert item["selection_method"] == "keyword"
@@ -114,38 +121,48 @@ def test_keyword_unknown_collection_still_dropped(caplog):
 
 
 @pytest.mark.parametrize("change", ["model", "length", "empty", "refresh"])
-def test_bad_vectors_do_not_block_keyword(change):
+@pytest.mark.parametrize("policy_mode", ["off", "on"])
+def test_bad_vectors_require_stronger_keyword_evidence(change, monkeypatch, policy_mode):
+    monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", policy_mode)
     record = rule("source", text="recharge evidence")
     if change == "model": record["embedding_model"] = "other"
     if change == "length": record["embedding"] = [1., 0., 0.]
     if change == "empty": record["embedding"] = []
     service = SimpleNamespace(ensure_embeddings=Mock(side_effect=RuntimeError("fake failure"))) if change == "refresh" else None
     result = retriever([record, *fillers()], service).rules_for_context([1., 0.], CATALOG, question="recharge")
-    assert ids(result) == ["source"]
-    assert result["knowledge"][0]["selection_method"] == "keyword"
+    assert ids(result) == (["source"] if policy_mode == "off" else [])
+    if result["knowledge"]:
+        assert result["knowledge"][0]["selection_method"] == "keyword"
 
 
-def test_keyword_works_when_query_embedding_unavailable():
+@pytest.mark.parametrize("policy_mode", ["off", "on"])
+def test_keyword_without_query_embedding_follows_policy(monkeypatch, policy_mode):
+    monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", policy_mode)
     result = retriever([rule("source", text="recharge evidence"), *fillers()]).rules_for_context(
         None, CATALOG, question="recharge")
-    assert ids(result) == ["source"]
+    assert ids(result) == (["source"] if policy_mode == "off" else [])
 
 
-def test_keyword_extras_and_total_cap(monkeypatch):
+@pytest.mark.parametrize("policy_mode", ["off", "on"])
+def test_keyword_extras_share_optional_budget_when_enabled(monkeypatch, policy_mode):
+    monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", policy_mode)
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_TOP_K", 1)
     monkeypatch.setattr(retrieval, "KNOWLEDGE_KEYWORD_MAX_RULE_FRACTION", 1.)
     records = [rule("semantic", 0.95)] + [rule(str(index), text=f"recharge evidence{index}") for index in range(5)]
     result = retrieve(records, "recharge")
-    assert len(result["knowledge"]) == 3
+    assert len(result["knowledge"]) == (3 if policy_mode == "off" else 1)
     assert ids(result)[0] == "semantic"
-    assert sum(item["selection_method"] == "keyword" for item in result["knowledge"]) == 2
+    assert sum(item["selection_method"] == "keyword" for item in result["knowledge"]) == (2 if policy_mode == "off" else 0)
 
 
-def test_keyword_overflow_above_threshold_can_use_extra_slot(monkeypatch):
+@pytest.mark.parametrize("policy_mode", ["off", "on"])
+def test_keyword_overflow_above_threshold_obeys_shared_budget(monkeypatch, policy_mode):
+    monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", policy_mode)
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_TOP_K", 1)
     result = retrieve([rule("semantic", 0.99), rule("source", 0.9, text="recharge evidence"), *fillers()], "recharge")
-    assert ids(result) == ["semantic", "source"]
-    assert result["knowledge"][1]["selection_method"] == "keyword"
+    assert ids(result) == (["semantic", "source"] if policy_mode == "off" else ["semantic"])
+    if policy_mode == "off":
+        assert result["knowledge"][1]["selection_method"] == "keyword"
 
 
 def test_flags_off_restore_threshold_only(monkeypatch):
@@ -172,8 +189,8 @@ def test_keyword_zero_extra_and_zero_suggestion_cap(monkeypatch):
 
 
 def test_keyword_matches_still_resolve_conflicts_and_do_not_mutate_records():
-    records = [rule("older", text="recharge older", fields=["status"], updated_at="2025-01-01"),
-               rule("newer", text="recharge newer", fields=["status"], updated_at="2026-01-01"), *fillers()]
+    records = [rule("older", .4, text="recharge older", fields=["status"], updated_at="2025-01-01"),
+               rule("newer", .4, text="recharge newer", fields=["status"], updated_at="2026-01-01"), *fillers()]
     original = deepcopy(records)
     instance = retriever(records)
     # Two of five rules share the word: allow it for this conflict test.

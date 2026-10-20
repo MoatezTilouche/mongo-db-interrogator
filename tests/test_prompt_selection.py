@@ -224,7 +224,7 @@ def test_rule_gate_rejects_scope_generic_noise_and_caps(case, caplog):
     assert gate_rules(rules, "qjxgeneric", [name], {name: []}, {name: case["profiles"][name]}, replace(config, rule_mode="log")) == rules
     for rule in rules:
         rule["mandatory"] = True
-    assert len(gate_rules(rules, "qjxforeign", [name], {name: []}, {name: case["profiles"][name]}, config)) == 4
+    assert len(gate_rules(rules, "qjxforeign", [name], {name: []}, {name: case["profiles"][name]}, config)) == 10
     rules[0]["collections"] = ["qjxunselected"]
     assert rules[0] not in gate_rules(rules, "qjxforeign", [name], {name: []}, {name: case["profiles"][name]}, config)
 
@@ -449,7 +449,7 @@ def test_rule_cap_uses_existing_type_order_then_signal_strength(case):
     lower_type = {**strong, "knowledge_id": "qjxlower", "type": "field_definition"}
     result = gate_rules([lower_type, weak, strong], "qjxforeign", [name], {}, {name: case["profiles"][name]},
                         replace(PromptSelectionConfig(), max_rules=2))
-    assert result == [strong, weak]
+    assert result == [strong, weak, lower_type]  # Both mandatory rules survive the optional cap.
 
 
 def test_refinement_preserves_join_owners_fields_and_shared_reasons(case):

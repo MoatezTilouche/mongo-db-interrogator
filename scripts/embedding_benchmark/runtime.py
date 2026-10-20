@@ -47,6 +47,7 @@ def isolated(snapshot, model, timezone):
 
 
 def effective_policy(settings, timezone=None):
+    from services.knowledge.retrieval.context_policy import relevance_mode
     from services.query.profile_config import RuntimeProfileConfig
     from services.query.prompt_selection.config import PromptSelectionConfig
     from services.knowledge.retrieval import retriever as knowledge
@@ -60,7 +61,8 @@ def effective_policy(settings, timezone=None):
             "schema_relationship_expansion": schema.SCHEMA_RELATIONSHIP_EXPANSION,
             "knowledge": {key: value for key, value in vars(knowledge).items() if key.startswith("KNOWLEDGE_")
                           and key not in {"KNOWLEDGE_EMBEDDING_MODEL", "KNOWLEDGE_EMBEDDING_DIMENSIONS"}
-                          and isinstance(value, (str, int, float, bool, list, tuple, dict))},
+                          and isinstance(value, (str, int, float, bool, list, tuple, dict))}
+                          | {"KNOWLEDGE_CONTEXT_RELEVANCE_MODE": relevance_mode()},
             "templates": {key: getattr(templates, key) for key in (
                 "SEMANTIC_TEMPLATE_TOP_K", "SEMANTIC_TEMPLATE_MIN_THRESHOLD", "SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD")}}
 

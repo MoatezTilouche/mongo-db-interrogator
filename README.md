@@ -881,6 +881,13 @@ Question -> request ID + semantic template lookup
 
 QueryContextAgent selects collections/fields and classifies operation/complexity. QueryGeneratorAgent returns a parameterized template and semantic intent. Only bound, validated query specifications reach PyMongo; generated shell code is not executed.
 
+Prompt relevance gates now share optional rule budgets and preserve mandatory
+constraints, preferences and required joins. A conservative deterministic context
+route can skip the context LLM for fully explicit single-source requests; it
+defaults to `QUERY_CONTEXT_FAST_PATH_MODE=log` for real-request comparison before
+activation. See [prompt relevance and context routing](docs/prompt-relevance-and-context-routing.md)
+for settings, supported syntax, telemetry and validation steps.
+
 
 
 Simple normal queries typically use context and generation chat calls plus deterministic formatting. Complex/aggregation results can add summary; repair adds at most one call. Embeddings, bootstrap, template persistence/migration, feedback, and parameter extraction add calls on relevant paths, so this is not a fixed total API-call guarantee.

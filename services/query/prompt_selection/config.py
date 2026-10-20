@@ -20,7 +20,7 @@ class PromptSelectionConfig:
     max_rules: int = 4
     facts_max_fields: int = 6
     ignore_values: tuple = ()
-    collection_mode: str = "log"
+    collection_mode: str = "on"
     weights: dict = field(default_factory=lambda: {
         "field_leaf": 12, "field_token": 3, "value": 20, "rule": 8,
         "time": 15, "preference": 14, "relationship": 5,
@@ -50,7 +50,7 @@ class PromptSelectionConfig:
             min_similarity=float(os.getenv("RULE_GATE_MIN_SIMILARITY", "0.30")),
             max_rules=int(os.getenv("GENERATOR_MAX_RULES", "4")),
             facts_max_fields=int(os.getenv("GENERATOR_FACTS_MAX_FIELDS", "6")),
-            ignore_values=tuple(ignored), collection_mode=os.getenv("GENERATOR_COLLECTION_GATE", "log").lower(),
+            ignore_values=tuple(ignored), collection_mode=os.getenv("GENERATOR_COLLECTION_GATE", "on").lower(),
             weights=weights)
         if result.rule_mode not in {"off", "log", "on"} or result.collection_mode not in {"off", "log", "on"}:
             raise ValueError("Invalid prompt gate mode")

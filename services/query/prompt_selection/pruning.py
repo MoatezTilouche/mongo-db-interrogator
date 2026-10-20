@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 _view = ContextVar("generator_prompt_view", default=None)
 
 
-def prune_schema_for_prompt(selected_schema, relevance, config):
+def prune_schema_for_prompt(selected_schema, relevance, config, *, required_fields=()):
     result = deepcopy(selected_schema)
     if not config.enabled:
         return result
@@ -20,7 +20,11 @@ def prune_schema_for_prompt(selected_schema, relevance, config):
         if signal_count < config.min_signals:
             logger.info("schema_prune_low_signal collection=%s signals=%d minimum=%d fill=structural_defaults",
                         name, signal_count, config.min_signals)
-        kept = []
+        # Preserve catalog-backed rule, preference and join dependencies even
+        # when they exceed the optional field budget.
+        kept = [path for path in fields if (name, path) in required_fields]
+        kept.extend(row["field"] for row in relevance[name] if row["field"] in fields and row["field"] not in kept
+                    and set(row["reasons"]) & {"relationship", "preference", "field_leaf", "field_token", "value", "time"})
         eligible = {row["field"] for row in relevance[name]}
         for row in relevance[name]:
             path = row["field"]

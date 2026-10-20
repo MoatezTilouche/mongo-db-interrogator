@@ -10,7 +10,8 @@ from .relevance import tokens
 logger = logging.getLogger(__name__)
 
 
-def relevant_profile_facts(schema, question, lookup, relevance, constraints, config, runtime, diagnostics=None):
+def relevant_profile_facts(schema, question, lookup, relevance, constraints, config, runtime, diagnostics=None,
+                           *, required_fields=()):
     if not runtime.facts_enabled or not runtime.max_chars:
         return ""
     profiles = {name: safe_profile(name, lookup) for name in schema.get("collections", {})}
@@ -36,13 +37,14 @@ def relevant_profile_facts(schema, question, lookup, relevance, constraints, con
                 reason = "non_scalar_kind"
             elif all(reason.startswith("default_") for reason in row["reasons"]):
                 reason = "no_question_signal"
-            elif len(spec.get("values", [])) == 1 and "value" not in row["reasons"] and not tokens(spec["values"][0]["value"]) & question_tokens:
+            elif ((name, path) not in required_fields and len(spec.get("values", [])) == 1 and "value" not in row["reasons"]
+                  and not tokens(spec["values"][0]["value"]) & question_tokens):
                 reason = "unmatched_singleton"
             if reason:
                 if diagnostics is not None:
                     diagnostics.append({"section": "facts", "item": name + "." + path, "reason": reason, "omitted": True})
                 continue
-            rank = 0 if set(row["reasons"]) & {"value", "time"} else 1
+            rank = -1 if (name, path) in required_fields else 0 if set(row["reasons"]) & {"value", "time"} else 1
             candidates.append((rank, -row["score"], name, path, spec))
     candidates.sort(key=lambda row: row[:4])
     block = "\nProfile facts:\n"
@@ -78,7 +80,12 @@ def relevant_profile_facts(schema, question, lookup, relevance, constraints, con
                              f"{encode(render_date(start, spec, runtime.zone())) if start else '-inf'},"
                              f"{encode(render_date(end, spec, runtime.zone())) if end else '+inf'}) on {name}.{path}")
         payload = "\n".join(lines) + "\n"
-        reason = "field_cap" if admitted >= config.facts_max_fields else "character_cap" if len(block) + len(payload) > runtime.max_chars else None
+        required = (name, path) in required_fields
+        if required and diagnostics is not None and (admitted >= config.facts_max_fields or len(block) + len(payload) > runtime.max_chars):
+            diagnostics.append({"section": "facts", "item": name + "." + path,
+                                "reason": "required_fact_exceeds_optional_budget", "omitted": False})
+        reason = ("field_cap" if admitted >= config.facts_max_fields else "character_cap"
+                  if len(block) + len(payload) > runtime.max_chars else None) if not required else None
         if reason:
             if diagnostics is not None:
                 diagnostics.append({"section": "facts", "item": name + "." + path, "reason": reason, "omitted": True})
@@ -91,7 +98,9 @@ def relevant_profile_facts(schema, question, lookup, relevance, constraints, con
                 target = relationship["target_collection"]
                 target_profile = profiles.get(target)
                 if (not target_profile or not is_safe_path(profile, relationship["field"])
-                        or not is_safe_path(target_profile, relationship["target_field"])):
+                        or not is_safe_path(target_profile, relationship["target_field"])
+                        or relationship["field"] not in schema["collections"][name].get("fields", {})
+                        or relationship["target_field"] not in schema["collections"][target].get("fields", {})):
                     continue
                 line = f"{name}.{relationship['field']} -> {target}.{relationship['target_field']}\n"
                 if len(block) + len(line) <= runtime.max_chars:

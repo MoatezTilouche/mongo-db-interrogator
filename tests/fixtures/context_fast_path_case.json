@@ -1,0 +1,58 @@
+{
+  "catalog": {"collections": {
+    "flux_records": {"fields": {"recordKey": ["string"], "stateCode": ["string"], "counter": ["int"], "enabled": ["bool"], "createdOn": ["string"], "privateKey": ["string"], "items": ["array"], "payload.code": ["string"]}},
+    "flux_audit": {"fields": {"recordKey": ["string"], "action": ["string"]}}
+  }},
+  "profiles": {
+    "flux_records": {"collection": "flux_records", "fields": {
+      "recordKey": {"kind": "identifier", "types": {"string": 10}},
+      "stateCode": {"kind": "categorical", "types": {"string": 10}, "values": [{"value": "Open", "count": 5}, {"value": "Closed", "count": 5}]},
+      "counter": {"kind": "numeric", "types": {"int": 10}},
+      "enabled": {"kind": "boolean", "types": {"bool": 10}},
+      "createdOn": {"kind": "date", "types": {"string": 10}, "date_format": "%d/%m/%Y", "sortable_as_string": false},
+      "privateKey": {"kind": "identifier", "types": {"string": 10}, "pii_suspected": true},
+      "items": {"kind": "array", "types": {"array": 10}},
+      "payload.code": {"kind": "text", "types": {"string": 10}, "in_array": true}
+    }},
+    "flux_audit": {"collection": "flux_audit", "fields": {"recordKey": {"kind": "identifier", "types": {"string": 10}}, "action": {"kind": "text", "types": {"string": 10}}}}
+  },
+  "cases": [
+    {"question": "show * from flux_records", "eligible": true, "operation": "find"},
+    {"question": "show stateCode from flux_records where stateCode = Open limit 3", "eligible": true, "operation": "find"},
+    {"question": "show 3 stateCode, recordKey from flux_records where stateCode = Open and counter > 2 order by counter desc", "eligible": true, "operation": "find"},
+    {"question": "count from flux_records where enabled = true", "eligible": true, "operation": "count"},
+    {"question": "count from flux_records", "eligible": true, "operation": "count"},
+    {"question": "count all from flux_records", "eligible": true, "operation": "count"},
+    {"question": "give me 3 records from flux_records where stateCode = Open", "eligible": true, "operation": "find"},
+    {"question": "afficher stateCode dans flux_records où stateCode = Open limite 3", "eligible": true, "operation": "find"},
+    {"question": "show recordKey from flux_records where stateCode = \"مفتوح and Open\"", "eligible": true, "operation": "find"},
+    {"question": "show recordKey from flux_records where recordKey = 'KEY-102'", "eligible": true, "operation": "find"},
+    {"question": "show * from flux_records where counter > 3.5", "eligible": true, "operation": "find"},
+    {"question": "show * from flux_records where stateCode = Open or counter > 2", "eligible": false},
+    {"question": "show * from flux_records where stateCode = Open and", "eligible": false},
+    {"question": "show * from flux_records where counter > 2 and counter < 9", "eligible": false},
+    {"question": "show * from flux_records where counter = unknown", "eligible": false},
+    {"question": "show * from flux_records where enabled = \"true\"", "eligible": false},
+    {"question": "show * from flux_records where missing = Open", "eligible": false},
+    {"question": "show privateKey from flux_records", "eligible": false},
+    {"question": "show * from flux_records where items = Open", "eligible": false},
+    {"question": "show * from flux_records where payload.code = Open", "eligible": false},
+    {"question": "show * from flux_records where createdOn >= \"01/09/2026\"", "eligible": false},
+    {"question": "show * from flux_records order by createdOn desc", "eligible": false},
+    {"question": "show stateCode from missing_records", "eligible": false},
+    {"question": "show missingField from flux_records", "eligible": false},
+    {"question": "count stateCode from flux_records", "eligible": false},
+    {"question": "count from flux_records limit 3", "eligible": false},
+    {"question": "show 3 stateCode from flux_records limit 2", "eligible": false},
+    {"question": "show * from flux_records limit 0", "eligible": false},
+    {"question": "show * from flux_records join flux_audit", "eligible": false},
+    {"question": "show * from flux_records and flux_audit", "eligible": false},
+    {"question": "show * from flux_records where enabled = true; drop flux_records", "eligible": false},
+    {"question": "average counter from flux_records", "eligible": false},
+    {"question": "show * from flux_records group by stateCode", "eligible": false},
+    {"question": "show * from flux_records today", "eligible": false},
+    {"question": "give me 3 passed orders today", "eligible": false},
+    {"question": "give me 3 passed orders today from orders_proc_hist with status = Passed", "eligible": false},
+    {"question": "وريني العمليات اللي فشلو اليوم", "eligible": false}
+  ]
+}

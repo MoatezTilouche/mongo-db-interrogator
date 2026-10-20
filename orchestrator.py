@@ -10,6 +10,7 @@ from agent.llm import LLMRouterError
 from agents.query_context_agent import QueryContextAgent
 from services.schema_bootstrap_service import schema_bootstrap_service
 from services.context_builder import ContextBuilder
+from services.query.context_fast_path import assess_context
 from services.knowledge_retriever import KnowledgeRetriever
 from services.knowledge_collection_suggestions import apply_rule_suggestions
 from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query
@@ -108,7 +109,6 @@ class OrchestratorAgent:
             if not catalog.get("collections"):
                 return {"execution_success": False, "execution_error": "The configured MongoDB database has no collections.",
                         "_schema_cache": cache_status}
-            agents_called.append("query_context")
             preferences = self.preference_service.retrieve_for_query(
                 question, catalog, current_request_id(),
             ) if catalog.get("database") else []
@@ -131,10 +131,31 @@ class OrchestratorAgent:
             context = self.context_builder.build(
                 question, candidate_catalog, knowledge_candidates, preferences, full_catalog=catalog,
             )
-            context_result = stage("QueryContextAgent", self.query_context_agent.build,
-                context["question"], context["schema"], context["user_preferences"],
-                context["database_knowledge"],
-            )
+            context_policy = stage("QueryContextPolicy", assess_context,
+                context["question"], context["schema"], context["database_knowledge"],
+                context["user_preferences"], full_catalog=catalog)
+            use_fast_context = context_policy["eligible"] and context_policy["mode"] == "on"
+            retrieval_status.update({
+                "query_context_fast_path_mode": context_policy["mode"],
+                "query_context_fast_path_eligible": context_policy["eligible"],
+                "query_context_fast_path_reason": context_policy["reason"],
+                "query_context_route": "deterministic" if use_fast_context else "llm",
+            })
+            if use_fast_context:
+                emit("QueryContextDeterministic", "completed", message="Explicit query context selected")
+                context_result = context_policy["result"]
+            else:
+                agents_called.append("query_context")
+                context_result = stage("QueryContextAgent", self.query_context_agent.build,
+                    context["question"], context["schema"], context["user_preferences"],
+                    context["database_knowledge"],
+                )
+                if context_policy["eligible"] and not context_result.get("error"):
+                    predicted = context_policy["result"]["query_context"]
+                    actual = context_result["query_context"]
+                    retrieval_status["query_context_fast_path_agrees"] = (
+                        predicted["operation"] == actual["operation"] and
+                        set(predicted["collections"]) == set(actual["collections"]))
             retrieval_status.update(context_result.pop("_prompt_compaction", {}))
             if context_result.get("error"):
                 if "_context_diagnostics" in knowledge_result:
@@ -183,12 +204,8 @@ class OrchestratorAgent:
             for item in applied_knowledge:
                 for name in set(item.get("collections") or selected_collections) & selected_collections:
                     available_fields = catalog["collections"][name].get("fields", {})
-                    rule_fields = list(item.get("fields", []))
-                    from services.query.plans.config import PlanConfig
-                    if PlanConfig.from_env().enabled:
-                        from services.query.plans.directives import directive_field_references
-                        rule_fields.extend(sorted(directive_field_references(item, name) - set(rule_fields)))
-                    for field in rule_fields:
+                    from services.query.prompt_selection.relevance import rule_fields
+                    for field in rule_fields(item, name, selected_collections):
                         if field in available_fields:
                             schema_spec["collections"][name]["fields"][field] = deepcopy(available_fields[field])
             query_context["fields"] = {

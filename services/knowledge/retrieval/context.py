@@ -2,6 +2,8 @@
 from __future__ import annotations
 from typing import Any
 from agent.client_factory import custom_endpoint_active
+from .context_policy import relevance_mode, keyword_rejection
+from services.query.prompt_selection.relevance import protected_rule, rule_scopes
 
 def rules_for_context(self, question_embedding, schema_candidates, full_schema=None, *,
                       records=None, threshold=None, top_k=None, question=None,
@@ -32,6 +34,8 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
     names = set(schema_candidates.get("collections", {}))
     threshold = KNOWLEDGE_CONTEXT_MIN_SIMILARITY if threshold is None else threshold
     limit = KNOWLEDGE_CONTEXT_TOP_K if top_k is None else max(0, top_k)
+    mode = relevance_mode()
+    policy_rejections = []
     matches = self._keyword_index.match(question, records,
         ttl=KNOWLEDGE_KEYWORD_CACHE_TTL_SECONDS, max_fraction=KNOWLEDGE_KEYWORD_MAX_RULE_FRACTION
     ) if KNOWLEDGE_KEYWORD_MATCHING_ENABLED and question else {}
@@ -55,6 +59,7 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
             skipped.append({"rule_id": rule_id, "reason": "entity_mismatch"})
             continue
         original_record = record
+        protected = mode != "off" and protected_rule(record, names) and bool(rule_scopes(record, names))
         if vector_valid(question_embedding):
             try:
                 if embedding_service is None:
@@ -64,7 +69,7 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
             except Exception as exc:
                 logger.warning("knowledge_embedding_refresh_failed knowledge_id=%s error_type=%s",
                                safe_record(rule_id), type(exc).__name__)
-                if not keywords:
+                if not keywords and not protected:
                     skipped.append({"rule_id": rule_id, "reason": "refresh_failed"})
                     continue
                 record = deepcopy(original_record)
@@ -102,7 +107,7 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
             else:
                 similarities.append((score, label))
         if not similarities:
-            if not keywords:
+            if not keywords and not protected:
                 skipped.append({"rule_id": rule_id, "reason": failures[0] if failures else "empty_embedding"})
                 continue
             score, winner = None, None
@@ -115,6 +120,7 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
         item["_context_score"] = score
         item["_winning_vector"] = winner
         item["keyword_terms"] = keywords
+        item["_context_required"] = protected
         item["_resolved_targets"] = {(name, field) for name in (record.get("collections") or names)
             for field in record.get("fields", []) if field in catalog[name].get("fields", {})}
         pool.append(item)
@@ -124,12 +130,21 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
     candidates = []
     for item in pool:
         score = item["_context_score"]
-        if score is not None and score >= threshold:
+        if item["_context_required"]:
+            method = "required"
+        elif score is not None and score >= threshold:
             method = "threshold"
         elif (KNOWLEDGE_RANK_SELECTION_ENABLED and score is not None
               and ranks[item["knowledge_id"]] <= limit and score >= KNOWLEDGE_CONTEXT_FLOOR):
             method = "rank_floor"
         elif item["keyword_terms"]:
+            reason = keyword_rejection(item, question, names, KNOWLEDGE_CONTEXT_FLOOR) if mode != "off" else None
+            if reason:
+                detail = {"rule_id": item["knowledge_id"], "reason": reason, "score": score}
+                policy_rejections.append(detail)
+                if mode == "on":
+                    skipped.append(detail)
+                    continue
             method = "keyword"
         else:
             skipped.append({"rule_id": item["knowledge_id"], "reason": "below_threshold",
@@ -146,16 +161,29 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
     keyword_slots = limit - len(base) + KNOWLEDGE_KEYWORD_MAX_EXTRA
     base_ids = {item["knowledge_id"] for item in base}
     extras = [item for item in resolved if item["keyword_terms"] and item["knowledge_id"] not in base_ids][:keyword_slots]
-    for item in extras:
+    for item in (extras if mode != "on" else []):
         item["selection_method"] = "keyword"
         item["inclusion_reasons"] = ["keyword"] + ["keyword:" + term for term in item["keyword_terms"]]
     selected = sorted(base + extras, key=lambda item: (
         -(item["_context_score"] if item["_context_score"] is not None else -2), item["knowledge_id"]))
+    if mode != "off":
+        rejected_ids = {item["rule_id"] for item in policy_rejections}
+        required = [item for item in resolved if item["_context_required"]]
+        for item in required:
+            item["selection_method"] = "required"
+        optional = [item for item in resolved if not item["_context_required"] and item["knowledge_id"] not in rejected_ids]
+        bounded = [*required, *optional[:limit]]
+        policy_rejections.extend({"rule_id": item["knowledge_id"], "reason": "optional_rule_cap", "score": item["_context_score"]}
+                                 for item in optional[limit:])
+        if mode == "on":
+            selected = sorted(bounded, key=lambda item: (
+                -(item["_context_score"] if item["_context_score"] is not None else -2), item["knowledge_id"]))
     selected_ids = {item["knowledge_id"] for item in selected}
     skipped.extend({"rule_id": item["knowledge_id"], "reason": "limit",
                     "score": item["_context_score"]} for item in resolved if item["knowledge_id"] not in selected_ids)
     ranked = sorted(scored, key=lambda item: (-item["score"], item["rule_id"]))
     diagnostic = {"threshold": threshold, "limit": limit, "floor": KNOWLEDGE_CONTEXT_FLOOR,
+                  "relevance_mode": mode, "policy_rejections": policy_rejections,
                   "rank_selection_enabled": KNOWLEDGE_RANK_SELECTION_ENABLED,
                   "keyword_matching_enabled": KNOWLEDGE_KEYWORD_MATCHING_ENABLED,
                   "question_embedding_reused": bool(question_embedding_reused),
@@ -178,6 +206,7 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
         item.pop("_resolved_targets", None)
         item.pop("_context_score", None)
         item.pop("_winning_vector", None)
+        item.pop("_context_required", None)
     return {"knowledge": selected, "_active_rules": records, "_context_diagnostics": diagnostic, "telemetry": {
         "knowledge_retrieval_latency_ms": (time.perf_counter() - started) * 1000,
         "knowledge_retrieval_top_k": limit, "knowledge_candidates_returned": len(selected)}}
@@ -197,7 +226,7 @@ def log_context_diagnostics(diagnostic, suggested_collections=None):
     diagnostic = deepcopy(diagnostic)
     if suggested_collections is not None:
         diagnostic["rule_suggested_collections_added"] = [safe_record(name) for name in suggested_collections]
-    for key in ("top_5", "skipped", "vector_skips", "winning_vectors", "selected", "keyword_matches"):
+    for key in ("top_5", "skipped", "vector_skips", "winning_vectors", "selected", "keyword_matches", "policy_rejections"):
         for item in diagnostic.get(key, []):
             item["rule_id"] = safe_record(item["rule_id"])
     logger.info("knowledge_context_diagnostics request_id=%s data=%s", safe_record(current_request_id()),

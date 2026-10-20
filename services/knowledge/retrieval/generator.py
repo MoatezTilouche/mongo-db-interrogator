@@ -24,6 +24,7 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         targets,
     )
     records = self._active_rules() if records is None else records
+    from services.query.prompt_selection.relevance import protected_rule
     catalog = full_schema.get("collections", {})
     names = set(selected_collections) & set(catalog)
     date_pattern = re.compile(KNOWLEDGE_DATE_FIELD_PATTERN, re.I)
@@ -77,7 +78,7 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
             continue
         if not self._valid(record, catalog, names):
             continue
-        if context_rules is not None and rule_type(record) in {"business_rule", "relationship"}:
+        if context_rules is not None and rule_type(record) in {"business_rule", "relationship"} and not protected_rule(record, names):
             logger.info("knowledge_rule_dropped request_id=%s stage=generator knowledge_id=%s reason=not_selected_in_context",
                         safe_record(current_request_id()), safe_record(str(record.get("_id", ""))))
             continue
@@ -88,7 +89,7 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         rule_targets = {(name, field) for name in (rule_names & names or names)
                         for field in record.get("fields", [])
                         if field in catalog[name].get("fields", {})}
-        if context_rules is not None and not self._generator_supplement_applicable(
+        if context_rules is not None and not protected_rule(record, names) and not self._generator_supplement_applicable(
                 record, question, rule_targets, selected_targets, date_targets, date_trigger, status_trigger):
             logger.info("knowledge_rule_dropped request_id=%s stage=generator knowledge_id=%s reason=not_applicable_to_question",
                         safe_record(current_request_id()), safe_record(str(record.get("_id", ""))))
@@ -174,11 +175,12 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         # Empty-scope triggered rules have selected collection field owners.
         coded_targets = targets(item) or {(name, field) for name in names
             for field in item.get("fields", []) if field in catalog[name].get("fields", {})}
-        if rule_type(item) == "coded_value" and any(counts[target] >= 2 for target in coded_targets):
+        required = protected_rule(item, names)
+        if not required and rule_type(item) == "coded_value" and any(counts[target] >= 2 for target in coded_targets):
             logger.warning("knowledge_rule_cap request_id=%s knowledge_id=%s reason=coded_value_per_field cap=2",
                            current_request_id(), item["knowledge_id"])
             continue
-        if len(selected) >= effective_limit:
+        if not required and sum(not protected_rule(rule, names) for rule in selected) >= effective_limit:
             logger.warning("knowledge_rule_cap request_id=%s knowledge_id=%s reason=total cap=%d",
                            current_request_id(), item["knowledge_id"], effective_limit)
             continue

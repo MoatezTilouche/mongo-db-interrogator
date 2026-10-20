@@ -270,7 +270,7 @@ def test_partial_scope_conflicts_and_empty_triggered_scope_are_resolved(caplog):
     assert "knowledge_id=date kept_id=empty-date" in caplog.text
 
 
-def test_fixed_order_and_total_cap_include_preferences(caplog):
+def test_optional_rule_cap_preserves_applicable_preferences(caplog):
     records = [rule("source", text="Fetch orders from source collection", fields=[], confidence=0.95),
                rule("date", "field_definition", fields=["executionDate"], confidence=1.0),
                rule("coded", "coded_value", confidence=1.0),
@@ -282,7 +282,7 @@ def test_fixed_order_and_total_cap_include_preferences(caplog):
     result = KnowledgeRetriever(SimpleNamespace(list_active=lambda: records)).rules_for_generator(
         "today", ["orders"], {"orders": ["id"]}, full_schema=catalog, user_preferences=preferences)
     assert ids(result) == ["source", *[f"other-{i}" for i in range(7)]]
-    assert len(result["knowledge"]) == 8 and result["user_preferences"] == []
+    assert len(result["knowledge"]) == 8 and result["user_preferences"] == preferences
     assert "reason=total cap=8" in caplog.text
 
 
@@ -346,13 +346,14 @@ def test_lower_context_threshold_and_six_rules_admit_source_correction(monkeypat
 
 
 @pytest.mark.parametrize("limit", [2, 12])
-def test_generator_total_cap_is_configurable_and_counts_preferences(monkeypatch, caplog, limit):
+def test_generator_optional_cap_is_configurable_and_preserves_preferences(monkeypatch, caplog, limit):
     monkeypatch.setattr(module, "KNOWLEDGE_GENERATOR_TOP_K", limit)
     records = [rule(f"business-{index:02}", fields=[]) for index in range(13)]
     preferences = [{"_id": "user", "collection": "orders", "field": "total", "type": "sorting_preference",
                     "preference": "Sort totals descending", "direction": -1}]
     result = generator(records, preferences=preferences)
-    assert len(result["knowledge"]) + len(result["user_preferences"]) == limit
+    assert len(result["knowledge"]) == limit
+    assert [item["_id"] for item in result["user_preferences"]] == ["user"]
     assert ids(result) == [f"business-{index:02}" for index in range(limit)]
     assert f"reason=total cap={limit}" in caplog.text
 

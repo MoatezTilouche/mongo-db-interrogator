@@ -5,6 +5,7 @@ from services.profiling.accessors import safe_field
 from services.query.profile_facts import is_date_field
 from services.query.values.matching import normalize_for_match
 from .config import PromptSelectionConfig
+from services.knowledge.rule_policy import rule_type
 
 
 class QuestionRelevance(dict):
@@ -30,7 +31,25 @@ def rule_scopes(rule, selected):
 
 def mandatory(rule):
     metadata = rule.get("metadata") or {}
-    return rule.get("mandatory") is True or metadata.get("mandatory") is True
+    return (rule.get("mandatory") is True or metadata.get("mandatory") is True
+            or bool(rule.get("enforcement"))
+            or any(item.get("status") == "approved" for item in rule.get("directives", []) if isinstance(item, dict)))
+
+
+def protected_rule(rule, selected):
+    """Budgets apply to optional evidence, never applicable constraints or joins."""
+    names = set(rule.get("collections") or [])
+    return (mandatory(rule) or "_preference" in rule or
+            rule_type(rule) == "relationship" and len(names) > 1 and names <= set(selected))
+
+
+def rule_fields(rule, collection, selected):
+    if collection not in rule_scopes(rule, selected):
+        return set()
+    result = set(rule.get("fields") or [])
+    result.update((rule.get("enforcement") or {}).get("required_filters", {}))
+    from services.query.plans.directives import directive_field_references
+    return result | directive_field_references(rule, collection)
 
 
 def generic_tokens(rules, fraction):
@@ -46,7 +65,9 @@ def rule_signals(rule, question_tokens, relevant, selected, generic, config, tim
     reasons = rule.get("inclusion_reasons") or []
     if "context_selected" in reasons:
         signals.append("context_selected")
-    if any(row["field"] in rule.get("fields", []) and not all(reason.startswith("default_") for reason in row["reasons"])
+    # Rule and relationship references cannot provide their own question evidence.
+    intrinsic = {"field_leaf", "field_token", "value", "time", "preference"}
+    if any(row["field"] in rule_fields(rule, name, selected) and intrinsic.intersection(row["reasons"])
            for name in scopes for row in relevant.get(name, [])):
         signals.append("relevant_field")
     date_relevant = any("time" in row["reasons"] or (row.get("date") and "field_leaf" in row["reasons"])
@@ -58,8 +79,8 @@ def rule_signals(rule, question_tokens, relevant, selected, generic, config, tim
     similarity = rule.get("_gate_similarity", rule.get("semantic_similarity"))
     if isinstance(similarity, (int, float)) and similarity >= config.min_similarity:
         signals.append("similarity")
-    if mandatory(rule) or "_preference" in rule:
-        signals.append("mandatory" if mandatory(rule) else "preference")
+    if protected_rule(rule, selected):
+        signals.append("mandatory" if mandatory(rule) else "preference" if "_preference" in rule else "required_join")
     return signals
 
 
@@ -118,7 +139,7 @@ def compute_question_relevance(question, selected_collections, profile_lookup, r
     applicable = [rule for rule in rules if rule_signals(rule, question_tokens, result, names, generic, config, time_constraints)]
     for rule in applicable:
         for name in rule_scopes(rule, names):
-            for path in rule.get("fields", []):
+            for path in rule_fields(rule, name, names):
                 if (name, path) in by_path:
                     by_path[name, path]["reasons"].append("rule")
     for name, rows in result.items():

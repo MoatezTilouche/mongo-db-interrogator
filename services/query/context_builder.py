@@ -10,6 +10,7 @@ setattr(_sys.modules["services"], "context_builder", _sys.modules[__spec__.name]
 import re
 from copy import deepcopy
 from typing import Any
+from services.query.prompt_selection.relevance import rule_fields
 
 
 class ContextBuilder:
@@ -29,13 +30,14 @@ class ContextBuilder:
             rule_names = rule.get("collections") or list(selected)
             known_fields = {field for name in rule_names
                             for field in authoritative.get(name, {}).get("fields", {})}
-            unknown_fields = set(rule.get("fields") or []) - known_fields - {"_id"}
+            dependencies = set().union(*(rule_fields(rule, name, rule_names) for name in rule_names)) if rule_names else set()
+            unknown_fields = dependencies - known_fields - {"_id"}
             if unknown_fields:
                 raise ValueError(
                     f"Knowledge/schema conflict: rule references unknown fields {sorted(unknown_fields)}. "
                     "Refresh the schema or correct the learned rule; no substitute field was used."
                 )
-            for name in rule.get("collections", []):
+            for name in rule_names:
                 if name not in selected:
                     if name not in authoritative:
                         raise ValueError(
@@ -44,7 +46,7 @@ class ContextBuilder:
                         )
                     selected[name] = deepcopy(authoritative[name])
                 fields = authoritative.get(name, {}).get("fields", {})
-                for field in rule.get("fields", []):
+                for field in rule_fields(rule, name, rule_names):
                     if field in fields:
                         selected[name].setdefault("fields", {})[field] = deepcopy(fields[field])
         for preference in preferences or []:
@@ -62,8 +64,8 @@ class ContextBuilder:
                         continue
                     if not re.search(r"\b(rank|ranked|ranking|sort|sorted|order|ordered)\b", rule.get("text", ""), re.I):
                         continue
-                    rule_fields = set(rule.get("fields") or [])
-                    if not rule_fields or preference.get("field") not in rule_fields:
+                    sorting_fields = set(rule.get("fields") or [])
+                    if not sorting_fields or preference.get("field") not in sorting_fields:
                         blocked = True
                         break
             if blocked:

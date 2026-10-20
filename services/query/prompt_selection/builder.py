@@ -6,11 +6,12 @@ from services.query.profile_config import RuntimeProfileConfig
 from services.query.dates.resolver import resolve_question_dates
 from services.query.values.matching import normalize_for_match
 from .config import PromptSelectionConfig
-from .relevance import compute_question_relevance
+from .relevance import compute_question_relevance, protected_rule, rule_fields
 from .gates import gate_rules, collection_relevance
 from .pruning import prune_schema_for_prompt, compact_prompt_schema, remember_prompt_view, query_field_references
 from .facts import relevant_profile_facts
 from services.query.collection_scope import explicit_collection_scope, scoped_rules
+from services.query.profile_facts import is_safe_path
 
 
 def prepare_relevance(question, selected, rules=(), preferences=(), profile_lookup=None, config=None, now=None,
@@ -72,11 +73,21 @@ def build_prompt_inputs(selected_schema, question, rules=None, preferences=None,
                                     **{key: value for key, value in profile.get("generated", {}).items() if value}}
     already_gated = rules and all(rule.get("_prompt_gate_question") == normalize_for_match(question)[0] for rule in rules)
     kept_rules = rules if already_gated else gate_rules(rules, question, names, relevance, profiles, config, constraints, diagnostics)
+    # Drop field/fact signals contributed by rules rejected by relevance or cap.
+    relevance = compute_question_relevance(question, names, profiles.get, kept_rules,
+        [*preferences, *inherited], constraints, relationships, config)
     survivors = collection_relevance(names, question, profiles, relevance, kept_rules, relationships, config, diagnostics)
     survivors = [name for name in names if name in survivors or name in previous_fields]
     prompt_schema = deepcopy(selected_schema)
     prompt_schema["collections"] = {name: info for name, info in prompt_schema["collections"].items() if name in survivors}
-    prompt_schema = prune_schema_for_prompt(prompt_schema, relevance, config)
+    required_dependencies = {(name, path) for rule in kept_rules if protected_rule(rule, survivors)
+                             for name in survivors for path in rule_fields(rule, name, survivors)}
+    required_dependencies.update((name, path) for name, paths in previous_fields.items() for path in paths)
+    required_dependencies.update((item["collection"], item["field"]) for item in preferences
+                                 if item.get("collection") in survivors and isinstance(item.get("field"), str))
+    required_dependencies = {(name, path) for name, path in required_dependencies
+                             if is_safe_path(profiles.get(name), path)}
+    prompt_schema = prune_schema_for_prompt(prompt_schema, relevance, config, required_fields=required_dependencies)
     for name, info in selected_schema.get("collections", {}).items():
         shown = prompt_schema["collections"].get(name, {}).get("fields", {})
         eligible = {row["field"] for row in relevance.get(name, [])}
@@ -84,8 +95,12 @@ def build_prompt_inputs(selected_schema, question, rules=None, preferences=None,
             if path not in shown:
                 diagnostics.append({"section": "schema", "item": name + "." + path, "omitted": True,
                                     "reason": "collection_gate" if name not in survivors else "field_cap" if path in eligible else "excluded_or_no_signal"})
+    kept_rules = [rule for rule in kept_rules if not rule.get("collections") or set(rule["collections"]) & set(survivors)]
+    preferences = [item for item in preferences if item.get("collection") in survivors]
+    required_facts = {(name, path) for rule in kept_rules if protected_rule(rule, survivors)
+                      for name in survivors for path in rule_fields(rule, name, survivors)}
     facts = relevant_profile_facts(prompt_schema, question, profiles.get, relevance, constraints, config,
-                                   RuntimeProfileConfig.from_env(), diagnostics)
+                                   RuntimeProfileConfig.from_env(), diagnostics, required_fields=required_facts)
     remember_prompt_view(full_schema, prompt_schema)
     return {"schema": compact_prompt_schema(prompt_schema), "rules": kept_rules, "preferences": preferences, "facts": facts,
             "relevance": relevance, "diagnostics": diagnostics, "selected_schema": prompt_schema, "active": True}

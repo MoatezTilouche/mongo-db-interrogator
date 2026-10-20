@@ -1,7 +1,8 @@
 """Question gates with audit reasons; no provider or database calls."""
 import logging
+from collections import Counter
 from services.knowledge.rule_policy import priority
-from .relevance import generic_tokens, rule_scopes, rule_signals, tokens
+from .relevance import generic_tokens, rule_scopes, rule_signals, tokens, protected_rule
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,10 @@ def gate_rules(rules, question, selected, relevance, profiles, config, time_cons
     ranked.sort(key=lambda row: row[:3])
     # Unprofiled collections retain their existing policy rather than being
     # silently affected by a budget introduced for profile-aware prompts.
-    keep = [row[3] for row in ranked if row[4]] + [row[3] for row in ranked if not row[4]][:config.max_rules]
+    preserved = [row[3] for row in ranked if row[4] or protected_rule(row[3], selected)]
+    optional = [row[3] for row in ranked if not row[4] and not protected_rule(row[3], selected)]
+    keep_ids = {id(rule) for rule in [*preserved, *optional[:config.max_rules]]}
+    keep = [row[3] for row in ranked if id(row[3]) in keep_ids]
     for rule, signals in decisions:
         dropped = not any(rule is candidate for candidate in keep)
         reason = "rule_cap" if signals else "scope_mismatch" if not rule_scopes(rule, selected) else "no_question_signal"
@@ -45,19 +49,32 @@ def collection_relevance(selected_collections, question, profiles, relevance, ru
     names = list(selected_collections)
     if config.collection_mode == "off" or not any(profiles.values()):
         return names
+    # Exact source names and complete required join scopes must survive even
+    # when their fields have no lexical overlap with the user's wording.
+    required = {name for name in names if tokens(name) and tokens(name) <= tokens(question)}
+    labels_by_name = {}
+    for name in names:
+        generated = (profiles.get(name) or {}).get("generated") or {}
+        labels_by_name[name] = " ".join([str(generated.get("description", "")), *(str(alias) for alias in generated.get("aliases", []))])
+    label_frequency = Counter(word for text in labels_by_name.values() for word in tokens(text))
+    common_labels = {word for word, count in label_frequency.items() if count > 1 and count > len(names) * config.generic_fraction}
+    for rule in rules:
+        if protected_rule(rule, names):
+            required.update(rule_scopes(rule, names))
     supported = set()
     for name in names:
         profile = profiles.get(name)
-        generated = (profile or {}).get("generated") or {}
-        labels = " ".join([str(generated.get("description", "")), *(str(alias) for alias in generated.get("aliases", []))])
+        labels = labels_by_name[name]
         reasons = []
+        if name in required:
+            reasons.append("required_source")
         if profile is None:
             reasons.append("unprofiled")
         if any(name in rule_scopes(rule, names) for rule in rules):
             reasons.append("kept_rule")
         if any(set(row["reasons"]) & {"field_leaf", "field_token", "value", "preference"} for row in relevance.get(name, [])):
             reasons.append("question_signal")
-        if tokens(labels) & tokens(question):
+        if (tokens(labels) - common_labels) & tokens(question):
             reasons.append("generated_text")
         for rule in rules:
             metadata = rule.get("metadata") or {}
@@ -68,15 +85,18 @@ def collection_relevance(selected_collections, question, profiles, relevance, ru
         elif diagnostics is not None:
             diagnostics.append({"section": "collections", "item": name, "reason": "no_question_signal",
                                 "omitted": config.collection_mode == "on", "would_drop": True})
-        if not reasons:
-            logger.info("generator_collection_gate mode=%s collection=%s reason=no_question_signal would_drop=true",
-                        config.collection_mode, name)
     # Relationship-only fields never manufacture support for an otherwise
     # unrelated collection. Both endpoints need independent question signals.
     if not supported and names:
-        supported.add(names[0])
+        # No independent evidence distinguishes the candidates. Keep the
+        # ambiguous scope rather than silently selecting the first collection.
+        supported.update(names)
         if diagnostics is not None:
             for item in diagnostics:
-                if item["section"] == "collections" and item["item"] == names[0]:
-                    item.update(omitted=False, reason="minimum_one_collection")
+                if item["section"] == "collections":
+                    item.update(omitted=False, would_drop=False, reason="ambiguous_scope_retained")
+    for name in names:
+        if name not in supported:
+            logger.info("generator_collection_gate mode=%s collection=%s reason=no_question_signal would_drop=true",
+                        config.collection_mode, name)
     return [name for name in names if name in supported] if config.collection_mode == "on" else names
