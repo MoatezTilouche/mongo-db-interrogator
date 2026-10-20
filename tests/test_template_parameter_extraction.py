@@ -1,6 +1,7 @@
 """Generic typed slot extraction with fake models and no database calls."""
 from copy import deepcopy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -8,6 +9,8 @@ import pytest
 
 import services.template_parameter_extractor as extractor
 from services.query_parameter_binder import parameterize_filter_values, bind_query_parameters
+
+SHORTHAND_CASE = json.loads((Path(__file__).parent / "fixtures/template_parameter_shorthand_case.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(autouse=True)
@@ -194,3 +197,78 @@ def test_fixed_filter_values_are_not_rebound(monkeypatch):
     decline(monkeypatch)
     with pytest.raises(extractor.TemplateParameterExtractionError):
         extractor.extract_parameters("Find records with code PAUSED", doc)
+
+
+@pytest.mark.parametrize("case", SHORTHAND_CASE["accepted"])
+def test_reported_reordered_shorthand_extracts_without_model_or_structure_changes(case, offline):
+    doc = deepcopy(SHORTHAND_CASE["document"])
+    before = deepcopy(doc)
+    values, method = extractor.extract_parameters(case["question"], doc)
+    assert method == "deterministic"
+    assert values == {"limit": case["limit"], "filter_and_0_status": "Passed"}
+    bound = bind_query_parameters(doc["template"], values)
+    assert bound["filter"]["$and"][0] == {"status": "Passed"}
+    assert bound["filter"]["$and"][1] == doc["template"]["filter"]["$and"][1]
+    assert bound["sort"] == [] and bound["projection"] is None
+    assert doc == before
+    offline.assert_not_called()
+
+
+@pytest.mark.parametrize("question", SHORTHAND_CASE["declined"])
+def test_shorthand_does_not_guess_missing_values_or_accept_changed_constraints(question, monkeypatch):
+    decline(monkeypatch)
+    with pytest.raises(extractor.TemplateParameterExtractionError):
+        extractor.extract_parameters(question, deepcopy(SHORTHAND_CASE["document"]))
+
+
+def test_shorthand_is_generic_and_preserves_fixed_parameters(offline):
+    doc = saved("Show 7 ready records today from records with state = Ready",
+                {"state": "Ready", "category": "Fixed"}, limit=7)
+    values, method = extractor.extract_parameters("Show 11 records ready today", doc)
+    assert values == {"limit": 11, "filter_state": "Ready", "filter_category": "Fixed"} and method == "deterministic"
+    offline.assert_not_called()
+
+
+def test_shorthand_respects_refined_scope(monkeypatch):
+    doc = deepcopy(SHORTHAND_CASE["document"])
+    doc["scope_refined"] = True
+    decline(monkeypatch)
+    with pytest.raises(extractor.TemplateParameterExtractionError):
+        extractor.extract_parameters(SHORTHAND_CASE["accepted"][0]["question"], doc)
+
+
+def test_shorthand_does_not_ignore_case_changes_to_identifier_like_values(monkeypatch):
+    doc = saved("Show 7 ABC records today from records with code = ABC", {"code": "ABC"}, limit=7)
+    decline(monkeypatch)
+    with pytest.raises(extractor.TemplateParameterExtractionError):
+        extractor.extract_parameters("Show 11 records abc today", doc)
+
+
+@pytest.mark.parametrize("annotation", ["code = abc", "Code = ABC"])
+def test_shorthand_does_not_hide_changed_explicit_value_or_field_case(monkeypatch, annotation):
+    doc = saved("Show 7 ABC records today from records with code = ABC", {"code": "ABC"}, limit=7)
+    decline(monkeypatch)
+    with pytest.raises(extractor.TemplateParameterExtractionError):
+        extractor.extract_parameters("Show 11 records ABC today from records with " + annotation, doc)
+
+
+def test_shorthand_does_not_rebind_shared_quantity_filter_slot(monkeypatch):
+    doc = deepcopy(SHORTHAND_CASE["document"])
+    doc["parameter_schema"]["limit"]["source_paths"].append("filter.sequence")
+    decline(monkeypatch)
+    with pytest.raises(extractor.TemplateParameterExtractionError):
+        extractor.extract_parameters(SHORTHAND_CASE["accepted"][0]["question"], doc)
+
+
+def test_fallback_prompt_distinguishes_redundant_annotations_from_removed_constraints(monkeypatch):
+    doc = deepcopy(SHORTHAND_CASE["document"])
+    invoke = Mock(return_value=SimpleNamespace(content=json.dumps({"can_extract": True,
+        "parameters": {"limit": 4, "filter_and_0_status": "Passed"}})))
+    monkeypatch.setattr(extractor.llm_router, "invoke", invoke)
+    values, method = extractor.extract_parameters("Please retrieve four orders that passed today", doc)
+    assert values["limit"] == 4 and method == "llm"
+    prompt, payload = invoke.call_args.args[1][0].content.split("\n", 1)
+    assert "omitting its name alone does not change scope" in prompt
+    assert "redundant field=value" in prompt and "Ground every user-variable value" in prompt
+    assert json.loads(payload)["template_context"]["scope_refined"] is False
+    assert invoke.call_args.args[0] == "template_parameters"

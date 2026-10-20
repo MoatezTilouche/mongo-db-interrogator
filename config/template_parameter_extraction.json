@@ -1,0 +1,5 @@
+{
+  "collection_introducers": ["from collection", "from"],
+  "filter_introducers": ["with", "where"],
+  "non_entity_tokens": ["and", "or", "not", "with", "where", "from", "by", "than", "before", "after"]
+}
