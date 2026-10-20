@@ -26,6 +26,14 @@ from services.learned_optimization_service import LearnedOptimizationService
 
 _knowledge_retriever = KnowledgeRetriever()
 
+_context_route_logger = logging.getLogger("services.query.context_routing")
+_context_route_logger.setLevel(logging.INFO)
+if not _context_route_logger.handlers:
+    _context_route_handler = logging.StreamHandler()
+    _context_route_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+    _context_route_logger.addHandler(_context_route_handler)
+_context_route_logger.propagate = False
+
 from agent.tracing import traceable
 from agents.executor_agent import ExecutorAgent
 from agents.query_generator_agent import QueryGeneratorAgent
@@ -141,6 +149,11 @@ class OrchestratorAgent:
                 "query_context_fast_path_reason": context_policy["reason"],
                 "query_context_route": "deterministic" if use_fast_context else "llm",
             })
+            _context_route_logger.info(
+                "query_context_routing request_id=%s mode=%s eligible=%s reason=%s route=%s",
+                current_request_id(), context_policy["mode"], context_policy["eligible"],
+                context_policy["reason"], retrieval_status["query_context_route"],
+            )
             if use_fast_context:
                 emit("QueryContextDeterministic", "completed", message="Explicit query context selected")
                 context_result = context_policy["result"]
@@ -156,6 +169,10 @@ class OrchestratorAgent:
                     retrieval_status["query_context_fast_path_agrees"] = (
                         predicted["operation"] == actual["operation"] and
                         set(predicted["collections"]) == set(actual["collections"]))
+                    _context_route_logger.info(
+                        "query_context_comparison request_id=%s agrees=%s",
+                        current_request_id(), retrieval_status["query_context_fast_path_agrees"],
+                    )
             retrieval_status.update(context_result.pop("_prompt_compaction", {}))
             if context_result.get("error"):
                 if "_context_diagnostics" in knowledge_result:

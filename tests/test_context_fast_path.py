@@ -1,6 +1,7 @@
 """Explicit context routing, with fake providers and the real validation path."""
 from copy import deepcopy
 import json
+import logging
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -127,6 +128,34 @@ def test_enabled_ambiguous_question_still_calls_context(case, monkeypatch):
     app = runtime(case, monkeypatch, "on")
     app.run("Find relevant records today")
     app.query_context_agent.build.assert_called_once()
+
+
+@pytest.mark.parametrize("mode", ["off", "log", "on"])
+def test_context_decision_is_logged_without_verbose_root_logging(case, monkeypatch, caplog, mode):
+    import orchestrator as module
+    from agent.telemetry import request_context
+
+    app = runtime(case, monkeypatch, mode)
+    caplog.set_level(logging.WARNING)
+    caplog.handler.setLevel(logging.INFO)
+    logger = module._context_route_logger
+    logger.addHandler(caplog.handler)
+    try:
+        if mode != "on":
+            def build(*args, **kwargs):
+                assert "query_context_routing request_id=req_fixture" in caplog.text
+                return deepcopy(app.query_context_agent.build.return_value)
+            app.query_context_agent.build.side_effect = build
+        with request_context("req_fixture"):
+            result = app.run(CASE["cases"][0]["question"])
+    finally:
+        logger.removeHandler(caplog.handler)
+    assert result["execution_success"], result
+    route = "deterministic" if mode == "on" else "llm"
+    assert f"mode={mode} eligible={mode != 'off'}" in caplog.text
+    assert f"route={route}" in caplog.text
+    assert ("query_context_comparison request_id=req_fixture agrees=True" in caplog.text) == (mode == "log")
+    assert CASE["cases"][0]["question"] not in caplog.text
 
 
 def test_shortcut_keeps_existing_validation_and_repair(case, monkeypatch):

@@ -92,6 +92,24 @@ from offline tests.
 
 ## Validate on real requests before enabling broadly
 
+After restarting the backend, review the terminal running Uvicorn. Every request
+that reaches context selection prints an INFO entry, even with the default root
+logging level:
+
+```text
+INFO services.query.context_routing query_context_routing request_id=req_... mode=log eligible=True reason=explicit_single_collection route=llm
+INFO services.query.context_routing query_context_comparison request_id=req_... agrees=True
+```
+
+The reason describes eligibility; it varies with the question. The comparison
+entry appears only for eligible requests whose context model returned successfully.
+The decision is printed before that model call, so it is visible while the call
+is running. Search for `query_context_routing` and match entries by `request_id`.
+Questions, parameters and query contents are not included in these entries.
+Template-cache suggestions and reuse bypass context selection and do not emit
+these entries. Choose regeneration to review context routing for such a question.
+These entries go to the backend console; no dedicated log file is created.
+
 Keep `QUERY_CONTEXT_FAST_PATH_MODE=log` for the first deployment. Response
 telemetry includes:
 
