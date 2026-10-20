@@ -108,7 +108,8 @@ class ClientConfig:
         return urlsplit(url).hostname if url else "sdk_default"
 
 
-def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None, embedding_role=None):
+def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None, embedding_role=None,
+               chat_role=None):
     # Lazy import: config loads .env and provides the existing defaults.
     from agent import config as legacy
     chat_url = _url("LLM_BASE_URL / OPENAI_BASE_URL", os.getenv("LLM_BASE_URL", "").strip()
@@ -152,9 +153,12 @@ def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None, emb
         dimensions = _number("EMBEDDING_DIMENSIONS", None, integer=True, minimum=1)
     elif dimensions is not None and (not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0):
         raise ClientConfigError("SCHEMA_EMBEDDING_DIMENSIONS must be a positive integer")
+    chat_model = os.getenv("LLM_MODEL", "").strip() or None
+    if chat_role == "template_parameters":
+        chat_model = os.getenv("TEMPLATE_PARAMETER_MODEL", "").strip() or chat_model
     return ClientConfig(
         chat_url, embedding_url, chat_key, embedding_key,
-        os.getenv("LLM_MODEL", "").strip() or None,
+        chat_model,
         embedding_model, dimensions,
         _number("LLM_TIMEOUT_SECONDS", legacy.LLM_TIMEOUT_SECONDS if timeout is None else timeout, minimum=0.001),
         _number("LLM_MAX_RETRIES", legacy.LLM_MAX_RETRIES if retries is None else retries, integer=True),
@@ -189,9 +193,9 @@ def request_body(payload, config):
     return payload
 
 
-def get_chat_client(model=None, *, api_key=None, timeout=None, retries=None, callbacks=None):
+def get_chat_client(model=None, *, api_key=None, timeout=None, retries=None, callbacks=None, chat_role=None):
     from agent import config as legacy
-    config = get_config(api_key=api_key, timeout=timeout, retries=retries)
+    config = get_config(api_key=api_key, timeout=timeout, retries=retries, chat_role=chat_role)
     if not config.chat_key:
         raise ClientConfigError("LLM_API_KEY or OPENAI_API_KEY is required without LLM_BASE_URL")
     from langchain_openai import ChatOpenAI

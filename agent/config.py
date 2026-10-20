@@ -210,4 +210,7 @@ if not 0 <= SEMANTIC_TEMPLATE_MIN_THRESHOLD <= SEMANTIC_TEMPLATE_SUGGEST_THRESHO
 if QUERY_TEMPLATES_COLLECTION in {QUERY_HISTORY_COLLECTION, FEEDBACK_COLLECTION, USER_PREFERENCES_COLLECTION,
         SCHEMA_CACHE_COLLECTION, DATABASE_KNOWLEDGE_COLLECTION, QUERY_PERFORMANCE_COLLECTION}:
     raise ValueError("Query templates must use a separate collection")
-LLM_ROLE_CONFIG["template_parameters"] = OPENAI_MODEL
+# Parameter extraction can use a smaller chat model on the same endpoint.
+# A role-specific choice takes precedence over the global LLM_MODEL override.
+TEMPLATE_PARAMETER_MODEL = os.getenv("TEMPLATE_PARAMETER_MODEL", "").strip() or OPENAI_MODEL
+LLM_ROLE_CONFIG["template_parameters"] = TEMPLATE_PARAMETER_MODEL

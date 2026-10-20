@@ -1,5 +1,29 @@
 # Generic template parameter extraction
 
+## Separate model for the extraction fallback
+
+On the local Ollama deployment, set this in the runtime `.env` and restart:
+
+```dotenv
+TEMPLATE_PARAMETER_MODEL=qwen3.5:2b
+```
+
+This selects the smaller chat model for the `template_parameters` role only, on
+the existing chat endpoint. Query generation, repair, context, enrichment and
+embeddings retain their existing model settings. The explicit extraction setting
+takes precedence over `LLM_MODEL` for this role, including in the final client
+constructor. Blank or unset inherits the existing query chat model.
+
+The deterministic extraction path still makes no model call. Paraphrases use the
+selected fallback model with the existing typed JSON response, constant checks
+and downstream query validation. A model failure follows the existing extraction
+error path; it does not silently call the larger model. Request telemetry and
+logs identify the actual extraction model. No template migration is
+needed. This changes routing; local latency and extraction quality still need to
+be measured on the deployment's questions and hardware.
+
+## Extraction behavior
+
 Reuse now extracts values from typed parameter slots in the original question.
 There are no special branches for an action-code field, a collection, a status,
 an identifier prefix, or a particular saved default value.
@@ -47,7 +71,7 @@ approved; reuse cannot silently rewrite its sort.
 Changed files: `services/template_parameter_extractor.py`,
 `services/template_decision_service.py`, `tests/test_template_parameter_extraction.py`,
 `tests/test_semantic_template_cache.py`, and this report. There are no new
-dependencies, environment options, embedding changes or prompt-text changes.
+dependencies, embedding changes or prompt-text changes.
 Public extraction signatures and existing stored parameter fields remain the
 same. No migration, real database writes or external model calls were performed.
 

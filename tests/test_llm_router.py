@@ -7,15 +7,18 @@ from agent.llm import LLMRouter, LLMRouterError, StructuredOutputError
 from agent.telemetry import capture_usage, totals
 
 @pytest.mark.parametrize("role", list(module.LLM_ROLE_CONFIG))
-def test_all_roles_use_single_openai_model(monkeypatch, role):
+def test_roles_use_their_configured_model(monkeypatch, role):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("TEMPLATE_PARAMETER_MODEL", raising=False)
+    monkeypatch.setitem(module.LLM_ROLE_CONFIG, role, "test-model")
     router = LLMRouter()
     client = Mock()
     client.invoke.return_value = SimpleNamespace(content='{"ok":true}')
     factory = Mock(return_value=client)
     monkeypatch.setattr(router, "_client", factory)
     router.invoke(role, [], dict)
-    factory.assert_called_once_with(module.LLM_ROLE_CONFIG[role])
-    assert len(set(module.LLM_ROLE_CONFIG.values())) == 1
+    route = {"chat_role": "template_parameters"} if role == "template_parameters" else {}
+    factory.assert_called_once_with("test-model", **route)
 
 @pytest.mark.parametrize("error", [TimeoutError("timed out"), type("RateLimitError", (Exception,), {"status_code":429})("rate limit")])
 def test_transient_error_retries_same_model_without_fallback(monkeypatch, error):

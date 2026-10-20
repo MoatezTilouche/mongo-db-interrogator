@@ -12,7 +12,7 @@ def load_config(monkeypatch):
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **kw: False)
     for name in ("LLM_MODEL", "OPENAI_MODEL", "SCHEMA_ENRICHMENT_MODEL", "EMBEDDING_MODEL",
                  "SCHEMA_EMBEDDING_MODEL", "KNOWLEDGE_EMBEDDING_MODEL",
-                 "TEMPLATE_EMBEDDING_MODEL", "TEMPLATE_EMBEDDING_DIMENSIONS"):
+                 "TEMPLATE_EMBEDDING_MODEL", "TEMPLATE_EMBEDDING_DIMENSIONS", "TEMPLATE_PARAMETER_MODEL"):
         monkeypatch.delenv(name, raising=False)
     path = Path(__file__).resolve().parents[1] / "agent/config.py"
     return lambda: runpy.run_path(str(path))
@@ -56,6 +56,28 @@ def test_explicit_global_chat_override_keeps_existing_precedence(load_config, mo
                         "SCHEMA_ENRICHMENT_MODEL": "test-enrichment", "EMBEDDING_MODEL": "test-embedding"}.items():
         monkeypatch.setenv(name, value)
     assert set(load_config()["LLM_ROLE_CONFIG"].values()) == {"test-global"}
+
+
+@pytest.mark.parametrize("global_override", [False, True])
+def test_template_parameter_model_only_overrides_extraction(load_config, monkeypatch, global_override):
+    monkeypatch.setenv("OPENAI_MODEL", "test-query")
+    monkeypatch.setenv("EMBEDDING_MODEL", "test-embedding")
+    monkeypatch.setenv("TEMPLATE_PARAMETER_MODEL", " test-extractor ")
+    if global_override:
+        monkeypatch.setenv("LLM_MODEL", "test-global")
+    roles = load_config()["LLM_ROLE_CONFIG"]
+    assert roles["template_parameters"] == "test-extractor"
+    assert {model for role, model in roles.items() if role != "template_parameters"} == {
+        "test-global" if global_override else "test-query"}
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_template_parameter_model_inherits_query_model(load_config, monkeypatch, value):
+    monkeypatch.setenv("OPENAI_MODEL", "test-query")
+    monkeypatch.setenv("EMBEDDING_MODEL", "test-embedding")
+    monkeypatch.setenv("TEMPLATE_PARAMETER_MODEL", value)
+    config = load_config()
+    assert config["TEMPLATE_PARAMETER_MODEL"] == config["LLM_ROLE_CONFIG"]["template_parameters"] == "test-query"
 
 
 @pytest.mark.parametrize("blank_optional", [False, True])

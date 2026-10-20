@@ -44,16 +44,17 @@ class LLMRouter:
         self._clients: dict[tuple, Any] = {}
         self._embedding_clients: dict[tuple, Any] = {}
 
-    def _client(self, model: str) -> Any:
+    def _client(self, model: str, *, chat_role: str | None = None) -> Any:
+        route = {"chat_role": chat_role} if chat_role else {}
         identity = (model, cache_identity(get_config(api_key=OPENAI_API_KEY,
-                    timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES)))
+                    timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES, **route)))
         if identity in self._clients:
             return self._clients[identity]
 
         callback = get_token_usage_callback()
         callbacks = [callback] if callback else None
         client = get_chat_client(model, api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS,
-                                 retries=LLM_MAX_RETRIES, callbacks=callbacks)
+                                 retries=LLM_MAX_RETRIES, callbacks=callbacks, **route)
         self._clients[identity] = client
         return client
 
@@ -189,7 +190,8 @@ class LLMRouter:
         except KeyError as exc:
             raise ValueError(f"Unknown LLM role: {role}") from exc
 
-        config = get_config(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES)
+        route = {"chat_role": role} if role == "template_parameters" else {}
+        config = get_config(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES, **route)
         model = config.chat_model or model
 
         from agent.output_schemas import GeneratedQuery, QueryContext
@@ -206,7 +208,7 @@ class LLMRouter:
             using_schema = False
             response_format_type = "none"
             try:
-                client = self._client(model)
+                client = self._client(model, **route)
                 response_format = schema_response_format(structured_output_schema) if config.structured_output is True else None
                 if structured_fallback or config.structured_output is False:
                     pass  # Existing local parser/validators handle the plain response.
