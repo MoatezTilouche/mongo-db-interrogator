@@ -101,13 +101,14 @@ class ClientConfig:
     batch_size: int
     structured_output: bool | None
     embedding_options_active: bool
+    query_instruction: str = ""
 
     def host(self, *, embedding=False):
         url = self.embedding_url if embedding else self.chat_url
         return urlsplit(url).hostname if url else "sdk_default"
 
 
-def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None):
+def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None, embedding_role=None):
     # Lazy import: config loads .env and provides the existing defaults.
     from agent import config as legacy
     chat_url = _url("LLM_BASE_URL / OPENAI_BASE_URL", os.getenv("LLM_BASE_URL", "").strip()
@@ -130,15 +131,31 @@ def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None):
             raise ValueError
     except (ValueError, TypeError):
         raise ClientConfigError("LLM_EXTRA_BODY must be a valid JSON object") from None
-    dimensions = legacy.SCHEMA_EMBEDDING_DIMENSIONS if dimensions is None else dimensions
-    if os.getenv("EMBEDDING_DIMENSIONS", "").strip():
+    if embedding_role not in {None, "templates"}:
+        raise ClientConfigError("Unknown embedding role")
+    embedding_model = os.getenv("EMBEDDING_MODEL", "").strip() or None
+    retrieval_model = embedding_model or legacy.SCHEMA_EMBEDDING_MODEL
+    query_instruction = os.getenv("EMBEDDING_QUERY_INSTRUCTION", "").strip()
+    if embedding_role == "templates":
+        embedding_model = os.getenv("TEMPLATE_EMBEDDING_MODEL", "").strip() or retrieval_model
+        query_instruction = ""
+        if os.getenv("TEMPLATE_EMBEDDING_DIMENSIONS", "").strip():
+            dimensions = _number("TEMPLATE_EMBEDDING_DIMENSIONS", None, integer=True, minimum=1)
+        elif embedding_model == retrieval_model:
+            dimensions = legacy.SCHEMA_EMBEDDING_DIMENSIONS if dimensions is None else dimensions
+            if os.getenv("EMBEDDING_DIMENSIONS", "").strip():
+                dimensions = _number("EMBEDDING_DIMENSIONS", None, integer=True, minimum=1)
+        # A separate model uses its native dimensions unless explicitly set.
+    else:
+        dimensions = legacy.SCHEMA_EMBEDDING_DIMENSIONS if dimensions is None else dimensions
+    if embedding_role != "templates" and os.getenv("EMBEDDING_DIMENSIONS", "").strip():
         dimensions = _number("EMBEDDING_DIMENSIONS", None, integer=True, minimum=1)
     elif dimensions is not None and (not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0):
         raise ClientConfigError("SCHEMA_EMBEDDING_DIMENSIONS must be a positive integer")
     return ClientConfig(
         chat_url, embedding_url, chat_key, embedding_key,
         os.getenv("LLM_MODEL", "").strip() or None,
-        os.getenv("EMBEDDING_MODEL", "").strip() or None, dimensions,
+        embedding_model, dimensions,
         _number("LLM_TIMEOUT_SECONDS", legacy.LLM_TIMEOUT_SECONDS if timeout is None else timeout, minimum=0.001),
         _number("LLM_MAX_RETRIES", legacy.LLM_MAX_RETRIES if retries is None else retries, integer=True),
         extra_body, frozenset(item.strip() for item in os.getenv("LLM_DROP_PARAMS", "").split(",") if item.strip()),
@@ -147,7 +164,8 @@ def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None):
         _boolean("LLM_STRUCTURED_OUTPUT", None),
         bool(embedding_url or any(os.getenv(name, "").strip() for name in (
             "EMBEDDING_MODEL", "EMBEDDING_DIMENSIONS", "EMBEDDING_SEND_DIMENSIONS", "EMBEDDING_BATCH_SIZE",
-            "EMBEDDING_API_KEY"))),
+            "EMBEDDING_API_KEY", "TEMPLATE_EMBEDDING_MODEL", "TEMPLATE_EMBEDDING_DIMENSIONS"))),
+        query_instruction,
     )
 
 
@@ -156,7 +174,7 @@ def cache_identity(config):
     return (config.chat_url, config.embedding_url, config.chat_key, config.embedding_key,
             config.chat_model, config.embedding_model, config.dimensions, config.timeout,
             config.retries, json.dumps(config.extra_body, sort_keys=True), config.drop_params,
-            config.send_dimensions, config.batch_size, config.structured_output)
+            config.send_dimensions, config.batch_size, config.structured_output, config.query_instruction)
 
 
 def request_body(payload, config):
@@ -247,9 +265,9 @@ class EmbeddingClient:
 
 
 def get_embedding_client(model=None, dimensions=None, *, api_key=None, purpose="schema_embedding",
-                         legacy_options=None):
+                         legacy_options=None, embedding_role=None):
     from agent import config as legacy
-    config = get_config(api_key=api_key, dimensions=dimensions)
+    config = get_config(api_key=api_key, dimensions=dimensions, embedding_role=embedding_role)
     model = config.embedding_model or model or legacy.SCHEMA_EMBEDDING_MODEL
     if not config.embedding_key:
         raise ClientConfigError("EMBEDDING_API_KEY or OPENAI_API_KEY is required without EMBEDDING_BASE_URL")

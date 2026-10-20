@@ -7,7 +7,8 @@ from database.mongo_client import get_database
 from database.record_safety import safe_record
 from database.storage_codec import encode_record, decode_record
 from services.query_parameter_binder import bind_query_parameters
-from agent.config import QUERY_TEMPLATES_COLLECTION, DEFAULT_USER_ID, SCHEMA_EMBEDDING_MODEL
+from agent.config import (QUERY_TEMPLATES_COLLECTION, DEFAULT_USER_ID,
+                          TEMPLATE_EMBEDDING_MODEL, TEMPLATE_EMBEDDING_DIMENSIONS)
 from uuid import uuid4
 from datetime import timedelta
 from pymongo import ReturnDocument
@@ -20,11 +21,14 @@ EMBEDDING_REPRESENTATION_VERSION = 2
 
 def stale_embedding_filter():
     """A model switch invalidates a vector even when its text version matches."""
-    return {"$or": [
+    reasons = [
         {"embedding_representation_version": {"$ne": EMBEDDING_REPRESENTATION_VERSION}},
-        {"embedding_model": {"$ne": SCHEMA_EMBEDDING_MODEL}},
+        {"embedding_model": {"$ne": TEMPLATE_EMBEDDING_MODEL}},
         {"embedding": {"$exists": False}},
-    ]}
+    ]
+    if TEMPLATE_EMBEDDING_DIMENSIONS is not None:
+        reasons.append({"embedding_dimensions": {"$ne": TEMPLATE_EMBEDDING_DIMENSIONS}})
+    return {"$or": reasons}
 
 
 def template_validation_schema(schema):
@@ -148,10 +152,11 @@ class QueryTemplateRepository:
         if not isinstance(document, dict): return
         try:
             search_text = document.get("semantic_search_text") or normalized_question(document["source_question"])
-            vector = llm_router.embed_query(search_text)
+            vector = llm_router.embed_documents([search_text], embedding_role="templates")[0]
             saved = collection.update_one({"_id": template_id, "embedding_claim": claim,
                                    "source_question": source_document["source_question"]}, {
-                "$set": {"embedding": vector, "embedding_model": SCHEMA_EMBEDDING_MODEL,
+                "$set": {"embedding": vector, "embedding_model": TEMPLATE_EMBEDDING_MODEL,
+                    "embedding_dimensions": len(vector),
                     "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
                     "embedding_source_text": search_text},
                 "$unset": {"embedding_claim": "", "embedding_claim_until": ""}})

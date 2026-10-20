@@ -11,7 +11,8 @@ def load_config(monkeypatch):
     # Exercise a fresh configuration namespace without reading or editing .env.
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **kw: False)
     for name in ("LLM_MODEL", "OPENAI_MODEL", "SCHEMA_ENRICHMENT_MODEL", "EMBEDDING_MODEL",
-                 "SCHEMA_EMBEDDING_MODEL", "KNOWLEDGE_EMBEDDING_MODEL"):
+                 "SCHEMA_EMBEDDING_MODEL", "KNOWLEDGE_EMBEDDING_MODEL",
+                 "TEMPLATE_EMBEDDING_MODEL", "TEMPLATE_EMBEDDING_DIMENSIONS"):
         monkeypatch.delenv(name, raising=False)
     path = Path(__file__).resolve().parents[1] / "agent/config.py"
     return lambda: runpy.run_path(str(path))
@@ -75,3 +76,16 @@ def test_incompatible_explicit_embedding_models_are_still_rejected(load_config, 
     monkeypatch.setenv("KNOWLEDGE_EMBEDDING_MODEL", "different-embedding")
     with pytest.raises(ValueError, match="must match SCHEMA_EMBEDDING_MODEL"):
         load_config()
+
+
+def test_template_model_can_differ_from_shared_retrieval_model(load_config, monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "test-query")
+    monkeypatch.setenv("EMBEDDING_MODEL", "test-retrieval")
+    monkeypatch.setenv("TEMPLATE_EMBEDDING_MODEL", "test-template")
+    monkeypatch.setenv("EMBEDDING_DIMENSIONS", "3")
+    config = load_config()
+    assert config["SCHEMA_EMBEDDING_MODEL"] == config["KNOWLEDGE_EMBEDDING_MODEL"] == "test-retrieval"
+    assert config["TEMPLATE_EMBEDDING_MODEL"] == "test-template"
+    assert config["TEMPLATE_EMBEDDING_DIMENSIONS"] is None
+    monkeypatch.setenv("TEMPLATE_EMBEDDING_DIMENSIONS", "2")
+    assert load_config()["TEMPLATE_EMBEDDING_DIMENSIONS"] == 2

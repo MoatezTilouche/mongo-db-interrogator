@@ -137,6 +137,17 @@ if SCHEMA_EMBEDDING_DIMENSIONS is not None and SCHEMA_EMBEDDING_DIMENSIONS <= 0:
 KNOWLEDGE_EMBEDDING_DIMENSIONS = SCHEMA_EMBEDDING_DIMENSIONS
 if KNOWLEDGE_EMBEDDING_MODEL != SCHEMA_EMBEDDING_MODEL:
     raise ValueError("KNOWLEDGE_EMBEDDING_MODEL must match SCHEMA_EMBEDDING_MODEL for shared query embeddings")
+# Template similarity has its own vector space; it never consumes the shared
+# schema/knowledge query vector. Unset options preserve the single-model setup.
+TEMPLATE_EMBEDDING_MODEL = os.getenv("TEMPLATE_EMBEDDING_MODEL", "").strip() or SCHEMA_EMBEDDING_MODEL
+_template_dimensions = os.getenv("TEMPLATE_EMBEDDING_DIMENSIONS", "").strip()
+try:
+    TEMPLATE_EMBEDDING_DIMENSIONS = (int(_template_dimensions) if _template_dimensions else
+        SCHEMA_EMBEDDING_DIMENSIONS if TEMPLATE_EMBEDDING_MODEL == SCHEMA_EMBEDDING_MODEL else None)
+    if TEMPLATE_EMBEDDING_DIMENSIONS is not None and TEMPLATE_EMBEDDING_DIMENSIONS <= 0:
+        raise ValueError
+except ValueError:
+    raise ValueError("TEMPLATE_EMBEDDING_DIMENSIONS must be a positive integer") from None
 LLM_ROLE_CONFIG = {role: OPENAI_MODEL for role in (
     "feedback_analysis", "query_context", "query_generator", "repair", "summary",
 )}

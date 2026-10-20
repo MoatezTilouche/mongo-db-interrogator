@@ -1,5 +1,10 @@
 # Re-embed reusable query templates
 
+For [two-model routing](embedding-routing.md), this command selects
+`TEMPLATE_EMBEDDING_MODEL` and `TEMPLATE_EMBEDDING_DIMENSIONS`, independently of
+the global retrieval model. The single-model configuration below still works
+when those template overrides are unset.
+
 The supplied VM log showed `bge-m3` as the current embedding model and 23 active,
 trusted templates carrying `text-embedding-3-small` vectors. Vectors from these
 models cannot be compared. `scripts.reembed_templates` refreshes the reusable

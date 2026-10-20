@@ -45,7 +45,7 @@ def select_examples(question, schema, operation="unknown", *, ranked=(), profile
     A global fingerprint change is not an execution permission: these read-only
     examples are checked anew, and the direct-reuse version guard stays intact.
     """
-    from agent.config import DEFAULT_USER_ID, SCHEMA_EMBEDDING_MODEL
+    from agent.config import DEFAULT_USER_ID, TEMPLATE_EMBEDDING_MODEL
     from agent.output_schemas import Query
     from agents.validator_agent import ValidatorAgent
     from database.query_template_repository import EMBEDDING_REPRESENTATION_VERSION
@@ -81,7 +81,7 @@ def select_examples(question, schema, operation="unknown", *, ranked=(), profile
             if not math.isfinite(score) or score < min_similarity:
                 continue
             if (document.get("user_id") != DEFAULT_USER_ID or document.get("trusted") is not True
-                    or document.get("embedding_model") != SCHEMA_EMBEDDING_MODEL
+                    or document.get("embedding_model") != TEMPLATE_EMBEDDING_MODEL
                     or document.get("embedding_representation_version") != EMBEDDING_REPRESENTATION_VERSION):
                 continue
             if operation != "unknown" and document.get("operation") != operation:

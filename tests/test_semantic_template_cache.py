@@ -10,7 +10,7 @@ from services.query_parameter_binder import parameterize_filter_values, bind_que
 from services.template_parameter_extractor import describe_parameters, extract_parameters, normalized_question, TemplateParameterExtractionError
 from services.semantic_template_cache import SemanticTemplateCache, cosine
 from database.query_template_repository import template_signature, QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
-from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, SCHEMA_EMBEDDING_MODEL
+from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL
 
 SOURCE = "Give me the orders of command CMD-000009350132"
 NEW = "Give me the orders of command CMD-000009999999"
@@ -26,7 +26,7 @@ def document():
         "semantic_search_text": normalized_question(SOURCE), "embedding_representation_version": 2,
         "parameter_schema": describe_parameters(generated["template"], generated["parameters"], SOURCE),
         "status": "active", "trusted": True, "success_count": 1, "positive_feedback_count": 1, "schema_version": None,
-        "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": SCHEMA_EMBEDDING_MODEL,
+        "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": TEMPLATE_EMBEDDING_MODEL,
         "schema_spec": {"collections": {"orders": {"fields": {"commandId": ["string"]}}}}}
 
 
@@ -306,7 +306,8 @@ def test_same_question_uses_the_same_embedding_representation_at_save_and_lookup
     monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})
     monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
     captured = []
-    def embed(text):
+    def embed(text, *, embedding_role):
+        assert embedding_role == "templates"
         captured.append(text)
         return [1.0, 0.0]
     monkeypatch.setattr(cache_module.llm_router, "embed_query", embed)
@@ -338,10 +339,10 @@ def test_stale_embedding_is_replaced_before_lookup(monkeypatch):
     collection.find_one.return_value = {"source_question": SOURCE}
     collection.find_one_and_update.return_value = stale
     repository = QueryTemplateRepository({QUERY_TEMPLATES_COLLECTION: collection})
-    embed = Mock(return_value=[1.0, 0.0])
-    monkeypatch.setattr(llm_router, "embed_query", embed)
+    embed = Mock(return_value=[[1.0, 0.0]])
+    monkeypatch.setattr(llm_router, "embed_documents", embed)
     assert repository.reembed_stale_embeddings() == 1
-    assert embed.call_args.args[0] == normalized_question(SOURCE)
+    embed.assert_called_once_with([normalized_question(SOURCE)], embedding_role="templates")
     update = collection.update_one.call_args.args[1]["$set"]
     assert update["embedding_representation_version"] == EMBEDDING_REPRESENTATION_VERSION
 
@@ -517,8 +518,8 @@ def test_embedding_claim_only_embeds_once(monkeypatch):
     collection = Mock()
     collection.find_one.return_value = {"source_question": SOURCE}
     collection.find_one_and_update.side_effect = [document(), None]
-    embed = Mock(return_value=[1., 0.])
-    monkeypatch.setattr(llm_router, "embed_query", embed)
+    embed = Mock(return_value=[[1., 0.]])
+    monkeypatch.setattr(llm_router, "embed_documents", embed)
     repository = QueryTemplateRepository({QUERY_TEMPLATES_COLLECTION: collection})
     repository.ensure_embedding(document()["template_id"])
     repository.ensure_embedding(document()["template_id"])

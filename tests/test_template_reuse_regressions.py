@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, SCHEMA_EMBEDDING_MODEL
+from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL
 from database.query_template_repository import QueryTemplateRepository, template_signature
 from database.storage_codec import decode_record
 from services.query_parameter_binder import template_from_concrete
@@ -112,7 +112,7 @@ def document(value="AX-11"):
             "parameter_schema": describe_parameters(result["template"], result["parameters"], question(value)),
             "schema_spec": schema(), "schema_version": "synthetic_v1", "scope_refined": False,
             "status": "active", "trusted": True, "success_count": 1, "positive_feedback_count": 1,
-            "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": SCHEMA_EMBEDDING_MODEL,
+            "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": TEMPLATE_EMBEDDING_MODEL,
             "embedding_representation_version": 2}
 
 
@@ -294,15 +294,15 @@ def test_latest_row_groups_accept_new_id_without_accepting_summaries(invalid):
 def test_changed_source_values_refresh_embedding_provenance(monkeypatch):
     from agent.llm import llm_router
     repository = QueryTemplateRepository(Database())
-    embed = Mock(return_value=[1., 0.])
-    monkeypatch.setattr(llm_router, "embed_query", embed)
+    embed = Mock(return_value=[[1., 0.]])
+    monkeypatch.setattr(llm_router, "embed_documents", embed)
     first_value, second_value = CASE["values"][0], CASE["values"][2]
     first = approve(repository, generated(first_value, S), question(first_value, field=S), "synthetic_req_1")
     second = approve(repository, generated(second_value, S), question(second_value, field=S), "synthetic_req_2")
     assert first == second
     assert embed.call_count == 2
     row = repository.get(second)
-    assert row["embedding_source_text"] == row["semantic_search_text"] == embed.call_args.args[0]
+    assert row["embedding_source_text"] == row["semantic_search_text"] == embed.call_args.args[0][0]
     assert question_matches(row, question(first_value, field=S))
 
 
@@ -310,10 +310,10 @@ def test_failed_embedding_refresh_discards_old_vector_and_keeps_exact_matching(m
     from agent.llm import llm_router
     db = Database()
     repository = QueryTemplateRepository(db)
-    monkeypatch.setattr(llm_router, "embed_query", Mock(return_value=[1., 0.]))
+    monkeypatch.setattr(llm_router, "embed_documents", Mock(return_value=[[1., 0.]]))
     first_value, second_value = CASE["values"][0], CASE["values"][2]
     identity = approve(repository, generated(first_value, S), question(first_value, field=S), "synthetic_req_1")
-    monkeypatch.setattr(llm_router, "embed_query", Mock(side_effect=RuntimeError("synthetic provider unavailable")))
+    monkeypatch.setattr(llm_router, "embed_documents", Mock(side_effect=RuntimeError("synthetic provider unavailable")))
     approve(repository, generated(second_value, S), question(second_value, field=S), "synthetic_req_2")
     row = repository.get(identity)
     assert "embedding" not in row and "embedding_claim" not in row
@@ -327,10 +327,10 @@ def test_concurrent_source_change_does_not_commit_stale_vector_or_keep_claim(mon
     row = document()
     row.pop("embedding")
     db.templates.rows.append(deepcopy(row))
-    def embed(source):
+    def embed(source, **kwargs):
         db.templates.rows[0]["source_question"] = question("AX-12", "Find")
-        return [1., 0.]
-    monkeypatch.setattr(llm_router, "embed_query", embed)
+        return [[1., 0.]]
+    monkeypatch.setattr(llm_router, "embed_documents", embed)
     repository.ensure_embedding(row["template_id"])
     changed = db.templates.rows[0]
     assert "embedding" not in changed and "embedding_claim" not in changed

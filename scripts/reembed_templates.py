@@ -9,7 +9,7 @@ import math
 import sys
 
 from agent.client_factory import get_config, get_embedding_client
-from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, SCHEMA_EMBEDDING_MODEL
+from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL
 from database.mongo_client import get_database
 from database.query_template_repository import EMBEDDING_REPRESENTATION_VERSION
 from services.template_parameter_extractor import normalized_question
@@ -50,8 +50,8 @@ def read_candidates(collection, user_id):
 
 def run(collection, *, config=None, apply=False, force=False, embedding_provider=None,
         user_id=DEFAULT_USER_ID, emit=print):
-    config = config or get_config()
-    model = config.embedding_model or SCHEMA_EMBEDDING_MODEL
+    config = config or get_config(embedding_role="templates")
+    model = config.embedding_model or TEMPLATE_EMBEDDING_MODEL
     documents = read_candidates(collection, user_id)
     tasks, blocked = [], Counter()
     now = datetime.now(timezone.utc)
@@ -80,7 +80,8 @@ def run(collection, *, config=None, apply=False, force=False, embedding_provider
     if not tasks:
         report["embedding_ready"] = report["already_current"]
         return report
-    provider = embedding_provider or get_embedding_client(model, config.dimensions, purpose="reembed_templates")
+    provider = embedding_provider or get_embedding_client(model, config.dimensions, purpose="reembed_templates",
+                                                         embedding_role="templates")
     for start in range(0, len(tasks), config.batch_size):
         batch = tasks[start:start + config.batch_size]
         texts = [normalized_question(document["source_question"]) for document, _ in batch]
@@ -120,8 +121,8 @@ def main(argv=None):
     parser.add_argument("--expected-dimensions", type=int, help="Abort unless these dimensions are configured")
     args = parser.parse_args(argv)
     try:
-        config = get_config()
-        model = config.embedding_model or SCHEMA_EMBEDDING_MODEL
+        config = get_config(embedding_role="templates")
+        model = config.embedding_model or TEMPLATE_EMBEDDING_MODEL
         if args.expected_model is not None and args.expected_model != model:
             parser.error("Configured embedding model differs from --expected-model; check the runtime .env")
         if args.expected_dimensions is not None and args.expected_dimensions != config.dimensions:

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from agent.config import DEFAULT_USER_ID, SCHEMA_EMBEDDING_MODEL
+from agent.config import DEFAULT_USER_ID, TEMPLATE_EMBEDDING_MODEL
 from agent.output_schemas import GeneratedQuery
 from agent.telemetry import request_context
 from agents.query_generator_agent import QueryGeneratorAgent
@@ -35,7 +35,7 @@ def document(status_value="Passed", **changes):
         "operation": "find", "collections": ["orders"], "source_question": question,
         "semantic_text": "retrieve orders with a given status", "user_id": DEFAULT_USER_ID,
         "status": "active", "trusted": True, "success_count": 1, "positive_feedback_count": 1,
-        "schema_version": "old-global-version", "embedding_model": SCHEMA_EMBEDDING_MODEL,
+        "schema_version": "old-global-version", "embedding_model": TEMPLATE_EMBEDDING_MODEL,
         "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION, **changes}
 
 

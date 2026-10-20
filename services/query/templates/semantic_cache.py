@@ -9,7 +9,7 @@ import logging
 import math
 import re
 from time import perf_counter
-from agent.config import (DEFAULT_USER_ID, SCHEMA_EMBEDDING_MODEL, QUERY_TEMPLATES_COLLECTION,
+from agent.config import (DEFAULT_USER_ID, TEMPLATE_EMBEDDING_MODEL, QUERY_TEMPLATES_COLLECTION,
     SEMANTIC_TEMPLATE_CACHE_ENABLED, SEMANTIC_TEMPLATE_TOP_K,
     SEMANTIC_TEMPLATE_MIN_THRESHOLD, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD)
 from agent.llm import llm_router
@@ -86,7 +86,7 @@ class SemanticTemplateCache:
             logger.info("template_search_disabled request_id=%s", current_request_id())
             return None, metadata
         logger.info("template_search_started request_id=%s collection=%s embedding_model=%s top_k=%d min_threshold=%.4f suggest_threshold=%.4f operation_hint=%s",
-            current_request_id(), QUERY_TEMPLATES_COLLECTION, SCHEMA_EMBEDDING_MODEL,
+            current_request_id(), QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL,
             SEMANTIC_TEMPLATE_TOP_K, SEMANTIC_TEMPLATE_MIN_THRESHOLD, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD, operation_hint(question))
         emit("SemanticTemplateCache", "running")
         try:
@@ -138,7 +138,7 @@ class SemanticTemplateCache:
             except Exception as exc:
                 logger.warning("template_search_embedding_migration_failed request_id=%s error_type=%s",
                                current_request_id(), type(exc).__name__)
-            documents = [doc for doc in documents if doc.get("embedding_model") == SCHEMA_EMBEDDING_MODEL
+            documents = [doc for doc in documents if doc.get("embedding_model") == TEMPLATE_EMBEDDING_MODEL
                          and doc.get("embedding_representation_version") == EMBEDDING_REPRESENTATION_VERSION
                          and doc.get("embedding") and ("embedding_source_text" not in doc or
                              doc["embedding_source_text"] == normalized_question(doc.get("source_question", "")))]
@@ -146,11 +146,11 @@ class SemanticTemplateCache:
                 metadata["miss_reason"] = "no_eligible_templates"
                 return None, metadata
             logger.info("template_search_embedding_started request_id=%s", current_request_id())
-            vector = llm_router.embed_query(normalized_question(question))
+            vector = llm_router.embed_query(normalized_question(question), embedding_role="templates")
             logger.info("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
             eligible = []
             for document in documents:
-                if document.get("embedding_model") != SCHEMA_EMBEDDING_MODEL:
+                if document.get("embedding_model") != TEMPLATE_EMBEDDING_MODEL:
                     logger.info("template_search_rejected request_id=%s template_id=%s reason=model_mismatch",
                                 current_request_id(), document.get("template_id"))
                 elif len(document.get("embedding") or []) != len(vector):

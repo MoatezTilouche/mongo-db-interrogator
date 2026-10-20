@@ -84,7 +84,7 @@ def document(identity="template-1", **changes):
             **changes}
 
 
-def config():
+def config(**kwargs):
     return SimpleNamespace(embedding_model="test-bge", dimensions=2, batch_size=2)
 
 
@@ -163,13 +163,13 @@ def test_concurrent_changes_prevent_stale_writes(change):
 def test_automatic_migration_selects_model_changes_even_at_current_version(monkeypatch):
     from agent.llm import llm_router
     stale = document(user_id=repository_module.DEFAULT_USER_ID)
-    monkeypatch.setattr(repository_module, "SCHEMA_EMBEDDING_MODEL", "test-bge")
+    monkeypatch.setattr(repository_module, "TEMPLATE_EMBEDDING_MODEL", "test-bge")
     collection = Mock()
     collection.find.return_value = [stale]
     collection.find_one.return_value = {"source_question": stale["source_question"]}
     collection.find_one_and_update.return_value = stale
-    embed = Mock(return_value=[1., 0.])
-    monkeypatch.setattr(llm_router, "embed_query", embed)
+    embed = Mock(return_value=[[1., 0.]])
+    monkeypatch.setattr(llm_router, "embed_documents", embed)
     repo = QueryTemplateRepository({repository_module.COLLECTION: collection})
     assert repo.reembed_stale_embeddings() == 1
     query = collection.find.call_args.args[0]
@@ -179,7 +179,7 @@ def test_automatic_migration_selects_model_changes_even_at_current_version(monke
     assert matches(stale, claim_query)
     assert not matches({**stale, "embedding_claim_until": datetime.now(timezone.utc) + timedelta(minutes=5)}, claim_query)
     assert collection.update_one.call_args.args[1]["$set"]["embedding_model"] == "test-bge"
-    embed.assert_called_once_with(normalized_question(stale["source_question"]))
+    embed.assert_called_once_with([normalized_question(stale["source_question"])], embedding_role="templates")
 
 
 def test_expected_model_guard_runs_before_database_access(monkeypatch):
@@ -208,7 +208,7 @@ def test_migrated_template_becomes_retrievable_without_chat_or_new_embeddings(mo
     database.__getitem__ = Mock(return_value=collection)
     database.list_collection_names.return_value = ["orders"]
     monkeypatch.setattr(cache, "DEFAULT_USER_ID", "test-user")
-    monkeypatch.setattr(cache, "SCHEMA_EMBEDDING_MODEL", "test-bge")
+    monkeypatch.setattr(cache, "TEMPLATE_EMBEDDING_MODEL", "test-bge")
     monkeypatch.setattr(cache, "SEMANTIC_TEMPLATE_CACHE_ENABLED", True)
     monkeypatch.setattr(QueryTemplateRepository, "reembed_stale_embeddings", lambda self: 0)
     monkeypatch.setattr(schema_bootstrap_service, "status", lambda: {"schema_version": None})

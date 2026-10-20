@@ -1659,6 +1659,13 @@ models' values. `EMBEDDING_BASE_URL` defaults to the chat URL. For Docker Deskto
 `host.docker.internal` instead of `localhost` to reach a server running on the host.
 Restart the backend after changing configuration.
 
+Schema and knowledge retrieval can use instructed `qwen3-embedding:4b` while
+semantic template matching uses `bge-m3`. Set `TEMPLATE_EMBEDDING_MODEL` and
+`TEMPLATE_EMBEDDING_DIMENSIONS` for the template route, and
+`EMBEDDING_QUERY_INSTRUCTION` for retrieval queries only. See
+[two-model embedding routing](docs/embedding-routing.md) for configuration,
+profile-fact behavior and vector migration commands.
+
 No public API key is required with a custom base URL. Missing local keys use a placeholder;
 an old `OPENAI_API_KEY` is never forwarded to custom servers. Set `LLM_API_KEY` and/or
 `EMBEDDING_API_KEY` only if your internal server requires authentication. Both routes use

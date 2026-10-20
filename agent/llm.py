@@ -57,23 +57,29 @@ class LLMRouter:
         self._clients[identity] = client
         return client
 
-    def _embedding_client(self, model: str | None = None, dimensions: int | None = None) -> Any:
-        model = model or SCHEMA_EMBEDDING_MODEL
-        dimensions = SCHEMA_EMBEDDING_DIMENSIONS if dimensions is None else dimensions
-        identity = (model, dimensions, cache_identity(get_config(api_key=OPENAI_API_KEY, dimensions=dimensions)))
+    def _embedding_client(self, model: str | None = None, dimensions: int | None = None,
+                          *, embedding_role: str | None = None) -> Any:
+        route = {"embedding_role": embedding_role} if embedding_role else {}
+        if embedding_role is None and dimensions is None:
+            dimensions = SCHEMA_EMBEDDING_DIMENSIONS
+        config = get_config(api_key=OPENAI_API_KEY, dimensions=dimensions, **route)
+        model = config.embedding_model or model or SCHEMA_EMBEDDING_MODEL
+        dimensions = config.dimensions
+        identity = (model, dimensions, cache_identity(config))
         if identity in self._embedding_clients:
             return self._embedding_clients[identity]
-        client = get_embedding_client(model, dimensions, api_key=OPENAI_API_KEY)
+        client = get_embedding_client(model, dimensions, api_key=OPENAI_API_KEY, **route)
         self._embedding_clients[identity] = client
         return client
 
     def embed_documents(self, texts: list[str], model: str | None = None,
-                        dimensions: int | None = None) -> list[list[float]]:
+                        dimensions: int | None = None, *, embedding_role: str | None = None) -> list[list[float]]:
+        route = {"embedding_role": embedding_role} if embedding_role else {}
         model = model or SCHEMA_EMBEDDING_MODEL
-        config = get_config(api_key=OPENAI_API_KEY, dimensions=dimensions)
+        config = get_config(api_key=OPENAI_API_KEY, dimensions=dimensions, **route)
         model = config.embedding_model or model
         started = time.perf_counter()
-        client = self._embedding_client(model, dimensions)
+        client = self._embedding_client(model, dimensions, **route)
         caller = sys._getframe(1)
         if caller.f_code.co_name == "embed_query" and caller.f_globals.get("__name__") == __name__:
             caller = caller.f_back
@@ -98,8 +104,13 @@ class LLMRouter:
         record_embedding(model, input_tokens, (time.perf_counter() - started) * 1000)
         return vectors
 
-    def embed_query(self, text: str, model: str | None = None) -> list[float]:
-        return self.embed_documents([text], model)[0]
+    def embed_query(self, text: str, model: str | None = None, *,
+                    embedding_role: str | None = None) -> list[float]:
+        route = {"embedding_role": embedding_role} if embedding_role else {}
+        config = get_config(api_key=OPENAI_API_KEY, **route)
+        if config.query_instruction:
+            text = f"Instruct: {config.query_instruction}\nQuery: {text}"
+        return self.embed_documents([text], model, **route)[0]
 
     @staticmethod
     def _is_recoverable(exc: Exception) -> bool:
