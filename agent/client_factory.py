@@ -154,8 +154,9 @@ def get_config(*, api_key=None, timeout=None, retries=None, dimensions=None, emb
     elif dimensions is not None and (not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0):
         raise ClientConfigError("SCHEMA_EMBEDDING_DIMENSIONS must be a positive integer")
     chat_model = os.getenv("LLM_MODEL", "").strip() or None
-    if chat_role == "template_parameters":
-        chat_model = os.getenv("TEMPLATE_PARAMETER_MODEL", "").strip() or chat_model
+    model_env = legacy.LLM_ROLE_MODEL_ENV.get(chat_role)
+    if model_env:
+        chat_model = os.getenv(model_env, "").strip() or chat_model
     return ClientConfig(
         chat_url, embedding_url, chat_key, embedding_key,
         chat_model,

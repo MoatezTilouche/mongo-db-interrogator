@@ -110,8 +110,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 # Model names must be configured explicitly. OPENAI_MODEL is a legacy variable
 # name and may point to a local model through LLM_BASE_URL.
 OPENAI_MODEL = os.getenv("LLM_MODEL", "").strip() or os.getenv("OPENAI_MODEL", "").strip()
-SCHEMA_ENRICHMENT_MODEL = (os.getenv("LLM_MODEL", "").strip()
-                           or os.getenv("SCHEMA_ENRICHMENT_MODEL", "").strip() or OPENAI_MODEL)
+SCHEMA_ENRICHMENT_MODEL = os.getenv("SCHEMA_ENRICHMENT_MODEL", "").strip() or OPENAI_MODEL
 SCHEMA_EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL", "").strip()
                           or os.getenv("SCHEMA_EMBEDDING_MODEL", "").strip())
 KNOWLEDGE_EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL", "").strip()
@@ -152,6 +151,15 @@ LLM_ROLE_CONFIG = {role: OPENAI_MODEL for role in (
     "feedback_analysis", "query_context", "query_generator", "repair", "summary",
 )}
 LLM_ROLE_CONFIG["schema_enrichment"] = SCHEMA_ENRICHMENT_MODEL
+LLM_ROLE_MODEL_ENV = {
+    "feedback_analysis": "FEEDBACK_ANALYSIS_MODEL",
+    "query_context": "QUERY_CONTEXT_MODEL",
+    "query_generator": "QUERY_GENERATOR_MODEL",
+    "repair": "QUERY_REPAIR_MODEL",
+    "summary": "SUMMARY_MODEL",
+    "schema_enrichment": "SCHEMA_ENRICHMENT_MODEL",
+    "template_parameters": "TEMPLATE_PARAMETER_MODEL",
+}
 
 # Prompt loading
 PROMPT_VARIANT = os.getenv("PROMPT_VARIANT", "default")

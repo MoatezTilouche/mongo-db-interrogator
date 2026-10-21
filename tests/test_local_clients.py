@@ -194,7 +194,7 @@ def test_structured_fallback_consumes_existing_retry_once(monkeypatch, caplog, f
     response = SimpleNamespace(content='{"ok":true}', usage_metadata={"input_tokens": 3, "output_tokens": 2})
     client.invoke.return_value = response
     router = LLMRouter()
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with caplog.at_level(logging.INFO):
         assert router.invoke("summary", [], Output) is response
     assert client.bind.call_count == 1 and bound.invoke.call_count == 1 and client.invoke.call_count == 1
@@ -208,7 +208,7 @@ def test_structured_fallback_does_not_exceed_zero_retry_budget(monkeypatch, capl
     client = Mock()
     client.bind.return_value.invoke.side_effect = type("Rejected", (Exception,), {"status_code": 422})()
     router = LLMRouter()
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with pytest.raises(LLMRouterError), caplog.at_level(logging.INFO):
         router.invoke("summary", [], Output)
     assert client.bind.return_value.invoke.call_count == 1
@@ -222,7 +222,7 @@ def test_chat_timeout_retry_backoff_and_secret_free_logs(monkeypatch, caplog):
     response = SimpleNamespace(content="answer", usage_metadata={"input_tokens": 7, "output_tokens": 2})
     client.invoke.side_effect = [TimeoutError("private-secret private prompt"), TimeoutError(), response]
     router = LLMRouter()
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with caplog.at_level(logging.INFO):
         router.invoke("summary", [])
     assert client.invoke.call_count == 3

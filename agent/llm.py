@@ -190,7 +190,7 @@ class LLMRouter:
         except KeyError as exc:
             raise ValueError(f"Unknown LLM role: {role}") from exc
 
-        route = {"chat_role": role} if role == "template_parameters" else {}
+        route = {"chat_role": role}
         config = get_config(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT_SECONDS, retries=LLM_MAX_RETRIES, **route)
         model = config.chat_model or model
 

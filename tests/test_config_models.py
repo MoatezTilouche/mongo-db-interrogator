@@ -55,7 +55,9 @@ def test_explicit_global_chat_override_keeps_existing_precedence(load_config, mo
     for name, value in {"LLM_MODEL": "test-global", "OPENAI_MODEL": "test-query",
                         "SCHEMA_ENRICHMENT_MODEL": "test-enrichment", "EMBEDDING_MODEL": "test-embedding"}.items():
         monkeypatch.setenv(name, value)
-    assert set(load_config()["LLM_ROLE_CONFIG"].values()) == {"test-global"}
+    roles = load_config()["LLM_ROLE_CONFIG"]
+    assert roles["schema_enrichment"] == "test-enrichment"
+    assert {model for role, model in roles.items() if role != "schema_enrichment"} == {"test-global"}
 
 
 @pytest.mark.parametrize("global_override", [False, True])

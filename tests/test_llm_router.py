@@ -9,7 +9,9 @@ from agent.telemetry import capture_usage, totals
 @pytest.mark.parametrize("role", list(module.LLM_ROLE_CONFIG))
 def test_roles_use_their_configured_model(monkeypatch, role):
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    monkeypatch.delenv("TEMPLATE_PARAMETER_MODEL", raising=False)
+    for variable in module.__dict__.get("LLM_ROLE_MODEL_ENV", {}).values():
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.delenv("SCHEMA_ENRICHMENT_MODEL", raising=False)
     monkeypatch.setitem(module.LLM_ROLE_CONFIG, role, "test-model")
     router = LLMRouter()
     client = Mock()
@@ -17,7 +19,7 @@ def test_roles_use_their_configured_model(monkeypatch, role):
     factory = Mock(return_value=client)
     monkeypatch.setattr(router, "_client", factory)
     router.invoke(role, [], dict)
-    route = {"chat_role": "template_parameters"} if role == "template_parameters" else {}
+    route = {"chat_role": role}
     factory.assert_called_once_with("test-model", **route)
 
 @pytest.mark.parametrize("error", [TimeoutError("timed out"), type("RateLimitError", (Exception,), {"status_code":429})("rate limit")])
@@ -40,7 +42,7 @@ def test_structured_error_is_not_retried(monkeypatch):
     router = LLMRouter()
     client = Mock()
     client.invoke.return_value = SimpleNamespace(content="not json")
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with pytest.raises(LLMRouterError, match="StructuredOutputError"):
         router.invoke("query_generator", [], dict)
     client.invoke.assert_called_once()
@@ -52,7 +54,7 @@ def test_retry_can_succeed_and_telemetry_counts_tokens(monkeypatch):
     client = Mock()
     response = SimpleNamespace(content="answer", usage_metadata={"input_tokens":12,"output_tokens":3})
     client.invoke.side_effect = [TimeoutError("timed out"), response]
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with capture_usage() as records:
         assert router.invoke("summary", []) == response
     usage = totals(records)
@@ -66,7 +68,7 @@ def test_failures_do_not_expose_provider_secrets(monkeypatch, caplog):
     router = LLMRouter()
     client = Mock()
     client.invoke.side_effect = TimeoutError("private-credential timed out")
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     monkeypatch.setattr(module, "LLM_MAX_RETRIES", 0)
     with caplog.at_level(logging.INFO), pytest.raises(LLMRouterError) as failure:
         router.invoke("summary", [])
@@ -93,7 +95,7 @@ def test_schema_enrichment_failure_logs_safe_cause(monkeypatch, caplog, error_cl
     monkeypatch.setattr(module, "backoff", backoff)
     router, client = LLMRouter(), Mock()
     client.invoke.side_effect = error
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with caplog.at_level(logging.WARNING), pytest.raises(LLMRouterError if recoverable else error_class):
         router.invoke("schema_enrichment", [])
     lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith("llm_request_failed ")]
@@ -112,7 +114,7 @@ def test_schema_invalid_json_diagnostic_hides_response(monkeypatch, caplog):
     monkeypatch.setattr(module, "get_config", lambda **kwargs: config)
     router, client = LLMRouter(), Mock()
     client.invoke.return_value = SimpleNamespace(content=secret)
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     with caplog.at_level(logging.WARNING), pytest.raises(LLMRouterError) as failure:
         router.invoke("schema_enrichment", [], dict)
     assert "error_type=StructuredOutputError" in caplog.text

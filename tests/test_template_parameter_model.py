@@ -94,6 +94,32 @@ def test_changing_extraction_model_replaces_cached_client(local_models, monkeypa
     assert [call.kwargs["model"] for call in factory.call_args_list] == ["small-local-model", "another-small-model"]
 
 
+@pytest.mark.parametrize("role,variable", [
+    ("query_context", "QUERY_CONTEXT_MODEL"),
+    ("query_generator", "QUERY_GENERATOR_MODEL"),
+    ("repair", "QUERY_REPAIR_MODEL"),
+    ("feedback_analysis", "FEEDBACK_ANALYSIS_MODEL"),
+    ("summary", "SUMMARY_MODEL"),
+    ("schema_enrichment", "SCHEMA_ENRICHMENT_MODEL"),
+])
+def test_role_override_routes_constructor_telemetry_and_cached_client(local_models, monkeypatch, role, variable):
+    factory, _ = local_models
+    router = LLMRouter()
+    monkeypatch.setenv(variable, "role-model")
+    with capture_usage() as usage:
+        router.invoke(role, [], dict)
+    assert factory.call_args.kwargs["model"] == "role-model"
+    assert usage[0]["model"] == "role-model"
+    router.invoke(role, [], dict)
+    assert factory.call_count == 1
+    monkeypatch.setenv(variable, "replacement-model")
+    router.invoke(role, [], dict)
+    assert factory.call_args.kwargs["model"] == "replacement-model"
+    monkeypatch.setenv(variable, "   ")
+    router.invoke(role, [], dict)
+    assert factory.call_args.kwargs["model"] == "large-local-model"
+
+
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_blank_override_uses_existing_global_model(local_models, monkeypatch, blank):
     factory, _ = local_models
