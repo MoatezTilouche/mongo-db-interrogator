@@ -9,6 +9,7 @@ from services.query.values.matching import normalize_for_match
 from services.query.profile_facts import safe_profile, is_date_field
 from .config import mentions, requested_numbers, vocabulary_terms
 from .models import QueryPlan
+from .time_intent import recency_only
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ def resolve_plan(plan, selected_schema, question, config, directives, preference
                 raw["filters"].append({"field": path, "op": directive["op"],
                                        "value": deepcopy(values if directive["op"] in {"in", "nin"} else values[0])})
     filters = []
+    model_date_filter = False
     for index, item in enumerate(raw["filters"]):
         path = field(item["field"], f"filters[{index}].field")
         if path not in visible:
@@ -160,6 +162,7 @@ def resolve_plan(plan, selected_schema, question, config, directives, preference
         item["field"] = path
         spec = visible[path]
         if is_date_field(spec) and item["op"] != "exists":
+            model_date_filter = True
             raw["uses_time"] = True
             if raw["time_field"] is None:
                 raw["time_field"] = path
@@ -182,6 +185,10 @@ def resolve_plan(plan, selected_schema, question, config, directives, preference
         item["value"] = values if item["op"] in {"in", "nin"} else values[0]
         filters.append(item)
     raw["filters"] = filters
+    if raw["uses_time"] and not model_date_filter and recency_only(raw, profile, question, vocabulary):
+        raw["uses_time"] = False
+        raw["time_field"] = None
+        repair_log("plan_recency_time_flag_cleared")
     if raw["task"] in {"group_count", "top_n"} and not raw["group_by"]:
         errors.append("group_by_required")
     if raw["task"] == "distinct" and not raw["distinct_field"]:

@@ -1,0 +1,40 @@
+{
+  "question": "give me the recent 3 closed requests",
+  "plan": {
+    "collection": "requestsHist",
+    "task": "list",
+    "filters": [{"field": "requestStatus", "op": "eq", "value": "Closed"}],
+    "select": null,
+    "order": {"field": "actionDetails.actionDate", "dir": -1},
+    "limit": 3,
+    "group_by": [],
+    "metric": null,
+    "distinct_field": null,
+    "uses_time": true,
+    "time_field": "actionDetails.actionDate",
+    "join": null
+  },
+  "profile": {
+    "collection": "requestsHist",
+    "fields": {
+      "requestStatus": {"kind": "categorical", "types": {"string": 5}, "values": [{"value": "Closed", "count": 5}]},
+      "actionDetails.actionDate": {"kind": "date", "types": {"date": 5}, "date_format": "BSON Date"}
+    }
+  },
+  "dates": ["31/08/2026", "01/09/2026", "15/09/2026", "30/09/2026", "01/10/2026"],
+  "recency_questions": [
+    "give me the recent 3 records",
+    "show the latest three records",
+    "show 3 most recent records",
+    "list newest 3 records",
+    "afficher les trois plus récents enregistrements",
+    "donner les 3 enregistrements les plus récents"
+  ],
+  "unsupported_time_questions": [
+    "give me the recent 3 records since launch",
+    "show 3 recent records from the last fortnight",
+    "give me the recent 3 records after 2026-02-30",
+    "show the recent 3 days",
+    "give me 3 records"
+  ]
+}

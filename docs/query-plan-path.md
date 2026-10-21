@@ -23,6 +23,32 @@ New configuration, documented in `.env.example`:
 
 Ordering, history and number words live only in editable JSON. Compound number phrases take precedence over overlapping shorter words. Disabled plan mode does not parse the optional plan settings or read the vocabulary file.
 
+Recency ordering and calendar filters are separate. For example, "give me the
+recent 3 closed requests" means preserve the status filter, order by the selected
+timestamp descending and limit to three; `uses_time` is false and `time_field` is
+null. The outbound plan schema explains this distinction. English "recent" is
+included in the ordering vocabulary so resolution does not discard that sort.
+
+If a model nevertheless sets `uses_time=true`, resolution can repair a complete,
+supported recency-only request without a second generation call. This requires
+a profiled date field with descending order, a grounded result limit, and a
+matching request shape from `config/plan_vocab.json`. The optional single equality
+filter must be explicitly present in the wording. English and French shapes and
+temporal-unit exclusions are editable there. Extra trailing constraints,
+model-written date filters, another selected time field, unsupported phrases and
+more complex requests retain the existing repair/fallback behavior; the compiler
+does not silently ignore `question_time_unresolved`. Real calendar constraints
+such as today or last week still use the normal date resolver and filter path.
+The correction is recorded as `plan_recency_time_flag_cleared`, without literals.
+
+Sorting a native date or a string marked sortable retains the ordinary query
+shape. Ordering a non-sortable string date uses an aggregation that matches the
+requested filters, parses the known stored format with `$dateFromString`, sorts
+chronologically with an `_id` tie-break, applies the limit and removes its helper
+field. Projection and applicable latest-per-key rules remain in effect. Missing
+or unsupported parse formats yield a repairable plan error instead of an invented
+format or raw lexical sort. No environment changes or database updates are needed.
+
 Operator commands, provided for manual use only (the CLI was not run during implementation):
 
 ```powershell

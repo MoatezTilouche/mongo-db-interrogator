@@ -31,8 +31,11 @@ class QueryPlan(BaseModel):
     group_by: list[str] = Field(default_factory=list)
     metric: Literal["count"] | None = None
     distinct_field: str | None = None
-    uses_time: bool = Field(default=False, strict=True)
-    time_field: str | None = None
+    uses_time: bool = Field(default=False, strict=True, description=(
+        "True only for a requested calendar/date filter, such as today or last week. "
+        "Recent/latest/newest with a result count means ordering plus limit, not a date filter; use false."))
+    time_field: str | None = Field(default=None, description=(
+        "Field used for a requested calendar/date filter. Use null for ordering-only recency; put the timestamp in order.field."))
     # A join selects a profiled relationship; the model never supplies endpoints.
     join: str | None = None
 
@@ -54,7 +57,10 @@ def plan_json_schema(selected_schema):
         array = {"type": "array", "items": {"type": "string", "enum": fields}}
         props[key] = {"anyOf": [array, {"type": "null"}]} if key == "select" else array
     for key in ("distinct_field", "time_field"):
+        description = props[key].get("description")
         props[key] = {"anyOf": [{"type": "string", "enum": fields}, {"type": "null"}]}
+        if description:
+            props[key]["description"] = description
     props["order"] = {"anyOf": [{"type": "object", "additionalProperties": False,
         "required": ["field", "dir"], "properties": {"field": {"type": "string", "enum": fields},
                                                       "dir": {"type": "integer", "enum": [1, -1]}}}, {"type": "null"}]}

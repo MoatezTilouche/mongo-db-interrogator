@@ -112,9 +112,21 @@ def compile_plan(plan, profile, selected_schema, question, rules=(), directives=
     predicate = compile_filter(plan, profile, selected_schema, rules, directives, question, now)
     query = {"collection": plan.collection}
     latest = next((item for item in directives if item["type"] == "latest_per_key"), None)
-    is_aggregate = latest is not None or plan.task in {"group_count", "top_n"} or plan.join is not None
     projection = {field: 1 for field in plan.select} if plan.select else None
     order = [[plan.order.field, plan.order.dir]] if plan.order else []
+    parsed_order = None
+    if plan.order and plan.task in {"list", "latest_per_key"}:
+        spec = profile["fields"][plan.order.field]
+        if is_date_field(spec) and "string" in spec.get("types", {}) and not spec.get("sortable_as_string", False):
+            stored, fmt = representation(spec)
+            if stored != "string":
+                raise PlanError("order_date_format_unknown")
+            if any(token not in {"%Y", "%m", "%d", "%H", "%M", "%S", "%z", "%%"}
+                   for token in re.findall(r"%.", fmt)) or fmt.endswith("%"):
+                raise PlanError("order_date_format_unsupported")
+            parsed_order = {"$dateFromString": {"dateString": "$" + plan.order.field,
+                                               "format": fmt, "onError": None, "onNull": None}}
+    is_aggregate = latest is not None or plan.task in {"group_count", "top_n"} or plan.join is not None or parsed_order is not None
     if not is_aggregate:
         if plan.task == "list":
             query.update(operation="find", filter=predicate, projection=projection, sort=order, limit=plan.limit, skip=0)
@@ -145,7 +157,12 @@ def compile_plan(plan, profile, selected_schema, question, rules=(), directives=
             stages.append({"$group": {"_id": "$" + plan.distinct_field}})
             helpers = []
         elif plan.task in {"list", "latest_per_key"}:
-            if order:
+            if parsed_order:
+                parsed = helper_name(profile["fields"], "order_date")
+                stages.extend([{"$addFields": {parsed: parsed_order}},
+                               {"$sort": {parsed: plan.order.dir, "_id": plan.order.dir}}])
+                helpers.append(parsed)
+            elif order:
                 stages.append({"$sort": dict(order)})
         else:
             raise PlanError("task_unsupported")

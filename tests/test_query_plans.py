@@ -23,6 +23,7 @@ from services.query.dates.normalization import apply_date_normalization
 
 ROOT = Path(__file__).resolve().parents[1]
 CASE = json.loads((ROOT / "tests/fixtures/query_plan_case.json").read_text())
+RECENCY = json.loads((ROOT / "tests/fixtures/plan_recency_case.json").read_text(encoding="utf-8"))
 C, D = CASE["collection"], CASE["other_collection"]
 S, T, I, N, X = (CASE["fields"][key] for key in ("state", "date", "identifier", "number", "text"))
 V = CASE["values"]
@@ -157,6 +158,84 @@ def test_ambiguous_time_field(profiles):
     profiles[C]["fields"][T + "Q"] = deepcopy(profiles[C]["fields"][T])
     with pytest.raises(PlanError, match="ambiguous"):
         compile(profiles, plan(uses_time=True), "today")
+
+
+def test_reported_recency_plan_repairs_time_flag_and_preserves_order(profiles, caplog):
+    raw = deepcopy(RECENCY["plan"])
+    profile = deepcopy(RECENCY["profile"])
+    name = raw["collection"]
+    selected = {"collections": {name: {"fields": {
+        path: list(spec["types"]) for path, spec in profile["fields"].items()}}}}
+    with caplog.at_level("INFO"):
+        resolved, observed, directives = resolve_plan(QueryPlan.model_validate(raw), selected,
+            RECENCY["question"], PlanConfig(enabled=True), [], profile_lookup=lambda owner: profile if owner == name else None)
+    assert resolved.uses_time is False and resolved.time_field is None
+    assert resolved.order.model_dump() == raw["order"] and resolved.limit == 3
+    assert "plan_recency_time_flag_cleared" in caplog.text
+    query, _ = compile_plan(resolved, observed, selected, RECENCY["question"], directives=directives, now=NOW)
+    assert query["operation"] == "find"
+    assert query["filter"] == {raw["filters"][0]["field"]: raw["filters"][0]["value"]}
+    assert query["sort"] == [[raw["order"]["field"], -1]] and query["limit"] == 3
+    ValidatorAgent().validate(query, selected, lambda owner: profile if owner == name else None)
+    assert raw == RECENCY["plan"]
+
+
+@pytest.mark.parametrize("question", RECENCY["recency_questions"])
+def test_recency_ordering_is_not_a_calendar_filter(profiles, question):
+    value = plan(uses_time=True, time_field=T, order={"field": T, "dir": -1}, limit=3)
+    repaired, _, _ = resolve(profiles, value, question)
+    assert repaired.uses_time is False and repaired.time_field is None
+    assert repaired.order.field == T and repaired.limit == 3
+    assert value.uses_time is True
+
+
+@pytest.mark.parametrize("question", RECENCY["unsupported_time_questions"])
+def test_unresolved_time_requests_keep_the_error_path(profiles, question):
+    with pytest.raises(PlanError, match="question_time_unresolved"):
+        compile(profiles, plan(uses_time=True, time_field=T, order={"field": T, "dir": -1}, limit=3), question)
+
+
+def test_model_date_filter_is_not_hidden_by_recency_flag_repair(profiles):
+    with pytest.raises(PlanError, match="question_time_unresolved"):
+        compile(profiles, plan(uses_time=True, time_field=T, order={"field": T, "dir": -1}, limit=3,
+                              filters=[{"field": T, "op": "gte", "value": "1900-01-01"}]),
+                RECENCY["recency_questions"][0])
+
+
+@pytest.mark.parametrize("wording", ["today", "last week"])
+def test_recency_with_real_date_range_keeps_time_filter(profiles, wording):
+    value = plan(uses_time=True, time_field=T, order={"field": T, "dir": -1}, limit=3)
+    question = RECENCY["recency_questions"][0] + " " + wording
+    assert resolve(profiles, value, question)[0].uses_time is True
+    query = compile(profiles, value, question)
+    assert "$match" in query["pipeline"][0]
+    assert any("$sort" in stage for stage in query["pipeline"])
+    ValidatorAgent().validate(query, schema(profiles), profiles.get)
+
+
+def test_recency_does_not_erase_another_time_field(profiles):
+    profiles[C]["fields"][T + "Q"] = deepcopy(profiles[C]["fields"][T])
+    value = plan(uses_time=True, time_field=T + "Q", order={"field": T, "dir": -1}, limit=3)
+    with pytest.raises(PlanError, match="question_time_unresolved"):
+        compile(profiles, value, RECENCY["recency_questions"][0])
+
+
+def test_unknown_string_order_date_format_is_not_invented(profiles):
+    profiles[C]["fields"][T].pop("date_format")
+    with pytest.raises(PlanError, match="order_date_format_unknown"):
+        compile(profiles, plan(order={"field": T, "dir": -1}, limit=3), RECENCY["recency_questions"][0])
+
+
+def test_unsupported_string_order_date_format_is_not_emitted(profiles):
+    profiles[C]["fields"][T]["date_format"] = "%Y-%m-%d %H:%M:%S.%f"
+    with pytest.raises(PlanError, match="order_date_format_unsupported"):
+        compile(profiles, plan(order={"field": T, "dir": -1}, limit=3), RECENCY["recency_questions"][0])
+
+
+def test_outbound_schema_explains_recency_flags(profiles):
+    props = plan_json_schema(schema(profiles))["properties"]
+    assert "not a date filter" in props["uses_time"]["description"]
+    assert "ordering-only" in props["time_field"]["description"]
 
 
 @pytest.mark.parametrize("task,operation", [("list", "find"), ("count", "count_documents"), ("distinct", "distinct"),
@@ -408,6 +487,31 @@ def test_latest_three_records_and_post_filters(profiles):
     assert fake_aggregate(rows, query["pipeline"]) == [rows[1]]
     query = compile(profiles, plan(filters=[{"field": S, "op": "eq", "value": V[0]}]), directives=[latest()])
     assert fake_aggregate(rows, query["pipeline"]) == []
+
+
+def test_recency_sorts_day_first_strings_chronologically_before_limit(profiles):
+    rows = [{"_id": index, T: date, S: V[2]} for index, date in enumerate(RECENCY["dates"], 1)]
+    rows.append({"_id": 6, T: "02/10/2026", S: V[0]})
+    question = "give me the recent 3 " + V[2] + " records"
+    value = plan(uses_time=True, time_field=T, order={"field": T, "dir": -1}, limit=3,
+                 filters=[{"field": S, "op": "eq", "value": V[2]}])
+    query = compile(profiles, value, question)
+    assert query["operation"] == "aggregate"
+    assert [row["_id"] for row in fake_aggregate(rows, query["pipeline"])] == [5, 4, 3]
+    assert query["pipeline"][0] == {"$match": {S: V[2]}}
+    assert "$limit" in query["pipeline"][-2] and "$unset" in query["pipeline"][-1]
+    ValidatorAgent().validate(query, schema(profiles), profiles.get)
+    assert apply_date_normalization(query, profiles.get, question, NOW) == query
+
+
+def test_recency_plan_does_not_need_a_second_generation_call(profiles):
+    value = plan(uses_time=True, time_field=T, order={"field": T, "dir": -1}, limit=3)
+    invoke = Mock(return_value=SimpleNamespace(content=value.model_dump_json()))
+    fallback = Mock(side_effect=AssertionError("Recency correction must not require fallback"))
+    result = generate(profiles, invoke, fallback, question=RECENCY["recency_questions"][0])
+    assert result["template"]["operation"] == "aggregate"
+    invoke.assert_called_once()
+    fallback.assert_not_called()
 
 
 @pytest.mark.parametrize("structured", [None, False, True])
