@@ -307,7 +307,7 @@ def test_summary_aggregation_does_not_match_retrieval(stage):
     doc = retrieval_aggregate_document()
     doc["template"]["pipeline"].append(stage)
     doc["template_signature"] = template_signature(doc["template"])
-    assert not SemanticTemplateCache.compatible(doc, NEW, {"orders"})
+    assert not SemanticTemplateCache.compatible(doc, "Show orders linked to command CMD-000009999999", {"orders"})
 
 
 def test_exact_aggregate_question_is_detected_without_embedding(monkeypatch):
@@ -813,3 +813,29 @@ def test_refined_template_identity_is_separate_from_broad_query_with_same_struct
     changed = {"template": doc["template"], "parameters": {"filter_commandId": "CMD-000009999999"}}
     assert repository.record_success(changed, "req_other", NEW + "\nRefinement: Only active records",
                                      doc["schema_spec"], scope_refined=True) == refined_id
+
+
+@pytest.mark.parametrize("status", ["Passed", "Failed"])
+def test_parameterized_ranking_preserves_approved_aggregate_operation(status, monkeypatch):
+    import services.semantic_template_cache as module
+    source = "find the most command that have Passed orders"
+    query = {"collection": "orders", "operation": "aggregate", "pipeline": [
+        {"$match": {"status": "Passed"}},
+        {"$group": {"_id": "$commandId", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1, "_id": 1}}]}
+    generated = parameterize_filter_values({"template": query, "parameters": {}})
+    doc = document()
+    doc.update(source_question=source, operation="aggregate", template=generated["template"],
+               template_signature=template_signature(generated["template"]),
+               parameter_schema=describe_parameters(generated["template"], generated["parameters"], source))
+    question = source.replace("Passed", status)
+    monkeypatch.setattr(module.llm_router, "invoke", Mock(side_effect=AssertionError("No LLM needed")))
+    assert module.operation_hint(question) == "find"
+    assert module.question_matches(doc, question)
+    assert SemanticTemplateCache.compatibility_reason(doc, question, {"orders"}) is None
+    values, method = extract_parameters(question, doc)
+    assert method == "deterministic"
+    assert bind_query_parameters(doc["template"], values)["pipeline"][0] == {"$match": {"status": status}}
+    assert not module.operation_compatible(doc, question + " today")
+    doc["trusted"] = False
+    assert SemanticTemplateCache.compatibility_reason(doc, question, {"orders"}) == "untrusted_template"

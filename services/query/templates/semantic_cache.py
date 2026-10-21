@@ -50,7 +50,12 @@ def cosine(left, right):
 
 
 def operation_compatible(document, question):
-    """Exact saved intent overrides hints; other retrievals may use row pipelines."""
+    """Verified saved wording overrides hints, including typed parameter changes."""
+    if question_matches(document, question):
+        # The deterministic matcher consumes the whole question and permits only
+        # declared parameter substitutions. A wording heuristic must not change
+        # the approved query's implementation when only its values changed.
+        return True
     source = document.get("source_question")
     if isinstance(source, str) and source.strip() and (
         " ".join(source.casefold().split()) == " ".join(question.casefold().split())
