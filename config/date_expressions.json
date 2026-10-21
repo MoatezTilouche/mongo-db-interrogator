@@ -7,6 +7,8 @@
       "relative": [
         {"pattern": "\\btoday\\b", "unit": "day", "offset": 0, "length": 1},
         {"pattern": "\\byesterday\\b", "unit": "day", "offset": -1, "length": 1},
+        {"pattern": "\\b(?:last|past)\\s+day\\b", "unit": "day", "offset": -1, "length": 1, "rolling": true},
+        {"pattern": "\\b(?:last|past)\\s+(?P<n>\\d+)\\s+hours?\\b", "unit": "hour", "offset": "-n", "length": "n", "rolling": true},
         {"pattern": "\\bthis\\s+week\\b", "unit": "week", "offset": 0, "length": 1, "calendar": true},
         {"pattern": "\\blast\\s+week\\b", "unit": "day", "offset": -7, "length": 7},
         {"pattern": "\\bthis\\s+month\\b", "unit": "month", "offset": 0, "length": 1, "calendar": true},

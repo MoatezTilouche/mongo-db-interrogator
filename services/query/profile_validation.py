@@ -136,14 +136,17 @@ class ProfileValidator:
             self.issue(f"Lookup differs from profiled relationship: {rendered}", scope,
                        warn=self.config.relationship_enforcement == "warn")
 
+    def sort(self, paths, scope):
+        for path in paths:
+            self.path(path, scope)
+
     def pipeline(self, stages, scope):
         for stage in stages:
             operator, value = next(iter(stage.items()))
             if operator == "$match":
                 self.predicate(value, scope)
             elif operator == "$sort":
-                for path in value:
-                    self.path(path, scope)
+                self.sort(value, scope)
             elif operator == "$lookup":
                 target = Scope(value["from"], self.profile_lookup)
                 if "localField" in value:
@@ -193,6 +196,12 @@ class DateRangeValidator(ProfileValidator):
         if operator in RANGES and scope.safe(path) and nonsortable_date(scope.spec(path)):
             _ordering_error(f"{scope.collection}.{path}", True)
 
+    def sort(self, paths, scope):
+        from services.query.dates.normalization import nonsortable_date, _ordering_error
+        for path in paths:
+            if scope.safe(path) and nonsortable_date(scope.spec(path)):
+                _ordering_error(f"{scope.collection}.{path}", True)
+
     def expression(self, value, scope):
         if isinstance(value, dict):
             for operator, arguments in value.items():
@@ -212,6 +221,7 @@ def validate_date_ranges(query, profile_lookup=None):
         validator.pipeline(query.get("pipeline", []), scope)
     else:
         validator.predicate(query.get("filter", {}), scope)
+        validator.sort((path for path, _ in query.get("sort") or []), scope)
     return query
 
 

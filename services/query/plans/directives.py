@@ -98,8 +98,19 @@ def validate_directive(raw, profile_lookup=None):
             raise ValueError("directive_key_kind_invalid")
         if not is_date_field(fields[result["order_field"]]):
             raise ValueError("directive_order_kind_invalid")
-        from services.query.dates.normalization import representation
-        if representation(fields[result["order_field"]])[0] not in {"native", "string"}:
+        from services.query.dates.normalization import DateNormalizer, representation
+        order_spec = fields[result["order_field"]]
+        if set(order_spec.get("types", {})) - {"null"} == {"string"}:
+            # These are verified stored fields: a model retry cannot supply a
+            # missing format or make an unsupported format valid in MongoDB.
+            from services.aggregation_validation import QueryValidationError
+            path = f"{result['collection']}.{result['order_field']}"
+            try:
+                DateNormalizer(profile_lookup, "", None).date_parser(order_spec, path, result["order_field"])
+            except QueryValidationError as exc:
+                exc.details["path"] = path
+                raise
+        if representation(order_spec)[0] not in {"native", "string"}:
             raise ValueError("directive_date_representation_unsupported")
     if result["type"] == "case_insensitive_fields":
         if any(set(fields[path].get("types", {})) - {"null"} != {"string"} for path in paths):

@@ -146,13 +146,13 @@ def test_validator_always_rejects_raw_ranges(facts, monkeypatch, mode, enabled, 
 
 @pytest.mark.parametrize("fmt", [None, "", "ambiguous", "ISO-8601", "%d/%m/%Y %H:%M:%S.%f"])
 @pytest.mark.parametrize("aggregate", [False, True])
-def test_unknown_or_unsupported_format_is_repairable(facts, fmt, aggregate):
+def test_unknown_or_unsupported_format_requires_metadata_review(facts, fmt, aggregate):
     facts[C]["fields"][T]["date_format"] = fmt
     predicate = {T: {"$gte": "2026-09-01T00:00:00Z", "$lt": "2026-10-01T00:00:00Z"}}
     candidate = query(pipeline=[{"$match": predicate}]) if aggregate else query(predicate)
     with pytest.raises(QueryValidationError, match="format") as error:
         normalize(facts, candidate)
-    assert error.value.repairable
+    assert not error.value.repairable
     assert error.value.to_dict()["code"] in {"date_format_unknown", "date_format_unsupported"}
 
 

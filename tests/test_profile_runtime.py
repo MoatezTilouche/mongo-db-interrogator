@@ -163,8 +163,10 @@ def test_ambiguous_date_target_repairable(profiles):
 def test_nonsortable_dates(profiles, q):
     profiles[C]["fields"][T] = date_spec("%d/%m/%Y", sortable=False)
     if q.get("sort"):
-        with pytest.raises(QueryValidationError, match="cannot be ordered/compared as text"):
-            normalize(profiles, q)
+        fixed = normalize(profiles, q)
+        assert fixed["operation"] == "aggregate"
+        assert "$dateFromString" in json.dumps(fixed)
+        validate(profiles, fixed)
     else:
         with pytest.raises(QueryValidationError, match="cannot be ordered/compared as text"):
             validate(profiles, q)
@@ -339,7 +341,11 @@ def test_output_scope(profiles, stages):
 def test_scope_removed_and_unknown(profiles, caplog):
     with pytest.raises(QueryValidationError):
         validate(profiles, query(pipeline=[{"$project": {F: 1}}, {"$match": {T: "2026-10-15"}}]))
-    assert validate(profiles, query(pipeline=[{"$replaceRoot": {"newRoot": "$" + N}}, {"$match": {"ghostQ": 1}}]))
+    # Known nested document shapes remain checkable after root replacement.
+    with pytest.raises(QueryValidationError, match="Unknown path"):
+        validate(profiles, query(pipeline=[{"$replaceRoot": {"newRoot": "$" + N}}, {"$match": {"ghostQ": 1}}]))
+    assert validate(profiles, query(pipeline=[{"$replaceRoot": {"newRoot": {
+        "$mergeObjects": ["$" + N, {"ghostQ": 1}]}}}, {"$match": {"ghostQ": 1}}]))
     assert "pipeline_scope_unknown" in caplog.text
 
 
@@ -634,10 +640,11 @@ def test_template_preferences_do_not_reject_valid_saved_query(profiles, monkeypa
     failure.assert_not_called()
     execute.assert_called_once()
     if invalid_preference:
-        assert result["validated_query"]["sort"] == []
-        assert result["applied_preferences"] == []
-        assert result["semantic_template_cache"]["template_reuse_preferences_skipped"]
-        assert "reason=date_string_ordering" in caplog.text
+        assert result["validated_query"]["operation"] == "aggregate"
+        assert "$dateFromString" in json.dumps(result["validated_query"])
+        assert result["applied_preferences"]
+        assert not result["semantic_template_cache"].get("template_reuse_preferences_skipped")
+        assert result["query_template_id"] is None
     else:
         assert result["validated_query"]["sort"] == [[F, -1]]
         assert result["applied_preferences"]

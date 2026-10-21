@@ -285,7 +285,8 @@ def test_latest_pipeline(profiles, native):
         assert not any("$addFields" in stage for stage in pipeline)
     else:
         date = next(iter(pipeline[0]["$addFields"].values()))["$dateFromString"]
-        assert date == {"dateString": "$" + T, "format": "%d/%m/%Y", "onError": None, "onNull": None}
+        assert date == {"dateString": "$" + T, "format": "%d/%m/%Y", "onError": None, "onNull": None,
+                        "timezone": "UTC"}
         assert "$unset" in pipeline[-1] and "$limit" in pipeline[-2]
     ValidatorAgent().validate(query, schema(profiles), profiles.get)
 
@@ -526,7 +527,7 @@ def test_router_schema_transport_and_plain_normalization(profiles, monkeypatch, 
     client.bind.return_value = client
     client.invoke.return_value = SimpleNamespace(content=[{"type": "text", "text": json.dumps({"plan": {
         "collection": C, "task": "list", "extra": 1}})}])
-    monkeypatch.setattr(router, "_client", lambda *args: client)
+    monkeypatch.setattr(router, "_client", lambda *args, **kwargs: client)
     result = router.invoke("query_generator", [], PlanOutputContract(schema(profiles)))
     assert normalize_plan(result.content).task == "list"
     assert client.bind.call_count == int(structured is not False)

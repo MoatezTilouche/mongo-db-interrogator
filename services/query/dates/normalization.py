@@ -1,4 +1,4 @@
-"""Repairable, deterministic date filters in the profile's stored representation."""
+"""Deterministic date predicates and chronological sorting from profile metadata."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import logging
@@ -111,10 +111,6 @@ class DateNormalizer:
             self._constraints = resolve_question_dates(self.question, self.now, self.tz, self.config.day_first)
         return self._constraints
 
-    def ordered(self, field, spec, aggregate):
-        if "string" in spec.get("types", {}) and not spec.get("sortable_as_string", False):
-            _ordering_error(field, aggregate)
-
     def plausible(self, moment, spec, field):
         if self.config.plausibility_mode == "off":
             return
@@ -145,25 +141,30 @@ class DateNormalizer:
         return {**({"$gte": render_date(start, spec, self.tz)} if start else {}),
                 **({"$lt": render_date(end, spec, self.tz)} if end else {})}
 
-    def range_expression(self, condition, spec, field, path):
-        """Compare parsed dates, keeping non-range field operators in the predicate."""
+    def date_parser(self, spec, field, path):
+        """Parse only a verified stored representation; metadata gaps need review."""
         stored, fmt = representation(spec)
         # Python strftime and MongoDB formats are not interchangeable (%f, for
         # example, is not a MongoDB dateFromString directive). Never guess.
         if stored != "string" or set(spec.get("types", {})) - {"null"} != {"string"}:
-            raise QueryValidationError(f"Cannot apply date range to {field}: date_format_unknown; an exact stored date format is required",
-                                       code="date_format_unknown")
+            raise QueryValidationError(f"Cannot apply date operation to {field}: date_format_unknown; an exact stored date format is required",
+                                       code="date_format_unknown", repairable=False)
         if any(token not in {"%Y", "%m", "%d", "%H", "%M", "%S", "%z", "%%"}
                for token in re.findall(r"%.", fmt)) or fmt.endswith("%"):
-            raise QueryValidationError(f"Cannot apply date range to {field}: stored date format is unsupported by $dateFromString",
-                                       code="date_format_unsupported")
+            raise QueryValidationError(f"Cannot apply date operation to {field}: stored date format is unsupported by $dateFromString",
+                                       code="date_format_unsupported", repairable=False)
         options = {"dateString": "$" + path, "format": fmt, "onError": None, "onNull": None}
         # Without an explicit zone, compare timezone-free stored wall-clock
         # values in UTC on both sides. Do not freeze the OS's current DST offset.
-        zone = self.config.zone() if self.config.timezone else timezone.utc
         if "%z" not in fmt and not fmt.endswith("Z") and self.config.timezone:
             options["timezone"] = self.config.timezone
-        parsed = {"$dateFromString": options}
+        return {"$dateFromString": options}
+
+    def range_expression(self, condition, spec, field, path):
+        """Compare parsed dates, keeping non-range field operators in the predicate."""
+        parsed = self.date_parser(spec, field, path)
+        fmt = spec["date_format"]
+        zone = self.config.zone() if self.config.timezone else timezone.utc
         terms = [{"$ne": [parsed, None]}]  # Null/invalid strings must not satisfy an upper bound.
         for operator, literal in condition.items():
             if operator not in RANGES:
@@ -193,19 +194,19 @@ class DateNormalizer:
             condition = self.question_condition(spec, field, aggregate)
         except ValueError:
             raise QueryValidationError(f"Cannot apply date constraint to {field}: date_format_unknown; an exact stored date format is required",
-                                       code="date_format_unknown") from None
+                                       code="date_format_unknown", repairable=False) from None
         return self.field_predicate(path, condition, spec, field)
 
     def condition(self, original, spec, field, aggregate):
         stored, _ = representation(spec)
         if isinstance(original, dict) and RANGES & original.keys() and not stored:
             raise QueryValidationError(f"Cannot apply date range to {field}: date_format_unknown; an exact stored date format is required",
-                                       code="date_format_unknown")
+                                       code="date_format_unknown", repairable=False)
         if not stored:
             logger.warning("date_format_unknown field=%s", field)
             if self.config.enforce_question_range and self.constraints:
                 raise QueryValidationError(f"Cannot apply date constraint to {field}: date_format_unknown; an exact stored date format is required",
-                                           code="date_format_unknown")
+                                           code="date_format_unknown", repairable=False)
             # Missing output spelling does not disable plausibility for an
             # otherwise parseable model literal and observed ISO data bounds.
             conditions = original if isinstance(original, dict) and "$date" not in original else {"$eq": original}
@@ -383,21 +384,58 @@ class DateNormalizer:
             result["$and"] = terms
         return result
 
-    def sort(self, paths, scope, aggregate):
+    def sort_stages(self, paths, scope):
+        """Keep source documents intact while sorting on parsed date keys."""
+        if not isinstance(paths, dict) or not paths:
+            raise QueryValidationError("Aggregation $sort must be a non-empty object")
+        if any(not isinstance(path, str) or not path or path.startswith("$") or
+               not (direction in (-1, 1) and not isinstance(direction, bool) or
+                    isinstance(direction, dict) and set(direction) == {"$meta"} and isinstance(direction["$meta"], str))
+               for path, direction in paths.items()):
+            raise QueryValidationError("Invalid aggregation $sort item")
+        parsed = {}
         for path in paths:
             spec = scope.spec(path)
-            if spec and is_date_field(spec) and scope.safe(path):
-                self.ordered(f"{scope.collection}.{path}", spec, aggregate)
+            if spec and scope.safe(path) and nonsortable_date(spec):
+                parsed[path] = self.date_parser(spec, f"{scope.collection}.{path}", path)
+        if not parsed:
+            return [{"$sort": paths}]
+        # Replacing the root with a wrapper preserves every original field,
+        # even when an unprofiled document already contains our helper names.
+        # Restore immediately after sorting so later filters, groups and
+        # projections observe precisely the original document shape and values.
+        root = "__date_sort_document"
+        wrapper = {root: "$$ROOT"}
+        ordering = {}
+        for path, direction in paths.items():
+            if path in parsed:
+                key = "__date_sort_" + str(len(wrapper) - 1)
+                parser = parsed[path]
+                # Dotted traversal through an array produces an array of date
+                # strings. Preserve MongoDB's min/max array sort semantics.
+                item_parser = deepcopy(parser)
+                item_parser["$dateFromString"]["dateString"] = "$$dateSortValue"
+                wrapper[key] = {"$cond": [{"$isArray": "$" + path},
+                    {"$map": {"input": "$" + path, "as": "dateSortValue", "in": item_parser}}, parser]}
+                ordering[key] = direction
+            else:
+                ordering[root + "." + path] = direction
+        logger.info("date_sort_normalized collection=%s date_fields=%s", scope.collection, ",".join(parsed))
+        return [{"$replaceRoot": {"newRoot": wrapper}}, {"$sort": ordering},
+                {"$replaceRoot": {"newRoot": "$" + root}}]
 
     def pipeline(self, pipeline, scope):
         if not isinstance(pipeline, list) or any(not isinstance(stage, dict) or len(stage) != 1 for stage in pipeline):
             raise QueryValidationError("Aggregation pipeline must be an array of one-key stage objects")
+        normalized = []
         for stage in pipeline:
             operator, value = next(iter(stage.items()))
             if operator == "$match":
                 stage[operator] = self.predicate(value, scope, True)
             elif operator == "$sort":
-                self.sort(value, scope, True)
+                normalized.extend(self.sort_stages(value, scope))
+                advance_scope(scope, operator, value)
+                continue
             elif operator == "$lookup" and "pipeline" in value:
                 self.pipeline(value["pipeline"], Scope(value["from"], self.lookup))
             elif operator == "$facet":
@@ -406,6 +444,8 @@ class DateNormalizer:
             elif operator == "$unionWith" and isinstance(value, dict):
                 self.pipeline(value.get("pipeline", []), Scope(value.get("coll"), self.lookup))
             advance_scope(scope, operator, stage[operator])
+            normalized.append(stage)
+        pipeline[:] = normalized
 
 
 def apply_date_normalization(query, profile_lookup=None, question="", now=None):
@@ -459,7 +499,6 @@ def apply_date_normalization(query, profile_lookup=None, question="", now=None):
         sort = result.get("sort") or []
         if not isinstance(sort, list) or any(not isinstance(item, list) or len(item) != 2 for item in sort):
             raise QueryValidationError("find.sort must be a list of [field, direction] pairs")
-        normalizer.sort((path for path, _ in sort), scope, False)
     if config.enforce_question_range and normalizer.constraints and not normalizer.seen and scope.profile is not None:
         candidates = [path for path, spec in scope.fields.items() if spec and is_date_field(spec)]
         if len(candidates) != 1:
@@ -470,13 +509,43 @@ def apply_date_normalization(query, profile_lookup=None, question="", now=None):
         except QueryValidationError:
             raise
         except ValueError:
-            raise QueryValidationError(f"date_format_unknown for {scope.collection}.{field}", code="date_format_unknown") from None
+            raise QueryValidationError(f"date_format_unknown for {scope.collection}.{field}", code="date_format_unknown", repairable=False) from None
         if query.get("operation") == "aggregate":
             result["pipeline"].insert(0, {"$match": predicate})
         else:
             current = result.get("filter", {})
             result["filter"] = {"$and": [current, predicate]} if current else predicate
         logger.info("date_range_added field=%s", f"{scope.collection}.{field}")
+    if result.get("operation") == "find" and result.get("sort"):
+        ordering = {}
+        for path, direction in result["sort"]:
+            if (not isinstance(path, str) or not path or path.startswith("$")
+                    or direction not in (-1, 1) or isinstance(direction, bool) or path in ordering):
+                raise QueryValidationError("Invalid find.sort item")
+            ordering[path] = direction
+        sort_stages = normalizer.sort_stages(ordering, scope)
+        if len(sort_stages) > 1:
+            projection = result.get("projection")
+            if projection is not None and not isinstance(projection, dict):
+                raise QueryValidationError("find.projection must be an object or null")
+            # Find-only projection operators cannot be copied into $project.
+            if projection and any("$" in str(key) or isinstance(value, dict) and
+                                  any(op in value for op in ("$elemMatch", "$slice"))
+                                  for key, value in projection.items()):
+                raise QueryValidationError("Date sorting with a find-only projection requires an explicit aggregation",
+                                           code="date_sort_projection_unsupported")
+            pipeline = ([{"$match": result["filter"]}] if result.get("filter") else []) + sort_stages
+            for option, operator in (("skip", "$skip"), ("limit", "$limit")):
+                value = result.get(option)
+                if value is not None and value != 0:
+                    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                        raise QueryValidationError(f"find.{option} must be a non-negative integer")
+                    pipeline.append({operator: value})
+            if projection:
+                pipeline.append({"$project": projection})
+            result = {key: value for key, value in result.items()
+                      if key not in {"filter", "sort", "projection", "skip", "limit"}}
+            result.update(operation="aggregate", pipeline=pipeline)
     # This guard is independent of policy switches and also checks code output.
     from services.query.profile_validation import validate_date_ranges
     validate_date_ranges(result, profile_lookup)

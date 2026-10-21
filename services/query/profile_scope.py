@@ -1,7 +1,6 @@
 """Collection/alias scope shared by profile validation and date normalization."""
 from copy import deepcopy
 import logging
-import os
 
 from services.query.profile_facts import known_path, normalize_path, safe_profile
 
@@ -53,9 +52,15 @@ class Scope:
 
 def _assign(scope, path, expression, before):
     """Carry parent-object aliases and explicit object output shapes forward."""
-    if os.getenv("PLAN_MODE", "off").strip().lower() == "on" and isinstance(expression, dict) and expression == {"$first": "$$ROOT"}:
-        # Deterministic latest-per-key groups retain the whole input document.
+    if (isinstance(expression, str) and expression in {"$$ROOT", "$$CURRENT"}
+            or isinstance(expression, dict) and expression in ({"$first": "$$ROOT"}, {"$first": "$$CURRENT"})):
+        # Whole-document aliases preserve the input shape regardless of whether
+        # they came from a model, a compiler, or deterministic normalization.
         scope.fields[path] = None
+        if "_id" not in before.fields:
+            scope.fields[path + "._id"] = None
+        scope.origins.pop(path, None)
+        scope.unknown_prefixes.update(path + "." + prefix for prefix in before.unknown_prefixes)
         for child, spec in before.fields.items():
             scope.fields[path + "." + child] = deepcopy(spec)
             if child in before.origins:
@@ -164,16 +169,30 @@ def advance_scope(scope, operator, value):
     elif operator == "$unwind":
         if isinstance(value, dict) and value.get("includeArrayIndex"):
             scope.set_field(value["includeArrayIndex"])
-    elif (os.getenv("PLAN_MODE", "off").strip().lower() == "on" and operator == "$replaceRoot"
-          and isinstance(value, dict) and isinstance(value.get("newRoot"), str) and value["newRoot"].startswith("$")):
-        prefix = value["newRoot"][1:] + "."
-        restored = {path[len(prefix):]: spec for path, spec in scope.fields.items() if path.startswith(prefix)}
-        if restored:
-            scope.fields = restored
-            scope.origins = {path[len(prefix):]: origin for path, origin in scope.origins.items() if path.startswith(prefix)}
+    elif operator in {"$replaceRoot", "$replaceWith"}:
+        expression = value.get("newRoot") if operator == "$replaceRoot" and isinstance(value, dict) else value
+        if isinstance(expression, str) and expression in {"$$ROOT", "$$CURRENT"}:
+            return scope
+        if isinstance(expression, dict) and not any(key.startswith("$") for key in expression):
+            before = scope.clone()
+            scope.fields, scope.origins, scope.unknown_prefixes = {}, {}, set()
+            for path, child in expression.items():
+                _assign(scope, path, child, before)
+        elif isinstance(expression, str) and expression.startswith("$") and not expression.startswith("$$"):
+            prefix = expression[1:] + "."
+            restored = {path[len(prefix):]: spec for path, spec in scope.fields.items() if path.startswith(prefix)}
+            if restored:
+                scope.fields = restored
+                scope.origins = {path[len(prefix):]: origin for path, origin in scope.origins.items() if path.startswith(prefix)}
+                scope.unknown_prefixes = {path[len(prefix):] for path in scope.unknown_prefixes if path.startswith(prefix)}
+            else:
+                scope.fields = None
+                scope.unknown = True
+                logger.warning("pipeline_scope_unknown collection=%s stage=%s", scope.collection, operator)
         else:
             scope.fields = None
             scope.unknown = True
+            logger.warning("pipeline_scope_unknown collection=%s stage=%s", scope.collection, operator)
     elif operator not in {"$match", "$sort", "$limit", "$skip", "$unwind"}:
         scope.fields = None
         scope.unknown = True

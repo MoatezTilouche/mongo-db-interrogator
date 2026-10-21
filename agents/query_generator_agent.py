@@ -28,7 +28,8 @@ class QueryGeneratorAgent:
     def __init__(self, capabilities=None):
         self.capabilities = capabilities or get_mongo_capabilities()
 
-    def _invoke_json(self, prompt: str, role: str, *, include_lookup_guidance: bool = True, question: str = "") -> dict[str, Any]:
+    def _invoke_json(self, prompt: str, role: str, *, include_lookup_guidance: bool = True, question: str = "",
+                     repair_of: dict[str, Any] | None = None) -> dict[str, Any]:
         if include_lookup_guidance:
             prompt += "\n" + self.capabilities.lookup_guidance()
         try:
@@ -43,8 +44,8 @@ class QueryGeneratorAgent:
                 result = template_from_concrete(concrete, parameterize_limit=True)
                 if generated.get("semantic_intent"):
                     result["semantic_intent"] = generated["semantic_intent"]
-                return result
-            return parameterize_filter_values(generated)
+            else:
+                result = parameterize_filter_values(generated)
         except (ValueError, LLMRouterError) as exc:
             if role != "repair":
                 if isinstance(exc, LLMRouterError):
@@ -56,6 +57,10 @@ class QueryGeneratorAgent:
             code = "repair_failed" if isinstance(exc, LLMRouterError) else "invalid_repair_output"
             raise QueryValidationError("Repair did not return a usable parameterized template",
                                        code=code, repairable=False) from None
+        if repair_of is not None:
+            from services.query.repair_constraints import assert_repair_preserves_constraints
+            assert_repair_preserves_constraints(repair_of, bind_query_parameters(result["template"], result["parameters"]))
+        return result
 
     @traceable(name="query_generator.generate")
     def generate(self, question: str, schema_spec: dict[str, Any], plan: dict[str, Any] | None = None,
@@ -155,4 +160,5 @@ class QueryGeneratorAgent:
                                     if operation in {"aggregate", "unknown"} else ""),
             "output_contract": output_contract(operation),
             "generation_examples": generation_examples_text(question, inputs["selected_schema"], operation),
-        }) + inputs["facts"], "repair", include_lookup_guidance=operation in {"aggregate", "unknown"}, question=question)
+        }) + inputs["facts"], "repair", include_lookup_guidance=operation in {"aggregate", "unknown"}, question=question,
+            repair_of=previous_query)

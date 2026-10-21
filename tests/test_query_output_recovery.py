@@ -36,12 +36,18 @@ def message(content, finish_reason="stop", **metadata):
                            usage_metadata={"input_tokens": 20, "output_tokens": 10}, **metadata)
 
 
+@pytest.fixture(autouse=True)
+def output_policy(monkeypatch):
+    monkeypatch.delenv("LLM_STRUCTURED_OUTPUT", raising=False)
+
+
 def install(monkeypatch, responses, retries=1):
     monkeypatch.setattr(llm_module, "LLM_MAX_RETRIES", retries)
+    monkeypatch.setenv("LLM_MAX_RETRIES", str(retries))
     router, client, bound = LLMRouter(), Mock(), Mock()
     client.bind.return_value = bound
     bound.invoke.side_effect = responses
-    monkeypatch.setattr(router, "_client", lambda model: client)
+    monkeypatch.setattr(router, "_client", lambda model, **kwargs: client)
     monkeypatch.setattr("agents.query_generator_agent.llm_router", router)
     return QueryGeneratorAgent(MongoCapabilities()), router, client, bound
 

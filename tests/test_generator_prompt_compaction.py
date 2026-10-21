@@ -157,7 +157,8 @@ def test_compaction_preserves_business_ids_and_native_filter_field_names():
 @pytest.mark.parametrize("operation", ["find", "count_documents", "distinct", "aggregate"])
 def test_repair_shapes_follow_failed_query_operation(monkeypatch, operation):
     agent, invoke = capture(monkeypatch, operation)
-    previous = response(operation)["template"]
+    output = response(operation)
+    previous = bind_query_parameters(output["template"], output["parameters"])
     agent.repair("Show failed orders", SCHEMA, previous, "Invalid structure")
     prompt = invoke.call_args.args[1][0].content
     examples = [json.loads(line)["operation"] for line in prompt.splitlines() if line.startswith('{"operation"')]

@@ -80,6 +80,15 @@ def resolve_question_dates(question, now, tz=None, day_first=True):
                 offset, length = amount(definition["offset"]), amount(definition["length"])
                 unit = definition["unit"]
                 try:
+                    if definition.get("rolling"):
+                        # Elapsed windows use UTC so a day means 24 hours even
+                        # across daylight-saving changes. Calendar terms retain
+                        # their existing local-midnight semantics below.
+                        seconds = {"hour": 3600, "day": 86400, "week": 604800}[unit]
+                        first = local.astimezone(timezone.utc) + timedelta(seconds=offset * seconds)
+                        last = first + timedelta(seconds=length * seconds)
+                        add(match, localized(first, tz), localized(last, tz), "relative")
+                        continue
                     if unit == "month":
                         first = _month_shift(anchor, offset)
                         last = _month_shift(first, length)

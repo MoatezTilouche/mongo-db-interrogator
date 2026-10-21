@@ -266,7 +266,7 @@ def test_top_five_incompatible_candidates_cannot_hide_compatible_sixth(monkeypat
 
 
 @pytest.mark.parametrize("invalid", [None, "ascending", "no_tie", "no_sort", "summary", "extra_accumulator", "wrong_root"])
-def test_latest_row_groups_accept_new_id_without_accepting_summaries(invalid):
+def test_latest_row_groups_accept_paraphrase_without_accepting_summaries(invalid):
     row = document()
     pipeline = [{"$sort": {T: -1, "_id": -1}},
                 {"$group": {"_id": "$" + I, "row": {"$first": "$$ROOT"}}},
@@ -287,7 +287,11 @@ def test_latest_row_groups_accept_new_id_without_accepting_summaries(invalid):
     row.update(operation="aggregate", template={"operation": "aggregate", "collection": C, "pipeline": pipeline})
     row["template_signature"] = template_signature(row["template"])
     row["parameter_schema"] = describe_parameters(row["template"], {"p": "AX-11"}, question())
-    reason = SemanticTemplateCache.compatibility_reason(row, question("AX-12"), {C}, "synthetic_v1")
+    # Verified parameter-only matches preserve their approved operation; use a
+    # paraphrase here to exercise the weaker keyword-based retrieval fallback.
+    candidate_question = question("AX-12", verb="Show")
+    assert not question_matches(row, candidate_question)
+    reason = SemanticTemplateCache.compatibility_reason(row, candidate_question, {C}, "synthetic_v1")
     assert reason == (None if invalid is None else "operation_mismatch")
 
 

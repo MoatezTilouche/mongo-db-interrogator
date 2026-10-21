@@ -65,13 +65,15 @@ def latest_stages(profile, directive):
     fields = profile["fields"]
     order_field = directive["order_field"]
     spec = fields[order_field]
-    stored, fmt = representation(spec)
+    stored, _ = representation(spec)
     stages, helpers = [], []
     root = helper_name(fields, "root")
     if stored == "string":
         parsed = helper_name(fields, "date")
-        stages.append({"$addFields": {parsed: {"$dateFromString": {
-            "dateString": "$" + order_field, "format": fmt, "onError": None, "onNull": None}}}})
+        owner = directive["collection"]
+        parser = DateNormalizer(lambda name: profile if name == owner else None, "", None)
+        stages.append({"$addFields": {parsed: parser.date_parser(
+            spec, f"{owner}.{order_field}", order_field)}})
         order_field = parsed
         helpers.append(parsed)
     elif stored != "native":
@@ -124,8 +126,8 @@ def compile_plan(plan, profile, selected_schema, question, rules=(), directives=
             if any(token not in {"%Y", "%m", "%d", "%H", "%M", "%S", "%z", "%%"}
                    for token in re.findall(r"%.", fmt)) or fmt.endswith("%"):
                 raise PlanError("order_date_format_unsupported")
-            parsed_order = {"$dateFromString": {"dateString": "$" + plan.order.field,
-                                               "format": fmt, "onError": None, "onNull": None}}
+            parsed_order = DateNormalizer(lookup, question, now).date_parser(
+                spec, f"{plan.collection}.{plan.order.field}", plan.order.field)
     is_aggregate = latest is not None or plan.task in {"group_count", "top_n"} or plan.join is not None or parsed_order is not None
     if not is_aggregate:
         if plan.task == "list":
