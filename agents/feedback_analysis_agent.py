@@ -31,7 +31,7 @@ class FeedbackAnalysis(StrictOutput):
         "wrong_intent", "wrong_metric", "wrong_collection", "wrong_field",
         "missing_filter", "wrong_filter", "wrong_business_rule", "wrong_sorting",
         "missing_information", "format_preference", "ambiguous_request", "other",
-    ]
+    ] = Field(description="Use wrong_collection for a source collection correction; wrong_field for a field correction.")
     cause: str | None = Field(max_length=500)
     corrected_meaning: str | None = Field(max_length=500)
     reusable_preference: bool
@@ -49,12 +49,22 @@ class FeedbackAnalysis(StrictOutput):
     apply_mode: Literal["default", "contextual"] | None = None
     condition: str | None = Field(default=None, max_length=500)
     knowledge_candidate: bool = False
-    knowledge_type: Literal["business_rule", "field_definition", "coded_value", "relationship"] | None = None
-    collections: list[str] = Field(default_factory=list, max_length=20)
-    fields: list[str] = Field(default_factory=list, max_length=50)
-    scope: Literal["user", "database", "one_off"]
-    scope_reason: str | None = Field(default=None, max_length=300)
-    scope_evidence: str | None = Field(default=None, max_length=300)
+    knowledge_type: Literal["business_rule", "field_definition", "coded_value", "relationship"] | None = Field(
+        default=None, description=("Source/collection mappings are business_rule. field_definition explains a named field; "
+                                   "coded_value explains a literal value; relationship connects collections or keys."),
+    )
+    collections: list[str] = Field(default_factory=list, max_length=20,
+                                   description="Exact collection names supported by the comment/context.")
+    fields: list[str] = Field(default_factory=list, max_length=50,
+                              description="Exact field names supported by the comment/context; [] for a source-only mapping.")
+    scope: Literal["user", "database", "one_off"] = Field(description=(
+        "Explicit temporary restriction: one_off. Supported reusable business/source fact: database, "
+        "without requiring 'always' or 'remember'. Personal preference: user. Otherwise one_off."
+    ))
+    scope_reason: str | None = Field(default=None, max_length=300,
+                                    description="One short sentence explaining decisive evidence or ambiguity; aim below 180 characters.")
+    scope_evidence: str | None = Field(default=None, max_length=300,
+                                      description="One exact continuous excerpt from the original comment, or null.")
     confidence: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
@@ -73,6 +83,33 @@ class FeedbackAnalysis(StrictOutput):
 
 
 class FeedbackAnalysisAgent:
+    @staticmethod
+    def _normalize_source_mapping(analysis: FeedbackAnalysis, comment: str) -> FeedbackAnalysis:
+        """Repair an internally inconsistent type, never infer reusable scope."""
+        if (
+            analysis.scope != "database"
+            or not analysis.knowledge_candidate
+            or analysis.feedback_type != "wrong_collection"
+            or analysis.knowledge_type != "field_definition"
+            or len(analysis.collections) != 1
+            or analysis.fields
+            or analysis.field is not None
+            or not analysis.corrected_meaning
+        ):
+            return analysis
+        collection = analysis.collections[0]
+        # A model-provided collection is not evidence by itself. Require the
+        # original comment to name it verbatim, also preserved in the correction.
+        if not collection or not all(
+            re.search(r"(?<!\w)" + re.escape(collection) + r"(?!\w)", text)
+            for text in (comment, analysis.corrected_meaning)
+        ):
+            return analysis
+        return analysis.model_copy(update={
+            "knowledge_type": "business_rule",
+            "scope_reason": "The correction identifies a source collection for the requested data.",
+        })
+
     @staticmethod
     def _normalize_explicit_one_off(analysis: FeedbackAnalysis, comment: str) -> FeedbackAnalysis:
         # Only the user's original words can establish this restriction. Never
@@ -130,6 +167,7 @@ class FeedbackAnalysisAgent:
         response = llm_router.invoke("feedback_analysis", messages, contract)
         analysis = contract.model_validate(parse_json_from_text(response.content))
         analysis = self._normalize_explicit_one_off(analysis, comment)
+        analysis = self._normalize_source_mapping(analysis, comment)
         analysis = self._normalize_clear_ranking_correction(analysis, history, comment)
         return self._normalize_preference_attributes(analysis, history, comment)
 

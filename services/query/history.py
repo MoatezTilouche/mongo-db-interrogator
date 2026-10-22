@@ -22,6 +22,9 @@ from database.feedback_repository import FeedbackRepository
 from database.record_safety import safe_record
 from database.schema_inspector import compact_schema
 from orchestrator import run_request
+from services.query.templates.request_text import (
+    CORRECTION_INSTRUCTION, extend_request_context, parse_request_context,
+)
 
 logger = logging.getLogger("services.query_history_service")
 
@@ -54,9 +57,7 @@ class QueryHistoryService:
         return (f"Original question and any earlier corrections:\n{base_question}\n\n"
                 "Latest correction submitted by the user for this question:\n"
                 f"{comment}\n\n"
-                "Apply the latest correction to this generation. It overrides conflicting earlier details; "
-                "preserve all unrelated requested filters, dates, limits, and output requirements. "
-                "Use valid schema references and retain read-only query constraints.")
+                f"{CORRECTION_INSTRUCTION}")
 
     def _finish_correction(self, correction, request_id, applied):
         try:
@@ -82,6 +83,9 @@ class QueryHistoryService:
         started = time.perf_counter()
         correction = None
         effective_question = question
+        # A new user's text is authoritative, including any literal wording that
+        # resembles our historical generation wrappers.
+        intent_context = parse_request_context(question, {"original_question": question})
         try:
             with request_context(request_id), capture_usage() as cache_usage, capture_workflow() as trace:
                 if not (question or "").strip():
@@ -92,6 +96,10 @@ class QueryHistoryService:
                     if correction:
                         base_question = correction["regeneration"].get("base_question") or question
                         effective_question = self._corrected_question(base_question, correction["comment"])
+                        intent_context = extend_request_context(
+                            base_question, correction["regeneration"].get("request_context"),
+                            correction=correction["comment"],
+                            generation_instruction=CORRECTION_INSTRUCTION)
                         # This is an explicit regeneration, not a request to
                         # suggest/reuse a template that may encode the rejected query.
                         skip_cache = True
@@ -130,6 +138,7 @@ class QueryHistoryService:
                               execution_error_code="feedback_correction_unavailable")
         elapsed = (time.perf_counter() - started) * 1000
         result["request_id"] = request_id
+        result["request_context"] = intent_context
         if correction:
             result["original_question"] = question
             result["effective_question"] = effective_question
@@ -166,6 +175,8 @@ class QueryHistoryService:
                 "request_id": request_id, "user_id": DEFAULT_USER_ID, "question": question,
                 "original_question": result.get("original_question") or question,
                 "effective_question": result.get("effective_question") or question,
+                "request_context": parse_request_context(
+                    result.get("effective_question") or question, result.get("request_context")),
                 "scope_refined": result.get("scope_refined", False),
                 "learned_optimization": result.get("learned_optimization"),
                 "status": result.get("status", "completed"), "query_signature": result.get("query_signature"),

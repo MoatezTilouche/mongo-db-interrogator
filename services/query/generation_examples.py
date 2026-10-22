@@ -57,6 +57,7 @@ def select_examples(question, schema, operation="unknown", *, ranked=(), profile
     from services.query.profile_validation import ProfileValidator
     from services.query.profile_scope import Scope
     from services.query.dates.normalization import apply_date_normalization
+    from services.query.templates.representation import matching_question
 
     class VisibleSchemaValidator(ProfileValidator):
         def path(self, path, scope):
@@ -95,10 +96,10 @@ def select_examples(question, schema, operation="unknown", *, ranked=(), profile
                 row_aggregation = (reason == "operation_mismatch" and operation in {"find", "unknown"}
                     and operation_hint(question) == "find"
                     and document.get("operation") == "aggregate"
-                    and operation_hint(document.get("source_question", "")) == "find"
+                    and operation_hint(matching_question(document)) == "find"
                     and not template_entity_mismatch(document, question))
                 if not row_aggregation or SemanticTemplateCache.compatibility_reason(
-                        document, document["source_question"], allowed) is not None:
+                        document, matching_question(document), allowed) is not None:
                     continue
             signature = document["template_signature"]
             if signature in seen:
@@ -128,7 +129,7 @@ def select_examples(question, schema, operation="unknown", *, ranked=(), profile
             # Check historical date spelling/sorts against current facts. Never
             # resolve the current question's dates into a historical example.
             query = apply_date_normalization(query, profile_lookup=lookup)
-            example = {"question": document["source_question"], "output": {"template": query, "parameters": {}}}
+            example = {"question": matching_question(document), "output": {"template": query, "parameters": {}}}
             if safe_record(example) != example:
                 continue
             encoded = json.dumps(example, ensure_ascii=False, separators=(",", ":"), default=str)

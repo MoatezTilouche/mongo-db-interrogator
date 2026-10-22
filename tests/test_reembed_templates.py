@@ -9,7 +9,8 @@ import pytest
 from scripts import reembed_templates as script
 from database import query_template_repository as repository_module
 from database.query_template_repository import EMBEDDING_REPRESENTATION_VERSION, QueryTemplateRepository
-from services.template_parameter_extractor import normalized_question
+from database.storage_codec import decode_record, encode_record
+from services.query.templates.representation import template_metadata, template_search_text
 
 
 MISSING = object()
@@ -46,8 +47,10 @@ class Collection:
     def __init__(self, documents):
         self.documents = deepcopy(documents)
         self.writes = []
+        self.projections = []
 
     def find(self, query, projection):
+        self.projections.append(deepcopy(projection))
         include = any(projection.values())
         result = []
         for document in self.documents:
@@ -73,15 +76,19 @@ class Collection:
 
 def document(identity="template-1", **changes):
     question = "Give me 3 passed orders"
-    return {"_id": identity, "user_id": "test-user", "status": "active", "trusted": True,
+    row = {"_id": identity, "user_id": "test-user", "status": "active", "trusted": True,
             "positive_feedback_count": 2, "success_count": 5,
-            "source_question": question, "semantic_search_text": normalized_question(question),
-            "embedding_source_text": normalized_question(question),
+            "source_question": question,
             "embedding": [0., 1., 0.], "embedding_model": "old-model",
+            "embedding_dimensions": 3,
             "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
             "template": {"operation": "find", "collection": "orders", "filter": {}, "limit": 3},
             "schema_spec": {"collections": {"orders": {"fields": {"status": ["string"]}}}},
             **changes}
+    row.update(template_metadata(row))
+    row.setdefault("semantic_search_text", template_search_text(row))
+    row.setdefault("embedding_source_text", template_search_text(row))
+    return row
 
 
 def config(**kwargs):
@@ -150,7 +157,12 @@ def test_source_question_and_active_claim_block_migration():
 
 
 @pytest.mark.parametrize("change", [{"source_question": "Changed question"}, {"trusted": False},
-                                    {"embedding_model": "concurrent-model"}, {"positive_feedback_count": 0}])
+    {"embedding_model": "concurrent-model"}, {"positive_feedback_count": 0},
+    {"request_context": {"original_question": "Concurrent request"}},
+    {"parameter_schema": {"creator": {"type": "string", "example": "Other person"}}},
+    {"embedding_source_text": "concurrently embedded text"},
+    {"embedding_dimensions": 99},
+    {"corrections": ["Use another source"]}, {"resolved_question": "Different request"}])
 def test_concurrent_changes_prevent_stale_writes(change):
     collection = Collection([document()])
     def embed(texts):
@@ -160,15 +172,94 @@ def test_concurrent_changes_prevent_stale_writes(change):
     assert report["updated"] == 0 and report["concurrent_skips"] == 1 and not collection.writes
 
 
+def test_representation_upgrade_separates_legacy_corrections_and_refreshes_embedding_source():
+    from services.query.history import QueryHistoryService
+
+    original = "Give me the latest 100 crates created by A.B"
+    correction = "Crates come from crateArchive."
+    wrapped = QueryHistoryService._corrected_question(original, correction)
+    row = document(source_question=wrapped, embedding_representation_version=2,
+        parameter_schema={"filter_createdBy": {"type": "string", "example": "A.B",
+            "source_path": "filter.createdBy", "source_paths": ["filter.createdBy"],
+            "user_variable": True, "source_visible": True}},
+        semantic_search_text=wrapped.lower(), embedding_source_text=wrapped.lower())
+    # A genuine pre-upgrade document has no structured representation metadata.
+    for key in template_metadata(row):
+        row.pop(key, None)
+    before = deepcopy(row)
+    collection = Collection([row])
+    embeddings = provider()
+
+    report = run(collection, apply=True, embedding_provider=embeddings)
+
+    assert report["updated"] == 1 and report["remaining_stale"] == 0
+    migrated = collection.documents[0]
+    expected_text = template_search_text(before)
+    embeddings.embed_documents.assert_called_once_with([expected_text])
+    assert migrated["semantic_search_text"] == migrated["embedding_source_text"] == expected_text
+    assert "a.b" not in expected_text.lower() and "<string>" in expected_text
+    assert "cratearchive" in expected_text.lower()
+    assert "apply the latest correction" not in expected_text.lower()
+    assert "original question and any earlier corrections" not in expected_text.lower()
+    assert migrated["original_question"] == original
+    assert migrated["corrections"] == [correction]
+    assert original in migrated["resolved_question"]
+    assert correction in migrated["resolved_question"]
+    assert migrated["generation_instructions"]
+    assert migrated["source_question"] == wrapped
+    preserved = ("_id", "template", "schema_spec", "parameter_schema", "trusted",
+                 "status", "positive_feedback_count", "success_count", "user_id")
+    assert {key: migrated[key] for key in preserved} == {key: before[key] for key in preserved}
+    assert all(not set(projection) & {"template", "schema_spec", "parameters"}
+               for projection in collection.projections)
+    assert run(collection)["needs_update"] == 0
+
+
+def test_missing_embedding_source_is_repaired_even_when_vector_and_version_are_current():
+    row = document(embedding_model="test-bge", embedding=[1., 0.], embedding_dimensions=2)
+    row.pop("embedding_source_text")
+    collection = Collection([row])
+    assert script.stale_reasons(row, "test-bge", 2) == ["embedding_source_changed"]
+    report = run(collection, apply=True, embedding_provider=provider())
+    assert report["updated"] == 1 and report["remaining_stale"] == 0
+    assert collection.documents[0]["embedding_source_text"] == template_search_text(row)
+
+
+@pytest.mark.parametrize("stored_dimensions", [None, 3])
+def test_missing_or_inconsistent_dimension_metadata_is_repaired(stored_dimensions):
+    row = document(embedding_model="test-bge", embedding=[1., 0.], embedding_dimensions=stored_dimensions)
+    if stored_dimensions is None:
+        row.pop("embedding_dimensions")
+    collection = Collection([row])
+    assert script.stale_reasons(row, "test-bge", 2) == ["dimension_metadata_changed"]
+
+    report = run(collection, apply=True, embedding_provider=provider())
+
+    assert report["updated"] == 1 and report["remaining_stale"] == 0
+    assert collection.documents[0]["embedding_dimensions"] == 2
+    assert run(collection)["needs_update"] == 0
+
+
+def test_migration_decodes_representation_inputs_without_rewriting_parameter_schema():
+    row = document(parameter_schema={"value": {"type": "string", "example": {"$regex": "A"}}})
+    row = encode_record(row)
+    collection = Collection([row])
+    report = run(collection, apply=True, embedding_provider=provider())
+    assert report["updated"] == 1 and report["remaining_stale"] == 0
+    assert collection.documents[0]["parameter_schema"] == row["parameter_schema"]
+    assert collection.documents[0]["embedding_source_text"] == template_search_text(decode_record(row))
+
+
 def test_automatic_migration_selects_model_changes_even_at_current_version(monkeypatch):
     from agent.llm import llm_router
     stale = document(user_id=repository_module.DEFAULT_USER_ID)
     monkeypatch.setattr(repository_module, "TEMPLATE_EMBEDDING_MODEL", "test-bge")
+    monkeypatch.setattr(repository_module, "TEMPLATE_EMBEDDING_DIMENSIONS", 3)
     collection = Mock()
     collection.find.return_value = [stale]
-    collection.find_one.return_value = {"source_question": stale["source_question"]}
+    collection.find_one.return_value = stale
     collection.find_one_and_update.return_value = stale
-    embed = Mock(return_value=[[1., 0.]])
+    embed = Mock(return_value=[[1., 0., 0.]])
     monkeypatch.setattr(llm_router, "embed_documents", embed)
     repo = QueryTemplateRepository({repository_module.COLLECTION: collection})
     assert repo.reembed_stale_embeddings() == 1
@@ -179,7 +270,7 @@ def test_automatic_migration_selects_model_changes_even_at_current_version(monke
     assert matches(stale, claim_query)
     assert not matches({**stale, "embedding_claim_until": datetime.now(timezone.utc) + timedelta(minutes=5)}, claim_query)
     assert collection.update_one.call_args.args[1]["$set"]["embedding_model"] == "test-bge"
-    embed.assert_called_once_with([normalized_question(stale["source_question"])], embedding_role="templates")
+    embed.assert_called_once_with([template_search_text(stale)], embedding_role="templates")
 
 
 def test_expected_model_guard_runs_before_database_access(monkeypatch):

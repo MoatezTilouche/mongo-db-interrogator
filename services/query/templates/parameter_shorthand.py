@@ -77,7 +77,8 @@ def extract_shorthand(question, document, specs):
         return None
     try:
         syntax = _syntax()
-        source = _without_annotations(document["source_question"].strip(), template.get("collection", ""), path[-1], example, syntax)
+        from services.query.templates.representation import matching_question
+        source = _without_annotations(matching_question(document), template.get("collection", ""), path[-1], example, syntax)
         current = _without_annotations(question.strip(), template.get("collection", ""), path[-1], example, syntax)
     except (OSError, ValueError, KeyError, TypeError):
         return None

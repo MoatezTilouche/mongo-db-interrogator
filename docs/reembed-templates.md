@@ -5,14 +5,38 @@ For [two-model routing](embedding-routing.md), this command selects
 the global retrieval model. The single-model configuration below still works
 when those template overrides are unset.
 
-The supplied VM log showed `bge-m3` as the current embedding model and 23 active,
-trusted templates carrying `text-embedding-3-small` vectors. Vectors from these
-models cannot be compared. `scripts.reembed_templates` refreshes the reusable
-templates using the same normalized source-question text used by cache lookup.
+`scripts.reembed_templates` refreshes reusable templates using the same versioned
+request representation used by cache lookup. It selects the database, user,
+collection, embedding model and dimensions from the backend's runtime settings.
 
-Run this on the VM whose runtime `.env` selects Ollama/BGE, from the
-`mongo-db-interrogator` directory. The workspace used to prepare the command
-still selects OpenAI embeddings; no live migration was run there.
+Representation version 3 also fixes templates saved from feedback regeneration.
+It separates the original question, corrections, refinements, and generation
+instructions. Embeddings include the resolved business request and meaningful
+corrections, excluding the application's known generation boilerplate. Supported
+user-variable examples are replaced by typed slots such as `<string>` using the
+stored parameter schema. This works independently of collection and field names.
+It leaves query bodies and literal business conditions unchanged; similarity
+alone still cannot authorize reuse.
+
+To migrate the representation with the embedding model already configured in
+your runtime `.env`, use these commands from `mongo-db-interrogator`:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m scripts.reembed_templates
+.\.venv\Scripts\python.exe -B -m scripts.reembed_templates --apply
+```
+
+The first command is a dry run. The second writes eligible vectors and structured
+request metadata. Use the model/dimension guards below when switching models.
+
+The lookup path refreshes at most three stale templates per request to bound
+cold-start work. Use the batch command above to migrate the full eligible set
+before serving traffic. Changing only proven parameter values reuses the same
+search representation and does not require a new vector.
+
+Run this where the backend's configured database and embedding service are
+reachable. Re-embedding remains an operator action. The example below uses
+Ollama/BGE; retain your own configured model and dimensions when they differ.
 
 1. Verify the VM configuration contains the existing local chat route plus:
 
@@ -54,18 +78,20 @@ still selects OpenAI embeddings; no live migration was run there.
    blockers. Restart any backend process that still has the old embedding model
    loaded, then repeat a known source question and inspect cache lookup logs.
 
-The earlier diagnostic counted 23 active/trusted templates, but did not report
-positive-feedback eligibility. This command migrates only current-user, active,
-trusted templates with positive feedback and successful execution, matching the
-cache's existing policy. It does not mark unapproved templates reusable. Therefore
-`needs_update` may legitimately be less than 23. A zero-candidate plan requires
-checking that policy and the configured database/user rather than changing
-feedback counters.
+This command migrates only current-user, active, trusted templates with positive
+feedback and successful execution, matching the cache's existing policy. A
+zero-candidate plan requires checking that policy and the configured database
+and user.
 
 The writes are limited to embedding vectors, model, representation version,
-dimension/time metadata, normalized search text, and clearing expired embedding
-claims. Template bodies, schemas, parameters, feedback, status, trust and success
-counters are preserved. Schema versions, entity matching, query validation and
+dimension/time metadata, `semantic_search_text`, `embedding_source_text`, the
+derived request-context fields, and clearing expired embedding claims. The
+original `source_question` remains unchanged for audit. Template bodies,
+collection schemas, parameter schemas, feedback, status, trust and success
+counters are preserved. The migration does not need to read template query
+bodies or collection schemas. It checks every representation input as well as
+vector metadata before writing, so a concurrent correction or parameter change
+prevents a stale update. Schema versions, entity matching, query validation and
 similarity thresholds still decide whether a vector-ready template can be reused.
 Successful re-embedding does not guarantee a hit for every question.
 
@@ -74,6 +100,7 @@ the text-representation version already matches. Previously it only refreshed
 older text versions, allowing old-model vectors to remain excluded indefinitely.
 
 Validation uses fake providers and an in-memory collection: dry-run isolation,
-model-switch migration, idempotence, vector checks, approval/user scope,
+model-switch and representation migration, idempotence, vector checks,
+approval/user scope, legacy correction parsing, parameter masking,
 concurrent-change protection, and the expected-model guard. No live database or
 embedding service is contacted by these tests.

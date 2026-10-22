@@ -20,7 +20,8 @@ def approval_order(document):
 
 
 def question_matches(document, question):
-    source = document.get("source_question")
+    from services.query.templates.representation import matching_question
+    source = matching_question(document)
     if not isinstance(source, str) or not source.strip():
         return False
     if " ".join(source.casefold().split()) == " ".join(question.casefold().split()):

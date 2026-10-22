@@ -12,11 +12,12 @@ from agent.config import (QUERY_TEMPLATES_COLLECTION, DEFAULT_USER_ID,
 from uuid import uuid4
 from datetime import timedelta
 from pymongo import ReturnDocument
+from services.query.templates.representation import template_metadata, template_search_text, REPRESENTATION_INPUTS
 
 COLLECTION = QUERY_TEMPLATES_COLLECTION
 # Bump this whenever the text representation used for template embeddings changes.
 # Vectors from an older representation are never mixed into a new similarity search.
-EMBEDDING_REPRESENTATION_VERSION = 2
+EMBEDDING_REPRESENTATION_VERSION = 3
 
 
 def stale_embedding_filter():
@@ -25,6 +26,8 @@ def stale_embedding_filter():
         {"embedding_representation_version": {"$ne": EMBEDDING_REPRESENTATION_VERSION}},
         {"embedding_model": {"$ne": TEMPLATE_EMBEDDING_MODEL}},
         {"embedding": {"$exists": False}},
+        {"embedding": []},
+        {"embedding_source_text": {"$exists": False}},
     ]
     if TEMPLATE_EMBEDDING_DIMENSIONS is not None:
         reasons.append({"embedding_dimensions": {"$ne": TEMPLATE_EMBEDDING_DIMENSIONS}})
@@ -52,7 +55,8 @@ class QueryTemplateRepository:
     def __init__(self, database=None):
         self.database = database
 
-    def record_success(self, generated, request_id, question=None, schema_spec=None, *, scope_refined=False):
+    def record_success(self, generated, request_id, question=None, schema_spec=None, *, scope_refined=False,
+                       request_context=None):
         bind_query_parameters(generated["template"], generated["parameters"])
         template = generated["template"]
         # Never persist altered/redacted templates as if they were reusable.
@@ -81,18 +85,19 @@ class QueryTemplateRepository:
             from services.template_parameter_extractor import normalized_question, describe_parameters, question_pattern
             from database.schema_inspector import compact_schema
             schema = {"collections": compact_schema(schema_spec or {})}
-            intent = generated.get("semantic_intent") or normalized_question(question, generated["parameters"])
-            # The cache must embed the same deterministic text for a stored
-            # question and an incoming question.  The LLM semantic intent is
-            # retained for display/audit only; it is not an embedding input.
-            search_text = normalized_question(question)
+            provenance = template_metadata({"source_question": question, "request_context": request_context})
+            resolved = provenance["resolved_question"]
+            intent = generated.get("semantic_intent") or normalized_question(resolved, generated["parameters"])
+            specifications = describe_parameters(template, generated["parameters"], resolved)
+            search_text = template_search_text({**provenance, "source_question": resolved,
+                                                "parameter_schema": specifications})
             if safe_record(intent) == intent and safe_record(schema) == schema:
-                metadata = {"source_question": question, "semantic_text": intent, "semantic_intent": intent,
+                metadata = {**provenance, "source_question": resolved, "semantic_text": intent, "semantic_intent": intent,
                     "scope_refined": scope_refined,
                     "semantic_search_text": search_text,
                     "user_id": DEFAULT_USER_ID, "status": "active", "trusted": True,
                     "schema_spec": schema, "schema_version": (schema_spec or {}).get("schema_version"),
-                    "parameter_schema": describe_parameters(template, generated["parameters"], question)}
+                    "parameter_schema": specifications}
         if metadata and safe_record(metadata) != metadata:
             return None
         if scope_refined:
@@ -132,29 +137,33 @@ class QueryTemplateRepository:
     def ensure_embedding(self, template_id, reembed_stale=False):
         """Create or safely replace a vector using the current text representation."""
         from agent.llm import llm_router
-        from services.template_parameter_extractor import normalized_question
         db = self.database if self.database is not None else get_database()
         collection = db[COLLECTION]
         claim = uuid4().hex
         now = datetime.now(timezone.utc)
-        source_document = collection.find_one({"_id": template_id}, {"source_question": 1})
-        if not isinstance(source_document, dict) or not source_document.get("source_question"):
+        source_snapshot = collection.find_one({"_id": template_id}, {key: 1 for key in REPRESENTATION_INPUTS})
+        if not isinstance(source_snapshot, dict) or not source_snapshot.get("source_question"):
             return
-        search_text = normalized_question(source_document["source_question"])
+        source_document = decode_record(source_snapshot)
+        search_text = template_search_text(source_document)
+        provenance = template_metadata(source_document)
+        source_guard = {key: {"$eq": source_snapshot[key]} if key in source_snapshot else {"$exists": False}
+                        for key in REPRESENTATION_INPUTS}
         eligibility = {"$or": [*stale_embedding_filter()["$or"],
                                 {"embedding_source_text": {"$ne": search_text}}]}
-        document = collection.find_one_and_update({"_id": template_id, "source_question": source_document["source_question"],
+        document = collection.find_one_and_update({"_id": template_id, **source_guard,
             "$and": [eligibility, {"$or": [{"embedding_claim_until": {"$exists": False}},
                 {"embedding_claim_until": {"$lt": now}}]}]},
             {"$set": {"embedding_claim": claim, "embedding_claim_until": now + timedelta(minutes=2),
-                "semantic_search_text": search_text}},
+                **encode_record(provenance), "semantic_search_text": search_text}},
             return_document=ReturnDocument.AFTER)
         if not isinstance(document, dict): return
         try:
-            search_text = document.get("semantic_search_text") or normalized_question(document["source_question"])
+            search_text = template_search_text(decode_record(document))
             vector = llm_router.embed_documents([search_text], embedding_role="templates")[0]
-            saved = collection.update_one({"_id": template_id, "embedding_claim": claim,
-                                   "source_question": source_document["source_question"]}, {
+            saved_guard = {key: {"$eq": document[key]} if key in document else {"$exists": False}
+                           for key in REPRESENTATION_INPUTS}
+            saved = collection.update_one({"_id": template_id, "embedding_claim": claim, **saved_guard}, {
                 "$set": {"embedding": vector, "embedding_model": TEMPLATE_EMBEDDING_MODEL,
                     "embedding_dimensions": len(vector),
                     "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
@@ -176,8 +185,8 @@ class QueryTemplateRepository:
                 "$unset": remove})
             logging.getLogger(__name__).warning("template_embedding_failed template_id=%s", template_id)
 
-    def reembed_stale_embeddings(self, limit=100):
-        """Migrate legacy vectors before they are eligible for a cache lookup."""
+    def reembed_stale_embeddings(self, limit=3):
+        """Bound request-path refreshes; the batch CLI handles full migrations."""
         db = self.database if self.database is not None else get_database()
         documents = db[COLLECTION].find({"status": "active", "trusted": {"$ne": False},
             "positive_feedback_count": {"$gt": 0},

@@ -11,6 +11,7 @@ from services.query_parameter_binder import parameterize_filter_values, bind_que
 from services.template_parameter_extractor import describe_parameters, extract_parameters, normalized_question, TemplateParameterExtractionError
 from services.semantic_template_cache import SemanticTemplateCache, cosine
 from database.query_template_repository import template_signature, QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
+from services.query.templates.representation import template_search_text, query_search_text
 from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL
 
 SOURCE = "Give me the orders of command CMD-000009350132"
@@ -21,14 +22,17 @@ def document():
     generated = parameterize_filter_values({"template": {"operation": "find", "collection": "orders",
         "filter": {"commandId": "CMD-000009350132"}, "limit": None}, "parameters": {}})
     signature = template_signature(generated["template"])
-    return {"_id": "tpl_" + signature, "template_id": "tpl_" + signature, "template_signature": signature,
+    row = {"_id": "tpl_" + signature, "template_id": "tpl_" + signature, "template_signature": signature,
         "template": generated["template"], "operation": "find", "collections": ["orders"],
         "source_question": SOURCE, "semantic_text": "Retrieve orders for a specific command identifier",
-        "semantic_search_text": normalized_question(SOURCE), "embedding_representation_version": 2,
+        "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
         "parameter_schema": describe_parameters(generated["template"], generated["parameters"], SOURCE),
         "status": "active", "trusted": True, "success_count": 1, "positive_feedback_count": 1, "schema_version": None,
         "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": TEMPLATE_EMBEDDING_MODEL,
         "schema_spec": {"collections": {"orders": {"fields": {"commandId": ["string"]}}}}}
+    row["semantic_search_text"] = template_search_text(row)
+    row["embedding_source_text"] = row["semantic_search_text"]
+    return row
 
 
 def test_command_id_extraction_has_no_llm(monkeypatch):
@@ -94,6 +98,7 @@ def test_incompatible_template_cannot_consume_top_k_slot(monkeypatch, caplog):
         source_question=source, semantic_text="Retrieve latest request status", collections=["requests"],
         template=generated["template"], parameter_schema=describe_parameters(generated["template"], generated["parameters"], source),
         embedding=[0.9, 0.435889894])
+    request["embedding_source_text"] = template_search_text(request)
     collection = Mock()
     collection.find.return_value = [command, request]
     db = Mock()
@@ -164,6 +169,7 @@ def template_choice(index, source=None):
     doc.update(_id="tpl_" + signature, template_id="tpl_" + signature, template_signature=signature,
                source_question=source or f"Historical command lookup variant {index}")
     doc["embedding"] = [1 - index / 100, (1 - (1 - index / 100) ** 2) ** .5]
+    doc["embedding_source_text"] = template_search_text(doc)
     return doc
 
 
@@ -240,12 +246,17 @@ def test_weak_alternatives_do_not_fill_three_choice_quota(monkeypatch):
     assert len(cache.suggestion(selected, metadata)["template_candidates"]) == 2
 
 
-def test_schema_miss_hands_ranked_examples_to_generation_without_extra_embedding(monkeypatch):
+@pytest.mark.parametrize("legacy_correction", [False, True])
+def test_schema_miss_hands_ranked_examples_to_generation_without_extra_embedding(monkeypatch, legacy_correction):
     import services.semantic_template_cache as module
     from agent.telemetry import request_context
     from services.query.generation_examples import generation_examples_text
     from services.schema_bootstrap_service import schema_bootstrap_service
     doc = document()
+    if legacy_correction:
+        from services.query_history_service import QueryHistoryService
+        doc["source_question"] = QueryHistoryService._corrected_question(SOURCE, "Use orders.")
+        doc["embedding_source_text"] = template_search_text(doc)
     collection, db = Mock(), Mock()
     collection.find.return_value = [doc]
     db.__getitem__ = Mock(return_value=collection)
@@ -259,6 +270,10 @@ def test_schema_miss_hands_ranked_examples_to_generation_without_extra_embedding
         assert candidate is None and not metadata["hit"]
         text = generation_examples_text(NEW, doc["schema_spec"], "find")
         assert SOURCE in text
+        assert "Apply the latest correction" not in text
+        assert "Latest correction submitted" not in text
+        if legacy_correction:
+            assert "Use orders." in text
         embed.assert_called_once()
         # A second failed/empty lookup must clear this request's examples.
         collection.find.return_value = []
@@ -415,7 +430,7 @@ def test_new_template_persists_normalized_question_as_embedding_text(monkeypatch
         "semantic_intent": "LLM wording that is deliberately different"}
     repository.record_success(generated, "req_test", SOURCE, doc["schema_spec"])
     inserted = collection.update_one.call_args_list[0].args[1]["$set"]
-    assert inserted["semantic_search_text"] == normalized_question(SOURCE)
+    assert inserted["semantic_search_text"] == template_search_text(inserted)
     assert inserted["semantic_search_text"] != generated["semantic_intent"]
 
 
@@ -431,7 +446,7 @@ def test_stale_embedding_is_replaced_before_lookup(monkeypatch):
     embed = Mock(return_value=[[1.0, 0.0]])
     monkeypatch.setattr(llm_router, "embed_documents", embed)
     assert repository.reembed_stale_embeddings() == 1
-    embed.assert_called_once_with([normalized_question(SOURCE)], embedding_role="templates")
+    embed.assert_called_once_with([template_search_text(stale)], embedding_role="templates")
     update = collection.update_one.call_args.args[1]["$set"]
     assert update["embedding_representation_version"] == EMBEDDING_REPRESENTATION_VERSION
 

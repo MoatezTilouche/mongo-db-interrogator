@@ -9,6 +9,7 @@ Reusable personal interpretation, ranking, filtering, or output preference -> sc
 Individual value/date correction, omission of a specific filter without a reusable rule, dissatisfaction alone, or insufficient context to establish reusable meaning -> scope = one_off.
 
 Resolution guidance: Use the original question (q) and prior corrections (prior) to resolve references such as "it" or "take it from". A short comment can establish a reusable source mapping when context identifies the business intent. A collection name alone does not establish which business intent it applies to. If ambiguity remains, choose one_off and state briefly what is unclear. Do not invent temporary restrictions or broaden a rule beyond its supported business intent. Classify scope independently of feedback_type; wrong_collection, wrong_field, and wrong_filter can describe reusable facts. Choose wrong_collection for a correction to the source collection.
+Do not require the rule to apply to every query: a mapping for the business entity in q is reusable even when q also contains a particular person's name, date, or limit. Preserve that business entity without turning these individual values into permanent filters. Prior corrections may clarify intent; use the latest comment's explicit temporary restriction first.
 Step 2 - Populate fields:
 
 scope_reason: one short sentence (target under 180 characters, hard max 300) stating the decisive evidence or ambiguity. Do not restate the policy.
@@ -21,6 +22,7 @@ confidence: number from 0 to 1 reflecting evidence and clarity.
 Scope consistency rules:
 
 database: reusable_preference = false; preference = null; knowledge_type = business_rule, field_definition, coded_value, or relationship; include the supported business condition in corrected_meaning.
+Knowledge types: business_rule includes mappings from a business term/entity to its source collection, even when phrased as "the term X means collection Y". field_definition explains the meaning or representation of a named FIELD, not a collection or business entity; identify that field in fields. coded_value explains a literal value in a field. relationship explains how collections/keys connect. A source-only mapping has knowledge_type = business_rule, feedback_type = wrong_collection, collections = [the exact source name], fields = [].
 user: reusable_preference = true; preference describes the reusable preference; knowledge_type = null; choose the supported preference_type; apply_mode = default for unconditional preferences, contextual only with a supported triggering condition; supply limit/latest/field/direction only when supported; direction is asc or desc; limit is an integer 1-50000. A latest-results limit is result_limit_preference with latest = true and direction = desc. Ranking or limits alone are not format_preference.
 one_off: reusable_preference = false; preference = null; knowledge_type = null; preserve the immediate correction without creating reusable learning.
 
@@ -31,5 +33,8 @@ Examples:
 "You forgot Tunisia in this query." -> one_off unless context establishes a reusable business rule.
 "Take recharge orders from orders_proc_hist where actionCode = Recharge." -> database; wrong_collection; knowledge_type = business_rule; preserve recharge-order scope and literal Recharge.
 "For this query only, take recharge orders from orders_proc_hist." -> one_off because the restriction is explicit.
+q="Show shipments created by a specific user", comment="The term shipments comes from shipmentArchive." -> database; wrong_collection; business_rule; corrected_meaning="Retrieve shipments from shipmentArchive."; collections=["shipmentArchive"]; fields=[]. The user name is not part of the reusable mapping.
+q="Show shipments created by a specific user", comment="Take it from shipmentArchive." -> database; wrong_collection; business_rule because q identifies shipments. Without an identifiable entity/intent in context, the same comment is one_off due to ambiguity.
+"shipmentArchive.createdBy identifies the user who created the shipment." -> database; field_definition; collections=["shipmentArchive"]; fields=["createdBy"].
 
 Input keys:q = original question; prior = earlier refinements/corrections in order; cols = collections used; used = executed filter/sort/limit (aggregation may use match/sort_stages/limit_stages); fields = field names relevant to the comment; comment = original feedback.

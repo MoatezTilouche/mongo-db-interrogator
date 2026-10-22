@@ -10,12 +10,13 @@ from unittest.mock import Mock
 import pytest
 
 from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL
-from database.query_template_repository import QueryTemplateRepository, template_signature
+from database.query_template_repository import QueryTemplateRepository, template_signature, EMBEDDING_REPRESENTATION_VERSION
 from database.storage_codec import decode_record
 from services.query_parameter_binder import template_from_concrete
 from services.template_parameter_extractor import describe_parameters, extract_parameters
 from services.semantic_template_cache import SemanticTemplateCache
 from services.query.templates.matching import question_matches
+from services.query.templates.representation import template_search_text
 
 CASE = json.loads((Path(__file__).parent / "fixtures/query_plan_case.json").read_text())
 C, D = CASE["collection"], CASE["other_collection"]
@@ -32,6 +33,8 @@ def matches(row, predicate):
         actual = row.get(key)
         if isinstance(expected, dict):
             for operator, value in expected.items():
+                if operator == "$eq" and actual != value:
+                    return False
                 if operator == "$exists" and (key in row) != value:
                     return False
                 if operator == "$gt" and (actual is None or actual <= value):
@@ -106,14 +109,16 @@ def question(value="AX-11", verb="List", field=I):
 def document(value="AX-11"):
     result = generated(value)
     signature = template_signature(result["template"])
-    return {"_id": "tpl_" + signature, "template_id": "tpl_" + signature,
+    row = {"_id": "tpl_" + signature, "template_id": "tpl_" + signature,
             "template_signature": signature, "template": result["template"], "operation": "find", "collections": [C],
             "source_question": question(value), "semantic_text": "synthetic intent",
             "parameter_schema": describe_parameters(result["template"], result["parameters"], question(value)),
             "schema_spec": schema(), "schema_version": "synthetic_v1", "scope_refined": False,
             "status": "active", "trusted": True, "success_count": 1, "positive_feedback_count": 1,
             "user_id": DEFAULT_USER_ID, "embedding": [1., 0.], "embedding_model": TEMPLATE_EMBEDDING_MODEL,
-            "embedding_representation_version": 2}
+            "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION}
+    row["embedding_source_text"] = template_search_text(row)
+    return row
 
 
 @pytest.fixture(autouse=True)
@@ -310,6 +315,21 @@ def test_changed_source_values_refresh_embedding_provenance(monkeypatch):
     assert question_matches(row, question(first_value, field=S))
 
 
+def test_parameter_only_changes_reuse_a_current_vector_without_embedding_calls(monkeypatch):
+    from agent.llm import llm_router
+    import database.query_template_repository as repository_module
+    monkeypatch.setattr(repository_module, "TEMPLATE_EMBEDDING_DIMENSIONS", 2)
+    repository = QueryTemplateRepository(Database())
+    embed = Mock(return_value=[[1., 0.]])
+    monkeypatch.setattr(llm_router, "embed_documents", embed)
+    first_value, second_value = CASE["values"][0], CASE["values"][2]
+    first = approve(repository, generated(first_value, S), question(first_value, field=S), "synthetic_req_1")
+    second = approve(repository, generated(second_value, S), question(second_value, field=S), "synthetic_req_2")
+    assert first == second
+    embed.assert_called_once()
+    assert question_matches(repository.get(second), question(first_value, field=S))
+
+
 def test_failed_embedding_refresh_discards_old_vector_and_keeps_exact_matching(monkeypatch):
     from agent.llm import llm_router
     db = Database()
@@ -317,6 +337,9 @@ def test_failed_embedding_refresh_discards_old_vector_and_keeps_exact_matching(m
     monkeypatch.setattr(llm_router, "embed_documents", Mock(return_value=[[1., 0.]]))
     first_value, second_value = CASE["values"][0], CASE["values"][2]
     identity = approve(repository, generated(first_value, S), question(first_value, field=S), "synthetic_req_1")
+    # Force genuinely stale source text. Changing only a proven variable value
+    # now shares the same representation and does not invalidate a good vector.
+    db.templates.rows[0]["embedding_source_text"] = "old representation"
     monkeypatch.setattr(llm_router, "embed_documents", Mock(side_effect=RuntimeError("synthetic provider unavailable")))
     approve(repository, generated(second_value, S), question(second_value, field=S), "synthetic_req_2")
     row = repository.get(identity)

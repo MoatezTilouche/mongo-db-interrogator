@@ -125,7 +125,8 @@ def coerce(value, specification):
 
 
 def _parameter_pattern(document):
-    source = document["source_question"]
+    from services.query.templates.representation import matching_question
+    source = matching_question(document)
     specs = _effective_specs(source, document["parameter_schema"])
     # Identical wording with substituted literals is unambiguous and requires no LLM.
     spans = []
@@ -172,7 +173,8 @@ def question_pattern(document):
     """Identity of approved wording, replacing only its actual parameter slots."""
     _, pattern, names, ambiguous = _parameter_pattern(document)
     if ambiguous:
-        return " ".join(document["source_question"].casefold().split())
+        from services.query.templates.representation import matching_question
+        return " ".join(matching_question(document).casefold().split())
     return json.dumps([pattern.casefold(), names], separators=(",", ":"))
 
 
@@ -221,7 +223,8 @@ def extract_parameters(question, document):
             return {name: coerce(value, specs[name]) for name, value in extracted.items()}, "deterministic"
     if repeated_error is not None:
         raise repeated_error
-    source = document["source_question"]
+    from services.query.templates.representation import matching_question
+    source = matching_question(document)
     # A small typed extraction call handles paraphrases and values not reliably parseable.
     types = {"integer": int, "number": float, "boolean": bool, "string": str,
              "date": str, "objectId": str, "array": list[Any], "object": dict[str, Any], "null": type(None)}

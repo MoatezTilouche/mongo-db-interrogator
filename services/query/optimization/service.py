@@ -33,6 +33,7 @@ from services.query.dates.normalization import apply_date_normalization
 from services.query.dates.resolver import resolve_question_dates
 from services.query.profile_config import RuntimeProfileConfig
 from services.query.profile_facts import safe_profile
+from services.query.templates.request_text import extend_request_context, parse_request_context
 logger = logging.getLogger("services.query_optimization_service")
 
 def is_new_intent(refinement):
@@ -45,7 +46,7 @@ class QueryOptimizationService:
             fields = {key: result.get(key) for key in ("status", "query_signature", "cost_analysis", "optimization",
                 "optimization_iteration", "optimization_history", "validated_query", "generated_query", "query_template_id", "query_parameters", "execution_success", "execution_error",
                 "execution_error_code", "execution_metadata", "final_response", "execution_trace",
-                "original_question", "effective_question", "scope_refined", "learned_optimization")}
+                "original_question", "effective_question", "request_context", "scope_refined", "learned_optimization")}
             fields["cost_guard"] = result.get("cost_analysis")
             fields["execution_metrics"] = result.get("execution_metadata")
             if result.get("execution_metadata") is not None:
@@ -63,8 +64,11 @@ class QueryOptimizationService:
         return c
 
     def pause(self, result, question):
+        intent_context = parse_request_context(question, result.get("request_context"))
         self.collection().insert_one(encode_record({"_id": result["request_id"], "user_id": DEFAULT_USER_ID,
-            "state": "pending", "question": question, "original_question": question, "result": result,
+            "state": "pending", "question": question,
+            "original_question": result.get("original_question") or intent_context["original_question"],
+            "request_context": intent_context, "result": result,
             "optimization_iteration": 0, "optimization_history": [],
             "expires_at": datetime.now(timezone.utc)+timedelta(hours=1)}))
         logger.info("query_optimization_requested request_id=%s", result["request_id"])
@@ -196,6 +200,14 @@ class QueryOptimizationService:
                 logger.info("query_optimization_validation_completed request_id=%s", request_id)
                 generated = parameterize_resolved_query(generated, query)
                 scoped_question = effective_question(prior_question, choice, query, intent if natural else None, payload.page)
+                intent_context = parse_request_context(
+                    prior_question, result.get("request_context") or pending.get("request_context"))
+                # effective_question appends this exact marker for real scope
+                # changes; preserve only the meaningful suffix as a refinement.
+                if scoped_question != prior_question:
+                    refinement = scoped_question[len(prior_question + "\nRefinement: "):]
+                    intent_context = extend_request_context(
+                        prior_question, intent_context, refinement=refinement)
                 cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                 cost["previous_estimated_rows"] = previous_cost.get("estimated_rows")
                 emit("QueryCostGuard", "completed", message=f"{cost['status']}; estimated rows: {cost.get('estimated_rows', 'unknown')}")
@@ -206,8 +218,9 @@ class QueryOptimizationService:
                     "previous_estimated_rows": previous_cost.get("estimated_rows"), "new_estimated_rows": cost.get("estimated_rows")}
                 if pending["state"] != "paged": history = history + [deepcopy(optimization)]
                 result.update({"query_signature": cost["query_signature"], "cost_analysis": cost,
-                    "original_question": result.get("original_question") or pending["question"],
+                    "original_question": result.get("original_question") or intent_context["original_question"],
                     "effective_question": scoped_question,
+                    "request_context": intent_context,
                     "scope_refined": result.get("scope_refined", False) or scoped_question != prior_question,
                     "generated_query": generated, "query_parameters": generated["parameters"], "query_template_id": None, "validated_query": query, "optimization": optimization,
                     "optimization_iteration": iteration, "optimization_history": history,

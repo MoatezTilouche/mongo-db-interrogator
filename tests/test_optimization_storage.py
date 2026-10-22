@@ -229,6 +229,38 @@ def test_refinement_history_preserves_both_intents_and_source_learning_query(mon
     saved = decode_record(history.records["req_test"])
     assert saved["effective_question"] == result["effective_question"]
     assert saved["scope_refined"]
+    context = result["request_context"]
+    assert context["original_question"] == "Show available inventory"
+    assert context["refinements"] == ["Only available inventory"]
+    assert context["generation_instructions"] == []
+    assert saved["request_context"] == context
     learning = module.PerformanceLogger.record_optimization.call_args.args
     assert learning[0] == original["validated_query"]
     assert learning[1] == result["validated_query"]
+
+
+def test_refinement_preserves_corrected_request_provenance(monkeypatch):
+    from services.query.templates.request_text import (
+        CORRECTION_INSTRUCTION, extend_request_context,
+    )
+    from services.query_history_service import QueryHistoryService
+    service, pending, history, original, _ = setup_service(monkeypatch)
+    question = "Show available inventory"
+    correction = "Use inventory_items with attrs.status = available."
+    context = extend_request_context(question, correction=correction,
+        generation_instruction=CORRECTION_INSTRUCTION)
+    stored = decode_record(pending.records["req_test"])
+    stored["question"] = QueryHistoryService._corrected_question(question, correction)
+    stored["request_context"] = context
+    stored["result"].update(original_question=question, effective_question=stored["question"],
+                            request_context=context)
+    pending.records["req_test"] = encode_record(stored)
+    result = service.continue_query("req_test", payload("latest_100"))
+    saved_context = result["request_context"]
+    assert saved_context["original_question"] == question
+    assert saved_context["corrections"] == [correction]
+    assert saved_context["refinements"] == [
+        "Return at most 2 records. Use the selected descending sort order."]
+    assert saved_context["generation_instructions"] == [CORRECTION_INSTRUCTION]
+    assert "Apply the latest correction" not in saved_context["resolved_question"]
+    assert decode_record(history.records["req_test"])["request_context"] == saved_context

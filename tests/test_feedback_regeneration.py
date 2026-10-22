@@ -155,11 +155,17 @@ def test_saved_feedback_applies_even_when_not_active_knowledge(setup, classifica
     assert "actionCode = Recharge" in effective
     assert result["original_question"] == QUESTION
     assert result["effective_question"] == effective
+    context = result["request_context"]
+    assert context["original_question"] == QUESTION
+    assert context["corrections"] == [COMMENT]
+    assert COMMENT in context["resolved_question"]
+    assert "Apply the latest correction" not in context["resolved_question"]
     assert result["applied_feedback"]["source_request_id"] == "req_original"
     assert result["applied_knowledge"] == []
     record = setup.history.get_by_request_id(result["request_id"])
     assert record["question"] == QUESTION
     assert record["applied_feedback"] == result["applied_feedback"]
+    assert record["request_context"] == context
     assert setup.feedback.get_by_request_id("req_original")["regeneration"]["state"] == "applied"
 
 
@@ -209,6 +215,9 @@ def test_repeated_corrections_preserve_prior_question_scope(setup):
     second = setup.query.run(QUESTION)
     assert second["original_question"] == QUESTION
     assert COMMENT in second["effective_question"] and second_comment in second["effective_question"]
+    assert second["request_context"]["corrections"] == [COMMENT, second_comment]
+    assert second["request_context"]["resolved_question"].count(COMMENT) == 1
+    assert "Apply the latest correction" not in second["request_context"]["resolved_question"]
 
 
 def test_older_pending_feedback_does_not_resurface_after_newer_is_used(setup):
@@ -365,9 +374,12 @@ def test_classifier_prompt_describes_reusable_source_rules_and_original_evidence
         captured.append("\n".join(message.content for message in messages)) or SimpleNamespace(content=one_off().model_dump_json())))
     FeedbackAnalysisAgent().analyze({"question": QUESTION, "effective_question": "Earlier corrected request"}, COMMENT)
     prompt = captured[0]
-    assert 'Users do not have to say "save this"' in prompt
+    assert 'Absence of words like "save", "remember", "always" does NOT imply one_off' in prompt
     assert "Do not invent" in prompt and "scope_evidence" in prompt
-    assert "Reusable source/value example" in prompt and "Contrasting one-off example" in prompt
+    assert '"Take recharge orders from orders_proc_hist where actionCode = Recharge." -> database' in prompt
+    assert '"For this query only, take recharge orders from orders_proc_hist." -> one_off' in prompt
+    assert "A source-only mapping has knowledge_type = business_rule" in prompt
+    assert "field_definition explains the meaning or representation of a named FIELD" in prompt
     assert "Earlier corrected request" in prompt
 
 

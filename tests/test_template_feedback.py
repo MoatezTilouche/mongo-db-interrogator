@@ -97,3 +97,19 @@ def test_liking_refined_result_saves_effective_question_and_scope_marker():
     service.submit("req_test", True)
     assert templates.record_success.call_args.args[2] == refined
     assert templates.record_success.call_args.kwargs == {"scope_refined": True}
+
+
+def test_liking_corrected_result_passes_separate_user_intent_to_template_storage():
+    from services.query.templates.request_text import extend_request_context
+    from services.query_history_service import QueryHistoryService
+    service, history, templates = setup_service()
+    question = "Show orders"
+    correction = "Use order_archive with state = Complete."
+    context = extend_request_context(question, correction=correction)
+    effective = QueryHistoryService._corrected_question(question, correction)
+    history.get_by_request_id.return_value.update(
+        original_question=question, effective_question=effective, request_context=context)
+    service.submit("req_test", True)
+    assert templates.record_success.call_args.args[2] == effective
+    assert templates.record_success.call_args.kwargs["request_context"] == context
+    assert "Apply the latest correction" not in context["resolved_question"]

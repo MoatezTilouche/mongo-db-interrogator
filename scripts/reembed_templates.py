@@ -12,7 +12,18 @@ from agent.client_factory import get_config, get_embedding_client
 from agent.config import DEFAULT_USER_ID, QUERY_TEMPLATES_COLLECTION, TEMPLATE_EMBEDDING_MODEL
 from database.mongo_client import get_database
 from database.query_template_repository import EMBEDDING_REPRESENTATION_VERSION
-from services.template_parameter_extractor import normalized_question
+from database.storage_codec import decode_record, encode_record
+from services.query.templates.representation import (
+    REPRESENTATION_INPUTS, template_metadata, template_search_text,
+)
+
+
+# Read only the fields needed to rebuild the representation. Keep their stored
+# values for the compare-and-set guard; decode a copy before interpreting them.
+VECTOR_FIELDS = (
+    "embedding", "embedding_model", "embedding_representation_version",
+    "embedding_dimensions", "semantic_search_text", "embedding_source_text",
+)
 
 
 def reusable_filter(user_id=DEFAULT_USER_ID):
@@ -29,6 +40,8 @@ def valid_vector(vector, dimensions=None):
 
 
 def stale_reasons(document, model, dimensions):
+    decoded = decode_record(document)
+    search_text = template_search_text(decoded)
     reasons = []
     if document.get("embedding_model") != model:
         reasons.append("model_changed")
@@ -36,16 +49,21 @@ def stale_reasons(document, model, dimensions):
         reasons.append("representation_changed")
     if not valid_vector(document.get("embedding"), dimensions):
         reasons.append("missing_or_invalid_vector")
-    if document.get("semantic_search_text") != normalized_question(document["source_question"]):
+    if valid_vector(document.get("embedding")) and document.get("embedding_dimensions") != len(document["embedding"]):
+        reasons.append("dimension_metadata_changed")
+    if document.get("semantic_search_text") != search_text:
         reasons.append("search_text_changed")
+    if document.get("embedding_source_text") != search_text:
+        reasons.append("embedding_source_changed")
+    if any(decoded.get(key) != value for key, value in template_metadata(decoded).items()):
+        reasons.append("request_metadata_changed")
     return reasons
 
 
 def read_candidates(collection, user_id):
-    # No query bodies, stored schemas or result data are read for vector migration.
-    return list(collection.find(reusable_filter(user_id), {"source_question": 1, "semantic_search_text": 1,
-        "embedding": 1, "embedding_model": 1, "embedding_representation_version": 1,
-        "embedding_claim_until": 1}))
+    # Query bodies, stored collection schemas and result data are not needed.
+    projection = {key: 1 for key in (*REPRESENTATION_INPUTS, *VECTOR_FIELDS, "embedding_claim_until")}
+    return list(collection.find(reusable_filter(user_id), projection))
 
 
 def run(collection, *, config=None, apply=False, force=False, embedding_provider=None,
@@ -56,8 +74,7 @@ def run(collection, *, config=None, apply=False, force=False, embedding_provider
     tasks, blocked = [], Counter()
     now = datetime.now(timezone.utc)
     for document in documents:
-        question = document.get("source_question")
-        if not isinstance(question, str) or not question.strip():
+        if not template_search_text(decode_record(document)):
             blocked["missing_source_question"] += 1
             continue
         claim_until = document.get("embedding_claim_until")
@@ -84,7 +101,7 @@ def run(collection, *, config=None, apply=False, force=False, embedding_provider
                                                          embedding_role="templates")
     for start in range(0, len(tasks), config.batch_size):
         batch = tasks[start:start + config.batch_size]
-        texts = [normalized_question(document["source_question"]) for document, _ in batch]
+        texts = [template_search_text(decode_record(document)) for document, _ in batch]
         vectors = provider.embed_documents(texts)
         if len(vectors) != len(batch) or not all(valid_vector(vector, config.dimensions) for vector in vectors):
             raise ValueError("Embedding batch returned invalid vectors; batch was not written")
@@ -93,20 +110,22 @@ def run(collection, *, config=None, apply=False, force=False, embedding_provider
         for (document, _), text, vector in zip(batch, texts, vectors):
             # Compare the original input/vector and recheck trust immediately at
             # write time, so feedback changes and concurrent workers win safely.
-            current = {**reusable_filter(user_id), "_id": document["_id"], "source_question": document["source_question"]}
-            for key in ("embedding", "embedding_model", "embedding_representation_version", "semantic_search_text"):
+            current = {**reusable_filter(user_id), "_id": document["_id"]}
+            for key in (*REPRESENTATION_INPUTS, *VECTOR_FIELDS):
                 current[key] = {"$eq": document[key]} if key in document else {"$exists": False}
             current["$or"] = [{"embedding_claim_until": {"$exists": False}},
                                {"embedding_claim_until": {"$lt": datetime.now(timezone.utc)}}]
-            result = collection.update_one(current, {"$set": {"embedding": vector, "embedding_model": model,
+            updated = {**template_metadata(decode_record(document)),
+                "embedding": vector, "embedding_model": model,
                 "embedding_representation_version": EMBEDDING_REPRESENTATION_VERSION,
                 "embedding_dimensions": len(vector), "semantic_search_text": text,
-                "embedding_updated_at": datetime.now(timezone.utc)},
+                "embedding_source_text": text, "embedding_updated_at": datetime.now(timezone.utc)}
+            result = collection.update_one(current, {"$set": encode_record(updated),
                 "$unset": {"embedding_claim": "", "embedding_claim_until": ""}})
             report["updated" if result.matched_count else "concurrent_skips"] += 1
         emit(f"Progress: {min(start + len(batch), len(tasks))}/{len(tasks)}; updated={report['updated']}; concurrent_skips={report['concurrent_skips']}")
     verified = read_candidates(collection, user_id)
-    report["embedding_ready"] = sum(isinstance(row.get("source_question"), str) and bool(row["source_question"].strip())
+    report["embedding_ready"] = sum(bool(template_search_text(decode_record(row)))
         and not stale_reasons(row, model, config.dimensions) for row in verified)
     report["remaining_stale"] = len(verified) - report["embedding_ready"]
     emit("Verification: " + json.dumps(report, sort_keys=True))

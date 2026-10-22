@@ -17,13 +17,13 @@ from agent.progress import emit
 from agent.telemetry import current_request_id
 from database.mongo_client import get_database
 from database.storage_codec import decode_record
-from services.template_parameter_extractor import normalized_question
 from services.query_parameter_binder import bind_query_parameters
 from services.query_entity_guard import template_entity_mismatch
 from database.query_template_repository import QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
 from services.query.generation_examples import remember_candidates
 from services.query.templates.matching import question_matches, current_catalog, used_schema_matches, latest_row_group, approval_order
 from services.log_labels import template_label, log_text, log_score
+from services.query.templates.representation import template_search_text, query_search_text, matching_question
 
 MAX_TEMPLATE_SUGGESTIONS = 3
 
@@ -57,10 +57,10 @@ def operation_compatible(document, question):
         # declared parameter substitutions. A wording heuristic must not change
         # the approved query's implementation when only its values changed.
         return True
-    source = document.get("source_question")
+    source = matching_question(document)
     if isinstance(source, str) and source.strip() and (
         " ".join(source.casefold().split()) == " ".join(question.casefold().split())
-        or document.get("scope_refined") and normalized_question(source) == normalized_question(question)
+        or document.get("scope_refined") and question_matches(document, question)
     ):
         # A keyword hint describes wording, not the MongoDB implementation.
         # The successfully executed, approved template for this exact question
@@ -71,7 +71,7 @@ def operation_compatible(document, question):
         return True
     if document.get("operation") != "aggregate" or requested != "find":
         return False
-    if operation_hint(document.get("source_question", "")) != "find":
+    if operation_hint(matching_question(document)) != "find":
         return False
     stages = document.get("template", {}).get("pipeline")
     row_stages = {"$lookup", "$match", "$limit", "$skip", "$sort", "$project", "$unwind",
@@ -131,7 +131,7 @@ class SemanticTemplateCache:
             for document in documents:
                 if question_matches(document, question):
                     if self.compatible(document, question, existing, version, catalog):
-                        exact = " ".join(document["source_question"].casefold().split()) == " ".join(question.casefold().split())
+                        exact = " ".join(matching_question(document).casefold().split()) == " ".join(question.casefold().split())
                         match_type = "exact_question" if exact else "parameterized_question"
                         matches.append((1.0, document, match_type))
             # Literal matches precede parameterized matches; approval recency breaks ties.
@@ -158,8 +158,7 @@ class SemanticTemplateCache:
                                current_request_id(), type(exc).__name__)
             documents = [doc for doc in documents if doc.get("embedding_model") == TEMPLATE_EMBEDDING_MODEL
                          and doc.get("embedding_representation_version") == EMBEDDING_REPRESENTATION_VERSION
-                         and doc.get("embedding") and ("embedding_source_text" not in doc or
-                             doc["embedding_source_text"] == normalized_question(doc.get("source_question", "")))
+                         and doc.get("embedding") and doc.get("embedding_source_text") == template_search_text(doc)
                          and doc["template_id"] not in matched_ids]
             if not documents:
                 if matches:
@@ -167,7 +166,7 @@ class SemanticTemplateCache:
                 metadata["miss_reason"] = "no_eligible_templates"
                 return None, metadata
             logger.debug("template_search_embedding_started request_id=%s", current_request_id())
-            vector = llm_router.embed_query(normalized_question(question), embedding_role="templates")
+            vector = llm_router.embed_query(query_search_text(question, documents), embedding_role="templates")
             logger.debug("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
             eligible = []
             for document in documents:
@@ -276,7 +275,7 @@ class SemanticTemplateCache:
             if template_entity_mismatch(document, question): return "entity_mismatch"
             # A saved refinement is explicit user scope, not a general preference.
             # Parameter changes are allowed; omitted refinement requirements aren't.
-            if document.get("scope_refined") and normalized_question(question) != normalized_question(document.get("source_question", "")):
+            if document.get("scope_refined") and not question_matches(document, question):
                 return "refined_scope_mismatch"
             if not operation_compatible(document, question): return "operation_mismatch"
             if not document.get("source_question") or not document.get("semantic_text"): return "missing_semantic_metadata"

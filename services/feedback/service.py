@@ -24,6 +24,7 @@ from services.user_preference_service import UserPreferenceService
 from services.feedback_learning_router import FeedbackLearningRouter
 from services.knowledge_ingestion_service import KnowledgeIngestionService
 from database.knowledge_repository import KnowledgeRepository
+from services.query.templates.request_text import parse_request_context
 
 logger = logging.getLogger("services.feedback_service")
 
@@ -79,6 +80,9 @@ class FeedbackService:
                               "regeneration": {
                                   "question": original_question.strip(),
                                   "base_question": history.get("effective_question") or original_question,
+                                  "request_context": parse_request_context(
+                                      history.get("effective_question") or original_question,
+                                      history.get("request_context")),
                                   "state": "pending" if regeneration_ready else "cancelled",
                                   "submitted_at": now,
                                   "submission_order": time.time_ns(),
@@ -104,7 +108,9 @@ class FeedbackService:
                 template_id = self.template_repository.record_success(
                     history["generated_query"], request_id,
                     history.get("effective_question") or history.get("question"), schema,
-                    **({"scope_refined": True} if history.get("scope_refined") else {}))
+                    **({"scope_refined": True} if history.get("scope_refined") else {}),
+                    **({"request_context": history["request_context"]}
+                       if isinstance(history.get("request_context"), dict) else {}))
                 if template_id:
                     self.template_repository.set_feedback(template_id, request_id, user_id, True)
                     self.history_repository.update(request_id, {"query_template_id": template_id})

@@ -29,6 +29,7 @@ from services.optimization_advisor import OptimizationAdvisor
 from services.filter_value_resolution import apply_value_resolution, parameterize_resolved_query, active_resolution_rules
 from services.query.dates.normalization import apply_date_normalization
 from services.query.templates.matching import current_catalog, validation_schema
+from services.query.templates.request_text import parse_request_context
 
 logger = logging.getLogger("services.template_decision_service")
 
@@ -49,6 +50,7 @@ class TemplateDecisionService:
             for candidate in result.get("template_candidates", [])[:3])) or [result["similarity"]["template_id"]]
         self.collection().insert_one({"_id": request_id, "user_id": DEFAULT_USER_ID, "state": "pending",
             "question": question, "template_id": result["similarity"]["template_id"],
+            "request_context": parse_request_context(question, result.get("request_context")),
             "template_ids": template_ids,
             "cache": result["semantic_template_cache"], "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)})
 
@@ -187,6 +189,7 @@ class TemplateDecisionService:
                         parameters = generated["parameters"]
                         cost = stage("QueryCostGuard", QueryCostGuard().analyze, query)
                     result = {"request_id": request_id, "question": pending["question"],
+                        "request_context": parse_request_context(pending["question"], pending.get("request_context")),
                         "effective_question": pending["question"], "scope_refined": document.get("scope_refined", False),
                         "learned_optimization": learned,
                         "semantic_template_cache": cache, "generated_query": generated, "validated_query": query,

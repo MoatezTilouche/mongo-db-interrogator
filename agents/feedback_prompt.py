@@ -13,6 +13,24 @@ _INSTRUCTIONS = "\n\nApply the latest correction to this generation."
 
 
 def _question_and_corrections(history):
+    request = history.get("request_context")
+    if isinstance(request, dict) and isinstance(request.get("original_question"), str):
+        question = request["original_question"].strip()
+        adjustments = request.get("adjustments")
+        if isinstance(adjustments, list) and all(
+            isinstance(item, dict)
+            and item.get("kind") in {"correction", "refinement"}
+            and isinstance(item.get("text"), str)
+            for item in adjustments
+        ):
+            earlier = [item["text"] for item in adjustments]
+        else:
+            # Older structured records did not retain a combined timeline.
+            earlier = [text for key in ("corrections", "refinements")
+                       for text in (request.get(key) if isinstance(request.get(key), list) else [])
+                       if isinstance(text, str)]
+        return question, [" ".join(text.split()) for text in earlier if text.strip()]
+
     question = str(history.get("original_question") or history.get("question") or "").strip()
     effective = str(history.get("effective_question") or history.get("question") or question).strip()
     earlier = []
@@ -161,7 +179,12 @@ def feedback_output_contract():
 
             def strict(node):
                 if isinstance(node, dict):
-                    # API-only cleanup; original Pydantic enforces all bounds.
+                    # Some providers do not support length keywords. Preserve
+                    # those bounds as instructions when cleaning the API schema;
+                    # the original Pydantic contract still enforces them locally.
+                    if "maxLength" in node:
+                        bound = f"Maximum {node['maxLength']} characters, including spaces."
+                        node["description"] = " ".join(filter(None, (node.get("description"), bound)))
                     for key in ("title", "default", "maxLength", "minLength", "maximum", "minimum", "maxItems", "minItems"):
                         node.pop(key, None)
                     if node.get("type") == "object":
