@@ -23,7 +23,8 @@ CATALOG = {"collections": {
 
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch):
+def offline(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=module.__name__)
     import database.mongo_client as mongo
     import services.knowledge_ingestion_service as ingestion
     from agent.llm import llm_router
@@ -123,7 +124,7 @@ def test_recharge_scope_is_never_bypassed_by_triggers():
     {"fields": ["rechargeDate"]}, {"status": "needs_review"}, {"active": False}])
 def test_invalid_targets_and_inactive_rules_are_dropped(changes, caplog):
     assert ids(generator([rule("bad", **changes)])) == []
-    assert "knowledge_id=bad reason=" in caplog.text
+    assert "rule='Rule bad' reason=" in caplog.text
 
 
 def test_flat_relationship_fields_are_validated_against_their_actual_owners():
@@ -176,10 +177,10 @@ def test_conflicts_use_database_scope_then_confirmation_time_and_log_drops(caplo
     records = [rule("old", confidence=1.0),
                rule("new", confidence=0.6, updated_at="2026-10-14T12:00:00Z"),
                rule("preference", scope="user", updated_at="2026-10-15T12:00:00Z")]
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG, logger=module.__name__):
         assert ids(generator(records)) == ["new"]
-    assert "knowledge_id=old kept_id=new reason=most_recent_confirmation" in caplog.text
-    assert "knowledge_id=preference kept_id=new reason=database_scope_precedence" in caplog.text
+    assert "rule='Rule old' kept_rule='Rule new' reason=most_recent_confirmation" in caplog.text
+    assert "rule='Rule preference' kept_rule='Rule new' reason=database_scope_precedence" in caplog.text
 
 
 def test_context_latest_record_rule_survives_newer_case_insensitive_rule(caplog):
@@ -193,8 +194,8 @@ def test_context_latest_record_rule_survives_newer_case_insensitive_rule(caplog)
     assert ids(result) == ["latest"]
     assert result["knowledge"][0]["text"] == latest["text"]
     assert "context_selected" in result["knowledge"][0]["inclusion_reasons"]
-    assert "knowledge_id=case reason=not_selected_in_context" in caplog.text
-    assert "knowledge_id=latest kept_id=" not in caplog.text
+    assert f"rule={case['text']!r} reason=not_selected_in_context" in caplog.text
+    assert f"rule={latest['text']!r} kept_rule=" not in caplog.text
 
 
 def test_context_order_and_rules_survive_small_generator_cap(monkeypatch, caplog):
@@ -230,8 +231,8 @@ def test_context_handoff_keeps_applicable_definitions_and_codes_but_excludes_rec
         "give me status about this commandId: CMD-123", ["orders"],
         {"orders": ["id", "executionDate", "status", "code"]}, full_schema=CATALOG, context_rules=[source])
     assert ids(result) == ["source", "date", "status"]
-    assert "knowledge_id=recharge reason=not_applicable_to_question" in caplog.text
-    assert "knowledge_id=unselected-business reason=not_selected_in_context" in caplog.text
+    assert f"rule={records[3]['text']!r} reason=not_applicable_to_question" in caplog.text
+    assert f"rule={records[4]['text']!r} reason=not_selected_in_context" in caplog.text
 
 
 @pytest.mark.parametrize("question", ["Show Recharge orders", "Filter code Recharge", "Show code values"])
@@ -267,7 +268,7 @@ def test_partial_scope_conflicts_and_empty_triggered_scope_are_resolved(caplog):
                rule("empty-date", "field_definition", collections=[], fields=["executionDate"],
                     updated_at=datetime(2026, 10, 14, tzinfo=timezone.utc))]
     assert ids(generator(records, "today")) == ["wide", "empty-date"]
-    assert "knowledge_id=date kept_id=empty-date" in caplog.text
+    assert "rule='Rule date' kept_rule='Rule empty-date'" in caplog.text
 
 
 def test_optional_rule_cap_preserves_applicable_preferences(caplog):
@@ -309,7 +310,7 @@ def test_coded_value_cap_counts_shared_fields_across_different_rule_scopes(caplo
                rule("b", "coded_value", text="Status code meaning", fields=["status", "code"]),
                rule("c", "coded_value", text="Status code meaning", fields=["status", "total"])]
     assert ids(generator(records)) == ["a", "b"]
-    assert "knowledge_id=c reason=coded_value_per_field cap=2" in caplog.text
+    assert "rule='Status code meaning' reason=coded_value_per_field cap=2" in caplog.text
 
 
 def test_context_only_meaning_rules_sorted_by_raw_score_with_configurable_limits():
@@ -406,8 +407,12 @@ def test_source_can_change_collection_before_generator_gets_low_similarity_field
     for prompt in prompts.values():
         for metadata in ("knowledge_id", "inclusion_reasons", "confidence", "created_at", "semantic_similarity"):
             assert f'"{metadata}"' not in prompt
-    assert "stage=context knowledge_id=source reasons=similarity" in caplog.text
-    assert "stage=generator knowledge_id=date reasons=scope,trigger:date" in caplog.text
+    injected = [entry.message for entry in caplog.records if entry.message.startswith("knowledge_rule_injected ")]
+    assert any("stage=context" in message and f"rule={records[0]['text']!r}" in message
+               and "similarity=0.9000" in message and "reasons='similarity'" in message for message in injected)
+    assert any("stage=generator" in message and f"rule={records[1]['text']!r}" in message
+               and "similarity=n/a" in message and "reasons='scope,trigger:date'" in message for message in injected)
+    assert all("knowledge_id=" not in message for message in injected)
     assert (records, CATALOG) == original
 
 
@@ -532,7 +537,7 @@ def test_preference_is_last_and_database_rule_wins_same_type_conflict(caplog):
     result = generator([rule("database", text="Exclude failed orders")], preferences=preferences)
     assert ids(result) == ["database"]
     assert [item["_id"] for item in result["user_preferences"]] == ["user-sort"]
-    assert "knowledge_id=user-status kept_id=database reason=database_scope_precedence" in caplog.text
+    assert "rule='Include all statuses' kept_rule='Exclude failed orders' reason=database_scope_precedence" in caplog.text
 
 
 def test_date_storage_definition_does_not_conflict_with_sorting_preference():

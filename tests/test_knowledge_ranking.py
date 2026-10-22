@@ -272,13 +272,15 @@ def test_truncated_fields_and_corrected_collection_are_restored_to_their_owner()
 
 
 def test_logs_explain_scores_exclusions_and_final_order(caplog):
-    with caplog.at_level(logging.INFO, logger=module.__name__):
+    with caplog.at_level(logging.DEBUG, logger=module.__name__):
         retrieve([rule("feedback", 0.86, "negative_feedback"), rule("below", 0.40, "negative_feedback")])
-    assert "knowledge_candidate knowledge_id=feedback source=negative_feedback semantic_similarity=0.860000" in caplog.text
+    assert "rule='Orders rule feedback: Failed orders must exclude retry status X' source=negative_feedback semantic_similarity=0.860000" in caplog.text
     assert "feedback_bonus=0.150000" in caplog.text
     assert "ranking_score=1.130000" in caplog.text
     assert "reason=below_semantic_threshold" in caplog.text
-    assert "ordered_knowledge_ids=['feedback'] top_k=5 returned_count=1" in caplog.text
+    assert "top_k=5 returned_count=1" in caplog.text
+    assert "knowledge_id=" not in caplog.text
+    assert "similarity=0.8600 ranking_score=1.1300" in caplog.text
 
 
 def test_conflict_winner_reaches_both_actual_agent_prompts_and_orchestrator(monkeypatch):

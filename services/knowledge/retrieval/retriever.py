@@ -39,6 +39,7 @@ from services.knowledge_embeddings import vector_valid
 from services.knowledge_keywords import KeywordIndex, normalize
 from services.query_entity_guard import rule_entity_mismatch
 from services.knowledge_rule_policy import confidence, conflicts, meaning, priority, recency, rule_type, targets
+from services.log_labels import log_text, rule_label, log_score
 
 logger = logging.getLogger("services.knowledge_retriever")
 logger.setLevel(logging.INFO)
@@ -127,10 +128,10 @@ class KnowledgeRetriever:
                 elif semantic < KNOWLEDGE_MIN_SEMANTIC_SIMILARITY:
                     rejection = "below_semantic_threshold"
             if rejection:
-                logger.info("knowledge_candidate knowledge_id=%s source=%s semantic_similarity=%s "
+                logger.debug("knowledge_candidate request_id=%s rule=%r source=%s semantic_similarity=%s "
                             "feedback_bonus=0 collection_bonus=0 field_bonus=0 scope_bonus=0 "
                             "ranking_score=None eligible=false reason=%s",
-                            knowledge_id, source, semantic, rejection)
+                             log_text(current_request_id()), rule_label(record), log_text(source), log_score(semantic), rejection)
                 continue
 
             # Legacy user_feedback records also originated solely in the negative
@@ -143,10 +144,10 @@ class KnowledgeRetriever:
                                 for field in candidate_collections.get(name, {}).get("fields", {})}
             field_bonus = KNOWLEDGE_FIELD_MATCH_BONUS * len(fields & retrieved_fields) / max(1, len(fields))
             ranking_score = semantic + feedback_bonus + scope_bonus + collection_bonus + field_bonus
-            logger.info("knowledge_candidate knowledge_id=%s source=%s semantic_similarity=%.6f "
+            logger.debug("knowledge_candidate request_id=%s rule=%r source=%s semantic_similarity=%.6f "
                         "feedback_bonus=%.6f collection_bonus=%.6f field_bonus=%.6f scope_bonus=%.6f "
                         "ranking_score=%.6f eligible=true",
-                        knowledge_id, source, semantic, feedback_bonus, collection_bonus,
+                         log_text(current_request_id()), rule_label(record), log_text(source), semantic, feedback_bonus, collection_bonus,
                         field_bonus, scope_bonus, ranking_score)
             scored.append({
                 "knowledge_id": knowledge_id, "source": source,
@@ -173,16 +174,19 @@ class KnowledgeRetriever:
                 break
         selected_ids = {item["knowledge_id"] for item in selected}
         for rank, item in enumerate(scored, start=1):
-            logger.info(
-                "knowledge_ranked_rule request_id=%s rank=%d selected=%s knowledge_id=%s "
-                "ranking_score=%.6f text=%s",
-                current_request_id(), rank, item["knowledge_id"] in selected_ids, item["knowledge_id"],
-                item["ranking_score"], item["text"],
+            selected_item = item["knowledge_id"] in selected_ids
+            log = logger.info if selected_item else logger.debug
+            log(
+                "knowledge_ranked_rule request_id=%s rank=%d selected=%s rule=%r "
+                "source=%s type=%s similarity=%s ranking_score=%s collections=%r fields=%r",
+                log_text(current_request_id()), rank, selected_item, rule_label(item), log_text(item["source"]),
+                log_text(item["type"]), log_score(item["semantic_similarity"]), log_score(item["ranking_score"]),
+                log_text(", ".join(item.get("collections") or [])), log_text(", ".join(item.get("fields") or [])),
             )
         elapsed = (time.perf_counter() - started) * 1000
         telemetry = {"knowledge_retrieval_latency_ms": elapsed,
                      "knowledge_retrieval_top_k": self.top_k,
                      "knowledge_candidates_returned": len(selected)}
-        logger.info("knowledge_retrieval_result ordered_knowledge_ids=%s top_k=%d returned_count=%d latency_ms=%.1f",
-                    [item["knowledge_id"] for item in selected], self.top_k, len(selected), elapsed)
+        logger.info("knowledge_retrieval_result request_id=%s top_k=%d returned_count=%d latency_ms=%.1f",
+                    log_text(current_request_id()), self.top_k, len(selected), elapsed)
         return {"knowledge": selected, "telemetry": telemetry}

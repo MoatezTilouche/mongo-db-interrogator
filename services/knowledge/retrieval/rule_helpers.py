@@ -1,6 +1,7 @@
 """Knowledge validation, projection, conflict resolution, and selection logging."""
 from __future__ import annotations
 from typing import Any
+from services.log_labels import log_text, rule_label, log_score
 
 @staticmethod
 def _valid(record, catalog, selected_names, *, return_reason=False):
@@ -8,7 +9,6 @@ def _valid(record, catalog, selected_names, *, return_reason=False):
         _references,
         current_request_id,
         logger,
-        safe_record,
     )
     names = _references(record.get("collections", []))
     fields = _references(record.get("fields", []))
@@ -30,9 +30,8 @@ def _valid(record, catalog, selected_names, *, return_reason=False):
         if fields - allowed:
             reason = "unknown_field"
     if reason:
-        logger.info("knowledge_rule_dropped request_id=%s knowledge_id=%s reason=%s",
-                    safe_record(current_request_id()) if return_reason else current_request_id(),
-                    safe_record(str(record.get("_id", ""))) if return_reason else record.get("_id"), reason)
+        logger.debug("knowledge_rule_dropped request_id=%s rule=%r reason=%s",
+                     log_text(current_request_id()), rule_label(record), reason)
     return reason if return_reason else reason is None
 
 _valid.__func__.__module__ = "services.knowledge_retriever"
@@ -60,15 +59,18 @@ def _log_selected(stage, items):
     from services.knowledge.retrieval.retriever import (
         current_request_id,
         logger,
-        safe_record,
     )
-    redact = safe_record if stage == "context" else lambda value: value
-    for item in items:
-        logger.info("knowledge_rule_injected request_id=%s stage=%s knowledge_id=%s reasons=%s",
-                    redact(current_request_id()), stage, redact(item["knowledge_id"]),
-                    ",".join(redact(reason)[:88] if stage == "context" else reason for reason in item["inclusion_reasons"]))
-    logger.info("knowledge_stage_result request_id=%s stage=%s ordered_knowledge_ids=%s",
-                redact(current_request_id()), stage, [redact(item["knowledge_id"]) for item in items])
+    for rank, item in enumerate(items, 1):
+        logger.info(
+            "knowledge_rule_injected request_id=%s stage=%s rank=%d rule=%r type=%s "
+            "similarity=%s ranking_score=%s confidence=%s collections=%r fields=%r reasons=%r",
+            log_text(current_request_id()), stage, rank, rule_label(item), log_text(item.get("type")),
+            log_score(item.get("semantic_similarity")), log_score(item.get("ranking_score")),
+            log_score(item.get("confidence")), log_text(", ".join(item.get("collections") or [])),
+            log_text(", ".join(item.get("fields") or [])),
+            log_text(",".join(item.get("inclusion_reasons") or [])))
+    logger.info("knowledge_stage_result request_id=%s stage=%s selected_count=%d",
+                log_text(current_request_id()), stage, len(items))
 
 _log_selected.__func__.__module__ = "services.knowledge_retriever"
 _log_selected.__func__.__qualname__ = "KnowledgeRetriever._log_selected"
@@ -83,9 +85,7 @@ def _resolve(pool, diagnostics=None):
         meaning,
         recency,
         rule_type,
-        safe_record,
     )
-    redact = safe_record if diagnostics is not None else lambda value: value
     # Resolve meaning conflicts before deduplication: recency takes precedence
     # over confidence for conflicting database facts.
     ordered = sorted(pool, key=lambda item: (
@@ -97,8 +97,8 @@ def _resolve(pool, diagnostics=None):
         if winner:
             reason = ("database_scope_precedence" if item.get("scope", "database") == "user"
                       and winner.get("scope", "database") == "database" else "most_recent_confirmation")
-            logger.info("knowledge_rule_dropped request_id=%s knowledge_id=%s kept_id=%s reason=%s",
-                        redact(current_request_id()), redact(item["knowledge_id"]), redact(winner["knowledge_id"]), reason)
+            logger.debug("knowledge_rule_dropped request_id=%s rule=%r kept_rule=%r reason=%s",
+                         log_text(current_request_id()), rule_label(item), rule_label(winner), reason)
             if diagnostics is not None:
                 diagnostics.append({"rule_id": item["knowledge_id"], "reason": reason,
                                     "score": item.get("semantic_similarity")})
@@ -111,8 +111,8 @@ def _resolve(pool, diagnostics=None):
         key = (tuple(sorted(set(item.get("collections", [])))),
                tuple(sorted(set(item.get("fields", [])))), rule_type(item), meaning(item))
         if key in deduped:
-            logger.info("knowledge_rule_dropped request_id=%s knowledge_id=%s kept_id=%s reason=duplicate",
-                        redact(current_request_id()), redact(item["knowledge_id"]), redact(deduped[key]["knowledge_id"]))
+            logger.debug("knowledge_rule_dropped request_id=%s rule=%r kept_rule=%r reason=duplicate",
+                         log_text(current_request_id()), rule_label(item), rule_label(deduped[key]))
             if diagnostics is not None:
                 diagnostics.append({"rule_id": item["knowledge_id"], "reason": "duplicate",
                                     "score": item.get("semantic_similarity")})

@@ -1,6 +1,7 @@
 """Scoped knowledge supplements for query generation."""
 from __future__ import annotations
 from typing import Any
+from services.log_labels import log_text, rule_label
 
 def rules_for_generator(self, question, selected_collections, selected_fields, *,
                         full_schema, records=None, user_preferences=None, context_rules=None, question_embedding=None):
@@ -20,7 +21,6 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         re,
         recency,
         rule_type,
-        safe_record,
         targets,
     )
     records = self._active_rules() if records is None else records
@@ -79,8 +79,8 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         if not self._valid(record, catalog, names):
             continue
         if context_rules is not None and rule_type(record) in {"business_rule", "relationship"} and not protected_rule(record, names):
-            logger.info("knowledge_rule_dropped request_id=%s stage=generator knowledge_id=%s reason=not_selected_in_context",
-                        safe_record(current_request_id()), safe_record(str(record.get("_id", ""))))
+            logger.debug("knowledge_rule_dropped request_id=%s stage=generator rule=%r reason=not_selected_in_context",
+                         log_text(current_request_id()), rule_label(record))
             continue
         rule_names = set(record.get("collections", []))
         # Explicit scopes are never overridden by a trigger.
@@ -91,8 +91,8 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
                         if field in catalog[name].get("fields", {})}
         if context_rules is not None and not protected_rule(record, names) and not self._generator_supplement_applicable(
                 record, question, rule_targets, selected_targets, date_targets, date_trigger, status_trigger):
-            logger.info("knowledge_rule_dropped request_id=%s stage=generator knowledge_id=%s reason=not_applicable_to_question",
-                        safe_record(current_request_id()), safe_record(str(record.get("_id", ""))))
+            logger.debug("knowledge_rule_dropped request_id=%s stage=generator rule=%r reason=not_applicable_to_question",
+                         log_text(current_request_id()), rule_label(record))
             continue
         reasons = ["scope"] if rule_names & names else []
         if date_trigger and rule_type(record) == "field_definition" and rule_targets & date_targets:
@@ -127,8 +127,8 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
         for item in pool:
             winner = next((rule for rule in preserved if conflicts(item, rule)), None)
             if winner:
-                logger.info("knowledge_rule_dropped request_id=%s stage=generator knowledge_id=%s kept_id=%s reason=context_selection_precedence",
-                            safe_record(current_request_id()), safe_record(item["knowledge_id"]), safe_record(winner["knowledge_id"]))
+                logger.debug("knowledge_rule_dropped request_id=%s stage=generator rule=%r kept_rule=%r reason=context_selection_precedence",
+                             log_text(current_request_id()), rule_label(item), rule_label(winner))
             else:
                 filtered.append(item)
         pool = filtered
@@ -177,12 +177,12 @@ def rules_for_generator(self, question, selected_collections, selected_fields, *
             for field in item.get("fields", []) if field in catalog[name].get("fields", {})}
         required = protected_rule(item, names)
         if not required and rule_type(item) == "coded_value" and any(counts[target] >= 2 for target in coded_targets):
-            logger.warning("knowledge_rule_cap request_id=%s knowledge_id=%s reason=coded_value_per_field cap=2",
-                           current_request_id(), item["knowledge_id"])
+            logger.warning("knowledge_rule_cap request_id=%s rule=%r reason=coded_value_per_field cap=2",
+                           log_text(current_request_id()), rule_label(item))
             continue
         if not required and sum(not protected_rule(rule, names) for rule in selected) >= effective_limit:
-            logger.warning("knowledge_rule_cap request_id=%s knowledge_id=%s reason=total cap=%d",
-                           current_request_id(), item["knowledge_id"], effective_limit)
+            logger.warning("knowledge_rule_cap request_id=%s rule=%r reason=total cap=%d",
+                           log_text(current_request_id()), rule_label(item), effective_limit)
             continue
         selected.append(item)
         if rule_type(item) == "coded_value":

@@ -1,6 +1,7 @@
 """Offline coverage for lexical selection, rank floors and collection handoff."""
 from copy import deepcopy
 import json
+import logging
 import math
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -54,7 +55,8 @@ def diagnostic(caplog):
 
 
 @pytest.fixture(autouse=True)
-def settings(monkeypatch):
+def settings(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=retrieval.__name__)
     monkeypatch.setenv("KNOWLEDGE_CONTEXT_RELEVANCE_MODE", "on")
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_MIN_SIMILARITY", 0.75)
     monkeypatch.setattr(retrieval, "KNOWLEDGE_CONTEXT_TOP_K", 3)

@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import logging
 import math
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -64,7 +65,8 @@ def rule(key="rule", score=0.9, **changes):
 
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch):
+def offline(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=retrieval.__name__)
     from agent.llm import llm_router
     import database.mongo_client as mongo
 
@@ -304,7 +306,9 @@ def test_diagnostic_summary_explains_skips_and_top_five_without_text(caplog):
     assert skipped["scored-5"]["score"] == pytest.approx(0.6)
     assert len(report["top_5"]) == 5
     assert [item["rank"] for item in report["top_5"]] == [1, 2, 3, 4, 5]
-    assert "PRIVATE_QUESTION_OR_RULE_TEXT" not in caplog.text
+    diagnostic_logs = [entry.message for entry in caplog.records
+                       if entry.message.startswith("knowledge_context_diagnostics ")]
+    assert all("PRIVATE_QUESTION_OR_RULE_TEXT" not in message for message in diagnostic_logs)
 
 
 def test_refresh_failure_defers_stale_rule_without_erasing_stored_vector(caplog):

@@ -4,6 +4,7 @@ from typing import Any
 from agent.client_factory import custom_endpoint_active
 from .context_policy import relevance_mode, keyword_rejection
 from services.query.prompt_selection.relevance import protected_rule, rule_scopes
+from services.log_labels import rule_label
 
 def rules_for_context(self, question_embedding, schema_candidates, full_schema=None, *,
                       records=None, threshold=None, top_k=None, question=None,
@@ -67,8 +68,8 @@ def rules_for_context(self, question_embedding, schema_candidates, full_schema=N
                     embedding_service = KnowledgeIngestionService(repository=self.repository)
                 record = embedding_service.ensure_embeddings(record, dimensions=len(question_embedding))
             except Exception as exc:
-                logger.warning("knowledge_embedding_refresh_failed knowledge_id=%s error_type=%s",
-                               safe_record(rule_id), type(exc).__name__)
+                logger.warning("knowledge_embedding_refresh_failed rule=%r error_type=%s",
+                               rule_label(record), type(exc).__name__)
                 if not keywords and not protected:
                     skipped.append({"rule_id": rule_id, "reason": "refresh_failed"})
                     continue
@@ -229,7 +230,7 @@ def log_context_diagnostics(diagnostic, suggested_collections=None):
     for key in ("top_5", "skipped", "vector_skips", "winning_vectors", "selected", "keyword_matches", "policy_rejections"):
         for item in diagnostic.get(key, []):
             item["rule_id"] = safe_record(item["rule_id"])
-    logger.info("knowledge_context_diagnostics request_id=%s data=%s", safe_record(current_request_id()),
+    logger.debug("knowledge_context_diagnostics request_id=%s data=%s", safe_record(current_request_id()),
                 json.dumps(diagnostic, ensure_ascii=True, separators=(",", ":")))
 
 log_context_diagnostics.__func__.__module__ = "services.knowledge_retriever"

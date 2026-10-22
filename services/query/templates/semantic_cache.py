@@ -23,6 +23,7 @@ from services.query_entity_guard import template_entity_mismatch
 from database.query_template_repository import QueryTemplateRepository, EMBEDDING_REPRESENTATION_VERSION
 from services.query.generation_examples import remember_candidates
 from services.query.templates.matching import question_matches, current_catalog, used_schema_matches, latest_row_group, approval_order
+from services.log_labels import template_label, log_text, log_score
 
 MAX_TEMPLATE_SUGGESTIONS = 3
 
@@ -97,6 +98,8 @@ class SemanticTemplateCache:
             SEMANTIC_TEMPLATE_TOP_K, SEMANTIC_TEMPLATE_MIN_THRESHOLD, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD, operation_hint(question))
         emit("SemanticTemplateCache", "running")
         matches = []
+        best_unfiltered_similarity = None
+        best_compatible_similarity = None
         try:
             db = self.database if self.database is not None else get_database()
             eligibility = {"status": "active", "trusted": {"$ne": False},
@@ -141,7 +144,7 @@ class SemanticTemplateCache:
             if matches and not any(doc["template_id"] not in matched_ids and
                     self.compatible(doc, question, existing, version, catalog) for doc in documents):
                 return self._matched_result(matches, metadata)
-            logger.info("template_search_exact_complete request_id=%s matched_count=%d", current_request_id(), len(matches))
+            logger.debug("template_search_exact_complete request_id=%s matched_count=%d", current_request_id(), len(matches))
             # Vector availability must not block a deterministic question match.
             # Migration failure still permits already-current semantic candidates.
             try:
@@ -163,38 +166,45 @@ class SemanticTemplateCache:
                     return self._matched_result(matches, metadata)
                 metadata["miss_reason"] = "no_eligible_templates"
                 return None, metadata
-            logger.info("template_search_embedding_started request_id=%s", current_request_id())
+            logger.debug("template_search_embedding_started request_id=%s", current_request_id())
             vector = llm_router.embed_query(normalized_question(question), embedding_role="templates")
-            logger.info("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
+            logger.debug("template_search_embedding_completed request_id=%s dimensions=%d", current_request_id(), len(vector))
             eligible = []
             for document in documents:
                 if document.get("embedding_model") != TEMPLATE_EMBEDDING_MODEL:
-                    logger.info("template_search_rejected request_id=%s template_id=%s reason=model_mismatch",
-                                current_request_id(), document.get("template_id"))
+                    logger.debug("template_search_rejected request_id=%s name=%r reason=model_mismatch",
+                                 current_request_id(), template_label(document))
                 elif len(document.get("embedding") or []) != len(vector):
-                    logger.info("template_search_rejected request_id=%s template_id=%s reason=length_mismatch",
-                                current_request_id(), document.get("template_id"))
+                    logger.debug("template_search_rejected request_id=%s name=%r reason=length_mismatch",
+                                 current_request_id(), template_label(document))
                 elif template_entity_mismatch(document, question):
-                    logger.info("template_search_rejected request_id=%s template_id=%s reason=entity_mismatch",
-                                current_request_id(), document.get("template_id"))
+                    logger.debug("template_search_rejected request_id=%s name=%r reason=entity_mismatch",
+                                 current_request_id(), template_label(document))
                 else:
                     eligible.append(document)
             ranked = sorted(((cosine(vector, doc.get("embedding", [])), doc) for doc in eligible),
                             key=lambda item: item[0], reverse=True)
             metadata["best_similarity_score"] = ranked[0][0] if ranked else None
+            best_unfiltered_similarity = metadata["best_similarity_score"]
             remember_candidates(question, ranked[:SEMANTIC_TEMPLATE_TOP_K])
             metadata["miss_reason"] = "no_compatible_candidate_above_threshold"
             compatible = [(score, doc) for score, doc in ranked
                           if self.compatible(doc, question, existing, version, catalog)][:SEMANTIC_TEMPLATE_TOP_K]
+            best_compatible_similarity = compatible[0][0] if compatible else None
             for rank, (score, document) in enumerate(compatible, 1):
-                logger.info("template_search_candidate request_id=%s rank=%d template_id=%s operation=%s pure_cosine_similarity=%.4f threshold=%.4f",
-                    current_request_id(), rank, document.get("template_id"), document.get("operation"), score, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD)
+                decision = ("below_min_threshold" if score < SEMANTIC_TEMPLATE_MIN_THRESHOLD else
+                            "below_suggest_threshold" if score < SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD else
+                            "above_threshold")
+                logger.info(
+                    "template_search_candidate request_id=%s rank=%d name=%r operation=%s "
+                    "collections=%r similarity=%.4f min_threshold=%.4f threshold=%.4f decision=%s",
+                    current_request_id(), rank, template_label(document), document.get("operation"),
+                    log_text(", ".join(document.get("collections") or [])), score,
+                    SEMANTIC_TEMPLATE_MIN_THRESHOLD, SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD, decision)
                 if score < SEMANTIC_TEMPLATE_MIN_THRESHOLD:
-                    logger.info("template_search_rejected request_id=%s template_id=%s reason=below_min_threshold", current_request_id(), document.get("template_id"))
                     continue
                 if score < SEMANTIC_TEMPLATE_SUGGEST_THRESHOLD:
                     metadata["weak_match"] = True
-                    logger.info("template_search_rejected request_id=%s template_id=%s reason=below_suggest_threshold score=%.4f", current_request_id(), document.get("template_id"), score)
                     continue
                 if document["template_id"] not in matched_ids:
                     matches.append((score, document, "semantic"))
@@ -213,8 +223,12 @@ class SemanticTemplateCache:
             return None, metadata
         finally:
             metadata["semantic_cache_lookup_ms"] = round((perf_counter() - started) * 1000, 2)
-            logger.info("template_search_completed request_id=%s hit=%s reason=%s best_score=%s lookup_ms=%.2f", current_request_id(), metadata["hit"], metadata.get("miss_reason", "matched"), metadata.get("best_similarity_score", metadata.get("similarity_score")), metadata["semantic_cache_lookup_ms"])
-            if not metadata["hit"]: logger.info("semantic_template_cache_miss request_id=%s reason=%s", current_request_id(), metadata.get("miss_reason"))
+            logger.info(
+                "template_search_completed request_id=%s hit=%s reason=%s match_score=%s "
+                "best_unfiltered_similarity=%s best_compatible_similarity=%s lookup_ms=%.2f",
+                current_request_id(), metadata["hit"], metadata.get("miss_reason", "matched"),
+                log_score(metadata.get("similarity_score")), log_score(best_unfiltered_similarity),
+                log_score(best_compatible_similarity), metadata["semantic_cache_lookup_ms"])
             emit("SemanticTemplateCache", "completed", elapsed_ms=metadata["semantic_cache_lookup_ms"],
                  message=f"{len(metadata.get('candidate_matches', []))} matching template(s) detected" if metadata["hit"] else "No compatible template")
 
@@ -242,8 +256,14 @@ class SemanticTemplateCache:
                                            for candidate in candidates])
         metadata["best_similarity_score"] = max(metadata.get("best_similarity_score") or 0, best["score"])
         for rank, candidate in enumerate(candidates, 1):
-            logger.info("template_search_hit request_id=%s rank=%d template_id=%s score=%.4f match_type=%s",
-                        current_request_id(), rank, candidate["template_id"], candidate["score"], candidate["match_type"])
+            info = candidate["template_info"]
+            logger.info(
+                "template_search_hit request_id=%s rank=%d name=%r operation=%s collections=%r "
+                "match_score=%.4f similarity=%s match_type=%s",
+                current_request_id(), rank, template_label(matches[rank - 1][1]), info["operation"],
+                log_text(", ".join(info.get("collections") or [])), candidate["score"],
+                log_score(candidate["score"] if candidate["match_type"] == "semantic" else None),
+                candidate["match_type"])
         return matches[0][1], metadata
 
     @staticmethod
@@ -277,8 +297,8 @@ class SemanticTemplateCache:
     @staticmethod
     def compatible(document, question, collections, schema_version=None, current_schema=None):
         reason = SemanticTemplateCache.compatibility_reason(document, question, collections, schema_version, current_schema)
-        logger.info("template_search_compatibility request_id=%s template_id=%s accepted=%s reason=%s requested_operation=%s stored_operation=%s",
-            current_request_id(), document.get("template_id"), reason is None, reason or "compatible",
+        logger.debug("template_search_compatibility request_id=%s name=%r accepted=%s reason=%s requested_operation=%s stored_operation=%s",
+            current_request_id(), template_label(document), reason is None, reason or "compatible",
             operation_hint(question), document.get("operation"))
         return reason is None
 

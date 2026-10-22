@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 import json
+import logging
 import pytest
 from fastapi import HTTPException
 from services.query_parameter_binder import parameterize_filter_values, bind_query_parameters
@@ -81,6 +82,7 @@ def test_legacy_corrected_question_does_not_allow_cross_entity_match():
 
 
 def test_incompatible_template_cannot_consume_top_k_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger="services.semantic_template_cache")
     import services.semantic_template_cache as module
     command = document()
     request = deepcopy(command)
@@ -141,7 +143,10 @@ def test_similarity_thresholds(monkeypatch, score, hit, weak, caplog):
     assert "template_search_started" in caplog.text
     assert "template_search_candidates" in caplog.text
     assert "template_search_candidate" in caplog.text
-    assert f"pure_cosine_similarity={score:.4f}" in caplog.text
+    assert f"similarity={score:.4f}" in caplog.text
+    assert "name='Retrieve orders for a specific command identifier'" in caplog.text
+    assert "template_id=" not in caplog.text
+    assert f"best_compatible_similarity={score:.4f}" in caplog.text
     assert "template_search_completed" in caplog.text
     assert SOURCE not in caplog.text and NEW not in caplog.text
     if not hit:
@@ -275,6 +280,7 @@ def test_compatibility_rejects_invalid_candidates(change):
 
 
 def test_compatibility_log_reports_schema_rejection(caplog):
+    caplog.set_level(logging.DEBUG, logger="services.semantic_template_cache")
     from agent.telemetry import request_context
     with request_context("req_logging_test"):
         assert not SemanticTemplateCache.compatible(document(), NEW, {"orders"}, "changed")
