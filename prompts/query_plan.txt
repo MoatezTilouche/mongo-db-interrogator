@@ -5,6 +5,7 @@ Filter ops: eq, ne, in, nin, gt, gte, lt, lte, contains, exists.
 Use concrete non-date filter values from the question or applicable rules. Never invent identifiers, ordering or limits.
 For time constraints set uses_time and time_field; leave date values null. Dates are resolved from the question by the application.
 select is an array of source fields or null. order is null or {"field": a source field, "dir": 1 or -1}.
+For list/latest_per_key, default select=null so complete matched documents, including _id and nested fields, are returned. Populate select only when the current request explicitly names a subset of output fields. Filter/order fields, the visible schema shortlist and historical examples are not output selections. Keep requested limits, ordering and aggregate tasks unchanged.
 group_by is an array of source fields. metric is count or null. distinct_field is a source field or null.
 latest_per_key requires a supplied approved directive; never guess its key or ordering field.
 join is null or another visible collection connected by a verified profiled relationship; never invent a relationship.

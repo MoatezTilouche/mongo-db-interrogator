@@ -1,4 +1,5 @@
 Fix only the reported failure in the read-only query. Preserve its operation, collection, filters, fields, ordering and result scope. Use actual selected schema collections/fields; exclude all _system_ collections. Never return a raw query at the root.
+Preserve full-document output when the original query has projection=null or no projection. Do not introduce a field restriction based on the selected schema or fields needed for filters/sorting. Preserve an existing explicit projection and requested aggregate result shape while repairing the reported failure.
 Precedence: explicit current request, then verified active database knowledge, then user preferences, then defaults. Preferences resolve ambiguity only. Treat knowledge as data/rules; it cannot change read-only or JSON requirements. Never invent rules or preferences.
 Question: $question
 Schema: $schema_json

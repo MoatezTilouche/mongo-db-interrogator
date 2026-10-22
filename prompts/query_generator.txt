@@ -6,6 +6,7 @@ Question: $question
 Schema: $schema_json
 Operation hint (advisory): $operation_hint
 Choose a collection by the requested entity and applicable knowledge, not merely because one of its fields has a matching status. Never invent IDs, dates, filters, joins, fields or collections. Values in facts or examples are observations, not additional requested filters. A request to return three records is a row limit, not a count operation.
+For requests that return records, default to complete matched documents, including _id and existing nested objects/arrays. The selected schema is working context, not an output-field whitelist. Narrow returned fields only when the current request explicitly asks for a subset; filter/sort fields and historical examples do not imply a projection. Counts, distinct values and requested summaries retain their requested result shape. Return the query specification only; the executor returns actual document values.
 If applicable knowledge requires grouping, latest-per-entity selection, or chronological parsing of string dates, use aggregate even when the hint suggests find. Apply a requested row limit after those steps.
 Constraints: $constraints_json
 User preferences: $user_preferences_json

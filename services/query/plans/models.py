@@ -25,7 +25,9 @@ class QueryPlan(BaseModel):
     collection: str
     task: Task
     filters: list[PlanFilter] = Field(default_factory=list)
-    select: list[str] | None = None
+    select: list[str] | None = Field(default=None, description=(
+        "Use null to return complete documents for list/latest_per_key. Supply fields only when the current request "
+        "explicitly selects output fields; filter/order fields and the visible schema are not output selections."))
     order: PlanOrder | None = None
     limit: int | None = Field(default=None, gt=0, strict=True)
     group_by: list[str] = Field(default_factory=list)
@@ -54,8 +56,11 @@ def plan_json_schema(selected_schema):
                        "op": document["$defs"]["PlanFilter"]["properties"]["op"],
                        "value": {"anyOf": [*scalars, {"type": "array", "items": {"anyOf": scalars}}]}}}}
     for key in ("select", "group_by"):
+        description = props[key].get("description")
         array = {"type": "array", "items": {"type": "string", "enum": fields}}
         props[key] = {"anyOf": [array, {"type": "null"}]} if key == "select" else array
+        if description:
+            props[key]["description"] = description
     for key in ("distinct_field", "time_field"):
         description = props[key].get("description")
         props[key] = {"anyOf": [{"type": "string", "enum": fields}, {"type": "null"}]}

@@ -103,6 +103,8 @@ class QueryGeneratorAgent:
             "Preserve the primary collection, original operation (except an explicitly requested summary), "
             "all valid filters, limits and business rules. Apply only the supplied refinement. "
             "Do not broaden or remove constraints unless the user explicitly replaces them. "
+            "When the previous query returns full documents, preserve that output instead of adding a projection from the selected schema. "
+            "A refinement explicitly requesting full documents may remove a projection; a requested subset may add one. "
             "Use only the selected schema; do not retrieve new context. Prefer more selective filters. "
             "For summaries compute compact counts/groups in MongoDB, never fetch raw rows to summarize. "
             'Return only {"semantic_intent": <normalized intent>, "template": <revised query>, "parameters": {}} JSON. Use concrete filter literals and a numeric requested limit; the backend parameterizes them. Keep field names, operators, sort, skip, projection, joins and aggregation structure fixed unless the refinement changes them. Never invent IDs or extra filters. No explanations.\n'
